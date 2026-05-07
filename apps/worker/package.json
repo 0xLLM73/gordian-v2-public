@@ -29,7 +29,7 @@
 		"grammy": "^1.30.0",
 		"hono": "^4.12.12",
 		"ioredis": "^5.10.1",
-		"jose": "^5.9",
+		"jose": "^6.2",
 		"posthog-node": "^5.28.0",
 		"postgres": "^3.4.0",
 		"redlock": "5.0.0-beta.2",

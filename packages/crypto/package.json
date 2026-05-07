@@ -13,7 +13,7 @@
 	},
 	"dependencies": {
 		"@aws-sdk/client-kms": "^3.700",
-		"jose": "^5.9.0"
+		"jose": "^6.2.3"
 	},
 	"devDependencies": {
 		"@types/node": "^20.0.0",
