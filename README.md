@@ -2,7 +2,7 @@
 
 Gordian v2 is an experimental relationship-intelligence workspace built around Telegram contact sync, encrypted workspace data, and AI-assisted summaries, commitments, goals, deals, and follow-up planning.
 
-This repository is being prepared for open-source release. It is not a turnkey hosted product, no production deployment is included, and the original Telegram bot has been deleted. The old website, worker, and DragonflyDB infrastructure are no longer live.
+This public repository is a clean-history open-source snapshot. It is not a turnkey hosted product, no production deployment is included, and the original Telegram bot has been deleted. The old website, worker, and DragonflyDB infrastructure are no longer live.
 
 Telegram integration is disabled by default because MTProto user sessions are high-risk credentials.
 
@@ -38,7 +38,7 @@ Only enable these flags with a new dedicated test Telegram app, a new test bot, 
 
 Requirements:
 
-- Node.js 20
+- Node.js 20.19 or newer
 - pnpm 9
 - Docker, or a PostgreSQL-compatible database with pgvector installed
 - Redis or DragonflyDB
@@ -92,9 +92,11 @@ The default `.env.example` is intentionally safe for open-source development and
 - [SECURITY.md](SECURITY.md) - vulnerability reporting and high-risk area guidance.
 - [SUPPORT.md](SUPPORT.md) - support boundaries for the public snapshot.
 
-## Open-Source Release Checklist
+## Public Release Guardrails
 
-Before making the repository public, follow [docs/OPEN_SOURCE.md](docs/OPEN_SOURCE.md). The short version:
+This snapshot has passed the repository-side publication gate in [docs/PUBLISHING.md](docs/PUBLISHING.md): the repo is public, Dependabot security features are enabled, secret scanning and push protection are enabled, private vulnerability reporting is enabled, and `main` is protected by the `validate` and `demo-smoke` checks.
+
+For future releases, forks, or deployments, keep following [docs/OPEN_SOURCE.md](docs/OPEN_SOURCE.md). The short version:
 
 - rotate every real production and staging secret;
 - revoke old Telegram bot tokens and MTProto user sessions;

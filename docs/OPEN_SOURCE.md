@@ -1,8 +1,8 @@
 # Open-Source Release Guide
 
-This guide covers the work required before publishing Gordian v2 as a public repository.
+This guide covers the work required before publishing Gordian v2 as a public repository or reusing this public snapshot in a new fork/deployment.
 
-Current status: the original Telegram bot has been deleted, the old website and worker infrastructure are not live, and no production deployment is included in this repository. See [PUBLIC_STATUS.md](PUBLIC_STATUS.md) and [SECURITY_NOTES.md](SECURITY_NOTES.md).
+Current status: this public repository was published from a clean-history snapshot. The original Telegram bot has been deleted, the old website and worker infrastructure are not live, and no production deployment is included in this repository. See [PUBLIC_STATUS.md](PUBLIC_STATUS.md) and [SECURITY_NOTES.md](SECURITY_NOTES.md).
 
 ## Threat Model
 
@@ -17,7 +17,7 @@ The public repository must therefore assume:
 - no persisted MTProto user session is safe to keep after publishing;
 - demo data must be synthetic.
 
-## Required Before Public Release
+## Required Before Public Release Or Deployment
 
 1. Rotate every secret.
    - `WORKER_INTERNAL_SECRET`
@@ -72,7 +72,7 @@ The public repository must therefore assume:
 
 8. Run the external publication check after the repository is public.
    - `pnpm check:publication`
-   - This command is expected to fail while the repository is private or while the GitHub account cannot enable secret scanning, push protection, or private vulnerability reporting.
+   - This command is expected to fail while the repository is private, branch protection is incomplete, or the GitHub account cannot enable secret scanning, push protection, or private vulnerability reporting.
    - See [PUBLISHING.md](PUBLISHING.md) for the full GitHub and provider-side checklist.
 
 ## Safe Demo Mode

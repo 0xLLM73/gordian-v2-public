@@ -1,6 +1,6 @@
 # Public Status
 
-Gordian v2 is being shared as an experimental, unhosted codebase.
+Gordian v2 is shared as an experimental, unhosted public codebase.
 
 ## What Is Not Live
 
@@ -17,12 +17,13 @@ The repository still contains the source code for the web app, worker, database 
 
 ## Local Demo
 
-The public repo now has a synthetic local demo path that does not use Telegram:
+The public repo has a synthetic local demo path that does not use Telegram:
 
 ```bash
 pnpm install --frozen-lockfile
 cp .env.example .env.local
 pnpm demo:setup
+pnpm demo:smoke
 pnpm dev
 ```
 
@@ -50,10 +51,11 @@ The purge command loads `.env.local` by default and clears Telegram MTProto sess
 
 ## Public Sharing Checklist
 
-- Confirm the repository contains no real `.env` files.
-- Confirm GitHub Actions has no deployment secrets for old infrastructure.
-- Confirm old provider dashboards no longer hold `BOT_TOKEN`, `TELEGRAM_API_ID`, or `TELEGRAM_API_HASH`.
-- Confirm old DB/Redis snapshots are deleted or purged.
-- Confirm any example deployment config has new app names, volume names, endpoints, and secrets for the fork.
+- The repository contains no real `.env` files.
+- GitHub Actions has no deployment secrets for old infrastructure.
+- The public repository has Dependabot alerts/security updates, secret scanning, push protection, private vulnerability reporting, and `main` branch protection enabled.
+- `pnpm check:publication` passes once GitHub-side settings are available.
 - Keep Telegram flags disabled in `.env.example`.
-- Run `pnpm check:publication` after the repository is public and GitHub-side security settings are available.
+- Before any fork or deployment goes live, confirm old provider dashboards no longer hold `BOT_TOKEN`, `TELEGRAM_API_ID`, or `TELEGRAM_API_HASH`.
+- Before any fork or deployment goes live, confirm old DB/Redis snapshots are deleted or purged.
+- Before any fork or deployment goes live, rename any example deployment config app names, volume names, endpoints, and secrets.
