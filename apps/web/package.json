@@ -29,7 +29,7 @@
 		"posthog-js": "^1.358.1",
 		"posthog-node": "^5.28.0",
 		"radix-ui": "^1.4.3",
-		"react": "^19.0.0",
+		"react": "^19.2.6",
 		"react-dom": "^19.0.0",
 		"react-force-graph-2d": "^1.29.1",
 		"react-force-graph-3d": "^1.29.1",
