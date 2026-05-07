@@ -120,18 +120,22 @@ vi.mock('@repo/db', () => {
 });
 
 vi.mock('bullmq', () => ({
-	Queue: vi.fn().mockImplementation(() => ({
-		add: vi.fn(),
-		name: 'sync',
-		getJobCounts: vi.fn(),
-	})),
-	Worker: vi.fn().mockImplementation((_name: string, processor: unknown) => {
+	Queue: vi.fn(function MockQueue() {
+		return {
+			add: vi.fn(),
+			name: 'sync',
+			getJobCounts: vi.fn(),
+		};
+	}),
+	Worker: vi.fn(function MockWorker(_name: string, processor: unknown) {
 		(globalThis as Record<string, unknown>).__syncProcessor = processor;
 		return { on: vi.fn() };
 	}),
-	FlowProducer: vi.fn().mockImplementation(() => ({
-		add: vi.fn(),
-	})),
+	FlowProducer: vi.fn(function MockFlowProducer() {
+		return {
+			add: vi.fn(),
+		};
+	}),
 }));
 
 const mockSendToUser = vi.fn();

@@ -93,8 +93,10 @@ vi.mock('../../redis', () => ({
 type MockProcessor = (job: unknown) => Promise<unknown> | unknown;
 
 vi.mock('bullmq', () => ({
-	Queue: vi.fn().mockImplementation(() => ({ add: vi.fn() })),
-	Worker: vi.fn().mockImplementation((_name: string, processor: MockProcessor) => {
+	Queue: vi.fn(function MockQueue() {
+		return { add: vi.fn() };
+	}),
+	Worker: vi.fn(function MockWorker(_name: string, processor: MockProcessor) {
 		(Worker as unknown as Record<string, unknown>).__processor = processor;
 		return { on: vi.fn() };
 	}),

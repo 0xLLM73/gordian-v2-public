@@ -11,11 +11,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 vi.mock('node:worker_threads', () => ({
-	Worker: vi.fn().mockImplementation(() => ({
-		on: vi.fn(),
-		postMessage: vi.fn(),
-		terminate: vi.fn().mockResolvedValue(undefined),
-	})),
+	Worker: vi.fn(function MockWorker() {
+		return {
+			on: vi.fn(),
+			postMessage: vi.fn(),
+			terminate: vi.fn().mockResolvedValue(undefined),
+		};
+	}),
 }));
 
 vi.mock('../../locks/telegram-session', () => ({

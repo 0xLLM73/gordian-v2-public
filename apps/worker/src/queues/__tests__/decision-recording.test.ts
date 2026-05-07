@@ -38,11 +38,13 @@ vi.mock('@repo/db', () => ({
 }));
 
 vi.mock('bullmq', () => ({
-	Worker: vi.fn((_name: string, processor: unknown) => {
+	Worker: vi.fn(function MockWorker(_name: string, processor: unknown) {
 		processorStore.fn = processor as (job: unknown) => Promise<unknown>;
 		return { on: vi.fn() };
 	}),
-	Queue: vi.fn(() => ({ add: vi.fn(), on: vi.fn() })),
+	Queue: vi.fn(function MockQueue() {
+		return { add: vi.fn(), on: vi.fn() };
+	}),
 }));
 
 vi.mock('../../ai/embeddings', () => ({

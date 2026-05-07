@@ -24,12 +24,14 @@ vi.mock('@repo/db', () => ({
 vi.mock('grammy', () => {
 	const handlers = new Map<string, (ctx: unknown) => Promise<void>>();
 	return {
-		Composer: vi.fn().mockImplementation(() => ({
-			command: vi.fn((name: string, handler: (ctx: unknown) => Promise<void>) => {
-				handlers.set(name, handler);
-			}),
-			_handlers: handlers,
-		})),
+		Composer: vi.fn(function MockComposer() {
+			return {
+				command: vi.fn((name: string, handler: (ctx: unknown) => Promise<void>) => {
+					handlers.set(name, handler);
+				}),
+				_handlers: handlers,
+			};
+		}),
 	};
 });
 

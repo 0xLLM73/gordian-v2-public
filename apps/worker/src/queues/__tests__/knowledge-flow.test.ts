@@ -3,13 +3,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // ─── Mocks (hoisted before imports) ──────────────────────────────────────────
 
 vi.mock('bullmq', () => ({
-	FlowProducer: vi.fn().mockImplementation(() => ({
-		add: vi.fn().mockResolvedValue({ id: 'flow-1' }),
-	})),
-	Worker: vi.fn().mockImplementation((_name: string, processor: unknown) => ({
-		processor,
-		on: vi.fn(),
-	})),
+	Queue: vi.fn(function MockQueue() {
+		return { add: vi.fn(), on: vi.fn() };
+	}),
+	FlowProducer: vi.fn(function MockFlowProducer() {
+		return {
+			add: vi.fn().mockResolvedValue({ id: 'flow-1' }),
+		};
+	}),
+	Worker: vi.fn(function MockWorker(_name: string, processor: unknown) {
+		return {
+			processor,
+			on: vi.fn(),
+		};
+	}),
 }));
 
 vi.mock('../../redis', () => ({

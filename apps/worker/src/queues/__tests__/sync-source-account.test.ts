@@ -117,11 +117,13 @@ vi.mock('@repo/db', () => {
 });
 
 vi.mock('bullmq', () => ({
-	Queue: vi.fn().mockImplementation(() => ({
-		add: vi.fn(),
-		name: 'sync',
-	})),
-	Worker: vi.fn().mockImplementation((_name: string, processor: unknown) => {
+	Queue: vi.fn(function MockQueue() {
+		return {
+			add: vi.fn(),
+			name: 'sync',
+		};
+	}),
+	Worker: vi.fn(function MockWorker(_name: string, processor: unknown) {
 		(globalThis as Record<string, unknown>).__syncSourceProcessor = processor;
 		return { on: vi.fn() };
 	}),

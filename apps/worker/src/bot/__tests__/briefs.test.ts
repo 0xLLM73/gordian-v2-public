@@ -12,10 +12,12 @@ vi.mock('../../queues/sync', () => ({
 }));
 
 vi.mock('grammy', () => ({
-	Composer: vi.fn(() => ({
-		command: vi.fn(),
-		on: vi.fn(() => ({ filter: vi.fn() })),
-	})),
+	Composer: vi.fn(function MockComposer() {
+		return {
+			command: vi.fn(),
+			on: vi.fn(() => ({ filter: vi.fn() })),
+		};
+	}),
 }));
 
 describe('briefs bot feature', () => {

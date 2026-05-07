@@ -19,11 +19,13 @@ const mockDbSelect = vi.hoisted(() => vi.fn());
 const mockSendMessage = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 
 vi.mock('bullmq', () => ({
-	Worker: vi.fn((name: string, processor: (job: unknown) => Promise<unknown>) => {
+	Worker: vi.fn(function MockWorker(name: string, processor: (job: unknown) => Promise<unknown>) {
 		if (name === 'briefs') processorStore.fn = processor;
 		return { on: vi.fn() };
 	}),
-	Queue: vi.fn(() => ({ add: vi.fn(() => Promise.resolve()), on: vi.fn() })),
+	Queue: vi.fn(function MockQueue() {
+		return { add: vi.fn(() => Promise.resolve()), on: vi.fn() };
+	}),
 }));
 
 vi.mock('../../realtime/broadcast', () => ({

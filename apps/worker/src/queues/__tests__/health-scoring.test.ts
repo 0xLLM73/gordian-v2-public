@@ -44,15 +44,19 @@ vi.mock('../outcome-evaluation', () => ({
 }));
 
 vi.mock('bullmq', () => ({
-	Queue: vi.fn().mockImplementation(() => ({
-		add: vi.fn(),
-		close: vi.fn(),
-	})),
-	Worker: vi.fn().mockImplementation((_name: string, processor: unknown) => ({
-		processor,
-		close: vi.fn(),
-		on: vi.fn(),
-	})),
+	Queue: vi.fn(function MockQueue() {
+		return {
+			add: vi.fn(),
+			close: vi.fn(),
+		};
+	}),
+	Worker: vi.fn(function MockWorker(_name: string, processor: unknown) {
+		return {
+			processor,
+			close: vi.fn(),
+			on: vi.fn(),
+		};
+	}),
 }));
 
 vi.mock('../../redis', () => ({

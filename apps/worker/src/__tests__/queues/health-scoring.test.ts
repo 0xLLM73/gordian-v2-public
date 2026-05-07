@@ -1,4 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('bullmq', () => ({
+	Queue: vi.fn(function MockQueue() {
+		return { add: vi.fn(), on: vi.fn() };
+	}),
+	Worker: vi.fn(function MockWorker() {
+		return { on: vi.fn() };
+	}),
+}));
+
+vi.mock('../../redis', () => ({
+	connection: {},
+}));
+
 import {
 	computeFrequency,
 	computeFulfillment,
