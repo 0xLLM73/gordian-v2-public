@@ -32,6 +32,8 @@ vi.mock('@repo/db', () => ({
 		mockGetCommitmentsForFulfillmentCheck(...args),
 	markCommitmentFulfilled: (...args: unknown[]) => mockMarkCommitmentFulfilled(...args),
 	updateLastCheckedAt: (...args: unknown[]) => mockUpdateLastCheckedAt(...args),
+	getActiveGoalsByType: vi.fn(() => Promise.resolve([])),
+	updateGoalProgress: vi.fn(() => Promise.resolve()),
 }));
 
 // Mock AI detection
@@ -49,15 +51,19 @@ vi.mock('../outcome-evaluation', () => ({
 
 // Mock BullMQ
 vi.mock('bullmq', () => ({
-	Queue: vi.fn().mockImplementation(() => ({
-		add: vi.fn(),
-		close: vi.fn(),
-	})),
-	Worker: vi.fn().mockImplementation((_name: string, processor: unknown) => ({
-		processor,
-		close: vi.fn(),
-		on: vi.fn(),
-	})),
+	Queue: vi.fn(function MockQueue() {
+		return {
+			add: vi.fn(),
+			close: vi.fn(),
+		};
+	}),
+	Worker: vi.fn(function MockWorker(_name: string, processor: unknown) {
+		return {
+			processor,
+			close: vi.fn(),
+			on: vi.fn(),
+		};
+	}),
 }));
 
 // Mock redis

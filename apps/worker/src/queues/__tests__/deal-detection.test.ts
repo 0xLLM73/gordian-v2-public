@@ -32,8 +32,10 @@ vi.mock('../../ai/prefilter', () => ({
 
 // Mock BullMQ — must be before import
 vi.mock('bullmq', () => ({
-	Queue: vi.fn().mockImplementation(() => ({ add: vi.fn() })),
-	Worker: vi.fn().mockImplementation((_name: string, processor: unknown) => {
+	Queue: vi.fn(function MockQueue() {
+		return { add: vi.fn() };
+	}),
+	Worker: vi.fn(function MockWorker(_name: string, processor: unknown) {
 		// Expose processor for testing
 		(Worker as unknown as { __processor: unknown }).__processor = processor;
 		return { on: vi.fn() };
@@ -100,8 +102,10 @@ async function getProcessor() {
 		prefilterEntities: mockPrefilterEntities,
 	}));
 	vi.doMock('bullmq', () => ({
-		Queue: vi.fn().mockImplementation(() => ({ add: vi.fn() })),
-		Worker: vi.fn().mockImplementation((_name: string, processor: unknown) => {
+		Queue: vi.fn(function MockQueue() {
+			return { add: vi.fn() };
+		}),
+		Worker: vi.fn(function MockWorker(_name: string, processor: unknown) {
 			(Worker as unknown as { __processor: unknown }).__processor = processor;
 			return { on: vi.fn() };
 		}),

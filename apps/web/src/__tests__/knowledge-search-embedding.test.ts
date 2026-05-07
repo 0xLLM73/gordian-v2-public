@@ -23,6 +23,7 @@ describe('Knowledge search embedding', () => {
 	const FAKE_EMBEDDING = Array.from({ length: 512 }, (_, i) => i * 0.001);
 
 	beforeEach(() => {
+		mockFetch.mockReset();
 		vi.stubGlobal('fetch', mockFetch);
 		process.env.OPENAI_API_KEY = 'test-key';
 

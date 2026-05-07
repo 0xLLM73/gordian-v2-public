@@ -78,8 +78,10 @@ vi.mock('../../ai/feedback-signals', () => ({
 type MockProcessor = (job: unknown) => Promise<unknown> | unknown;
 const workerProcessors: Record<string, MockProcessor> = {};
 vi.mock('bullmq', () => ({
-	FlowProducer: vi.fn().mockImplementation(() => ({ add: vi.fn() })),
-	Worker: vi.fn().mockImplementation((name: string, processor: MockProcessor) => {
+	FlowProducer: vi.fn(function MockFlowProducer() {
+		return { add: vi.fn() };
+	}),
+	Worker: vi.fn(function MockWorker(name: string, processor: MockProcessor) {
 		workerProcessors[name] = processor;
 		return { on: vi.fn() };
 	}),

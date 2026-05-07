@@ -4,10 +4,12 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@grammyjs/runner', () => ({ sequentialize: vi.fn(() => vi.fn()) }));
 vi.mock('@grammyjs/storage-redis', () => ({ RedisAdapter: vi.fn() }));
 vi.mock('grammy', () => ({
-	Bot: vi.fn(() => ({
-		use: vi.fn(),
-		catch: vi.fn(),
-	})),
+	Bot: vi.fn(function MockBot() {
+		return {
+			use: vi.fn(),
+			catch: vi.fn(),
+		};
+	}),
 	session: vi.fn(() => vi.fn()),
 }));
 vi.mock('../../redis', () => ({ connection: {} }));
