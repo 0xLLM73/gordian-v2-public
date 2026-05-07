@@ -29,6 +29,8 @@ pnpm dev
 
 Sign in with `alice@gordian.dev` and the local `SEED_PASSWORD` value from `.env.local`.
 
+`pnpm demo:setup` expects local ports `5432` and `6379` to be free. If another Postgres, Redis, or demo stack is using those ports, the setup preflight reports the conflict before Docker starts.
+
 ## Telegram Guidance
 
 Do not connect a real Telegram account to this codebase. If someone wants to experiment with Telegram locally, they should create all-new throwaway resources:
