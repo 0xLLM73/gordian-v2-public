@@ -3,6 +3,16 @@
 Use this checklist only after the local release checks pass. It covers the parts
 that cannot be proven by the repository alone.
 
+## Current Public Repo Status
+
+This public snapshot was published from a clean-history repository. The GitHub
+publication gate has been completed for the public repo: repository visibility,
+Dependabot alerts/security updates, secret scanning, push protection, private
+vulnerability reporting, and `main` branch protection are enabled.
+
+Use the checklist below for future releases, forks, or deployment-specific
+publication work.
+
 ## Local Release Gate
 
 Run these from a clean checkout:
@@ -43,9 +53,10 @@ This read-only check uses `gh api` against the origin repository and fails until
 - `main` blocks force pushes and deletion;
 - `main` enforces admins, linear history, and conversation resolution.
 
-If the repo is private or the account plan does not expose secret scanning,
-push protection, or private vulnerability reporting, this command should fail.
-That failure is expected until the GitHub-side settings are available.
+If the repo is private, branch protection is incomplete, or the account plan does
+not expose secret scanning, push protection, or private vulnerability reporting,
+this command should fail. That failure is expected until the GitHub-side settings
+are available.
 
 ## Provider-Side Rotation Gate
 

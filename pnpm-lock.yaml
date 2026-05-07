@@ -10,7 +10,7 @@ overrides:
   minimatch: '>=10.2.3'
   esbuild: '>=0.25.0'
   '@hono/node-server': 1.19.13
-  hono: '>=4.12.12'
+  hono: '>=4.12.18'
   protobufjs: 7.5.5
   undici: 7.25.0
   postcss: '>=8.5.10'
@@ -198,7 +198,7 @@ importers:
         version: 2.5.1
       '@hono/node-server':
         specifier: 1.19.13
-        version: 1.19.13(hono@4.12.16)
+        version: 1.19.13(hono@4.12.18)
       '@repo/crypto':
         specifier: workspace:*
         version: link:../../packages/crypto
@@ -227,8 +227,8 @@ importers:
         specifier: ^1.30.0
         version: 1.40.0
       hono:
-        specifier: '>=4.12.12'
-        version: 4.12.16
+        specifier: '>=4.12.18'
+        version: 4.12.18
       ioredis:
         specifier: ^5.10.1
         version: 5.10.1
@@ -1116,7 +1116,7 @@ packages:
     resolution: {integrity: sha512-TsQLe4i2gvoTtrHje625ngThGBySOgSK3Xo2XRYOdqGN1teR8+I7vchQC46uLJi8OF62YTYA3AhSpumtkhsaKQ==}
     engines: {node: '>=18.14.1'}
     peerDependencies:
-      hono: '>=4.12.12'
+      hono: '>=4.12.18'
 
   '@img/colour@1.0.0':
     resolution: {integrity: sha512-A5P/LfWGFSl6nsckYtjw9da+19jB8hkJ6ACTGcDfEJ0aE+l2n2El7dsVM7UVHZQ9s2lmYMWlrS21YLy2IR1LUw==}
@@ -3803,8 +3803,8 @@ packages:
   headers-polyfill@4.0.3:
     resolution: {integrity: sha512-IScLbePpkvO846sIwOtOTDjutRMWdXdJmXdMvk6gCBHxFO8d+QKOQedyZSxFTTFYRSmlgSTDtXqqq4pcenBXLQ==}
 
-  hono@4.12.16:
-    resolution: {integrity: sha512-jN0ZewiNAWSe5khM3EyCmBb250+b40wWbwNILNfEvq84VREWwOIkuUsFONk/3i3nqkz7Oe1PcpM2mwQEK2L9Kg==}
+  hono@4.12.18:
+    resolution: {integrity: sha512-RWzP96k/yv0PQfyXnWjs6zot20TqfpfsNXhOnev8d1InAxubW93L11/oNUc3tQqn2G0bSdAOBpX+2uDFHV7kdQ==}
     engines: {node: '>=16.9.0'}
 
   html-encoding-sniffer@6.0.0:
@@ -6505,9 +6505,9 @@ snapshots:
 
   '@grammyjs/types@3.24.0': {}
 
-  '@hono/node-server@1.19.13(hono@4.12.16)':
+  '@hono/node-server@1.19.13(hono@4.12.18)':
     dependencies:
-      hono: 4.12.16
+      hono: 4.12.18
 
   '@img/colour@1.0.0':
     optional: true
@@ -6657,7 +6657,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.27.0(zod@3.25.76)':
     dependencies:
-      '@hono/node-server': 1.19.13(hono@4.12.16)
+      '@hono/node-server': 1.19.13(hono@4.12.18)
       ajv: 8.18.0
       ajv-formats: 3.0.1(ajv@8.18.0)
       content-type: 1.0.5
@@ -6667,7 +6667,7 @@ snapshots:
       eventsource-parser: 3.0.6
       express: 5.2.1
       express-rate-limit: 8.2.1(express@5.2.1)
-      hono: 4.12.16
+      hono: 4.12.18
       jose: 6.2.3
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
@@ -9176,7 +9176,7 @@ snapshots:
 
   headers-polyfill@4.0.3: {}
 
-  hono@4.12.16: {}
+  hono@4.12.18: {}
 
   html-encoding-sniffer@6.0.0(@noble/hashes@2.0.1):
     dependencies:
