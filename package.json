@@ -9,7 +9,7 @@
 		"check:publication": "node scripts/check-publication-readiness.mjs",
 		"db:migrate": "pnpm --filter @repo/db migrate",
 		"dev": "turbo dev",
-		"demo:infra": "docker compose up -d postgres redis",
+		"demo:infra": "node scripts/demo-preflight.mjs && docker compose up -d postgres redis",
 		"demo:setup": "pnpm demo:infra && pnpm db:migrate && pnpm seed:demo",
 		"demo:smoke": "tsx scripts/demo-smoke.ts",
 		"lint": "biome check .",

@@ -51,7 +51,7 @@ pnpm demo:smoke
 pnpm dev
 ```
 
-`pnpm demo:setup` starts local Postgres/Redis, applies SQL migrations, and seeds synthetic demo workspaces. Telegram stays disabled.
+`pnpm demo:setup` starts local Postgres/Redis, applies SQL migrations, and seeds synthetic demo workspaces. It expects local ports `5432` and `6379` to be free; the setup preflight reports common port owners before Docker starts. Telegram stays disabled.
 
 `pnpm demo:smoke` installs the Chromium test browser if needed and runs the seeded demo Playwright smoke test with the same local-safe environment used by CI.
 
