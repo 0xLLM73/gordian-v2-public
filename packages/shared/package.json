@@ -1,0 +1,23 @@
+{
+	"name": "@repo/shared",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts",
+		"./handoff-token": "./src/handoff-token.ts"
+	},
+	"scripts": {
+		"build": "tsc",
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run"
+	},
+	"devDependencies": {
+		"@types/node": "^20.0.0",
+		"typescript": "^5.7.0"
+	},
+	"dependencies": {
+		"jose": "^5.9",
+		"zod": "^4.3.6"
+	}
+}

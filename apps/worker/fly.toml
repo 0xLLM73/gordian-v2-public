@@ -1,0 +1,37 @@
+# Example Fly.io config for a demo worker. Change this before deploying.
+app = "gordian-worker-example"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  NODE_OPTIONS = "--max-old-space-size=384"
+
+[http_service]
+  internal_port = 3001
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+
+[[restart]]
+  policy = "always"
+
+[checks]
+  [checks.health]
+    grace_period = "30s"
+    interval = "15s"
+    method = "get"
+    path = "/health"
+    port = 3001
+    timeout = "10s"
+    type = "http"
+
+[experimental]
+  kill_signal = "SIGTERM"
+  kill_timeout = 300

@@ -1,0 +1,14 @@
+**/node_modules
+**/.next
+**/.turbo
+**/dist
+**/.claude
+.git
+.playwright-mcp
+docs/research
+*.md
+!README.md
+*.pdf
+*.png
+.env*
+!.env.example

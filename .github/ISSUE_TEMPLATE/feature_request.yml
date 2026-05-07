@@ -1,0 +1,40 @@
+name: Feature Request
+description: Propose an improvement for builders adapting the repo into a Telegram CRM.
+title: "Feature: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Keep requests focused on reusable CRM capabilities, local demo quality, security posture, or Telegram integration boundaries.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What builder or operator problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Describe the behavior, API, or documentation change.
+    validations:
+      required: true
+  - type: dropdown
+    id: telegram
+    attributes:
+      label: Telegram Impact
+      options:
+        - No Telegram access needed
+        - Telegram bot only
+        - Telegram MTProto sync
+        - Outbound Telegram sending
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety Considerations
+      description: Note any credential, privacy, tenant-isolation, outbound-send, or user-data risks.

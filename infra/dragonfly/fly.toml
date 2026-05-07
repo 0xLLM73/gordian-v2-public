@@ -1,0 +1,31 @@
+# Example Fly.io config for a demo Dragonfly/Redis-compatible cache.
+# Change app and volume names before deploying a fork.
+app = "gordian-dragonfly-example"
+primary_region = "iad"
+
+[build]
+  image = "docker.dragonflydb.io/dragonflydb/dragonfly:latest"
+
+[env]
+  DFLY_bind = "::"
+  DFLY_maxmemory = "256mb"
+  DFLY_cache_mode = "false"
+  DFLY_proactor_threads = "1"
+  DFLY_cluster_mode = "emulated"
+  DFLY_snapshot_cron = "*/15 * * * *"
+  DFLY_dir = "/data"
+  DFLY_admin_port = "9999"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  auto_stop_machines = "off"
+  min_machines_running = 1
+
+[mounts]
+  source = "dragonfly_data_example"
+  destination = "/data"
+
+[[services]]
+  internal_port = 6379
+  protocol = "tcp"

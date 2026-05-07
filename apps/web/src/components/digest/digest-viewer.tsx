@@ -1,0 +1,358 @@
+'use client';
+
+import { generateDigestAction, listDigestsAction } from '@/app/actions/digest';
+import { useState, useTransition } from 'react';
+
+type Period = 'today' | 'yesterday' | '3d' | 'week';
+
+interface DigestSections {
+	activity_overview?: {
+		summary: string;
+		message_count: number;
+		active_conversations: number;
+		new_contacts?: number;
+	};
+	highlights?: Array<{
+		title: string;
+		detail: string;
+		contact_ref?: string;
+	}>;
+	key_conversations?: Array<{
+		contact_ref: string;
+		summary: string;
+		sentiment?: 'positive' | 'neutral' | 'negative';
+	}>;
+	action_items?: Array<{
+		item: string;
+		priority: 'high' | 'medium' | 'low';
+		contact_ref?: string;
+	}>;
+	watch_list?: Array<{
+		contact_ref: string;
+		reason: string;
+	}>;
+}
+
+interface DigestRecord {
+	id: string;
+	period: string;
+	periodStart: Date | string;
+	periodEnd: Date | string;
+	content: string | null;
+	sections: unknown;
+	messageCount: number | null;
+	contactCount: number | null;
+	generatedAt: Date | string | null;
+	createdAt: Date | string;
+	styleVariant: string | null;
+	toneVariant: string | null;
+}
+
+interface DigestViewerProps {
+	pastDigests: DigestRecord[];
+	contactMap?: Record<string, string>;
+}
+
+const PERIOD_LABELS: Record<Period, string> = {
+	today: 'Today',
+	yesterday: 'Yesterday',
+	'3d': 'Last 3 Days',
+	week: 'Last Week',
+};
+
+export function DigestViewer({ pastDigests: initialDigests, contactMap = {} }: DigestViewerProps) {
+	const [period, setPeriod] = useState<Period>('today');
+	const [digests, setDigests] = useState<DigestRecord[]>(initialDigests);
+	const [selectedDigest, setSelectedDigest] = useState<DigestRecord | null>(
+		initialDigests[0] ?? null,
+	);
+	const [isPending, startTransition] = useTransition();
+	const [generating, setGenerating] = useState(false);
+
+	function handleGenerate() {
+		setGenerating(true);
+		startTransition(async () => {
+			const result = await generateDigestAction({ period });
+			if (result?.data?.queued) {
+				// Poll for new digest after a short delay
+				setTimeout(() => {
+					startTransition(async () => {
+						const updated = await listDigestsAction({ limit: 10 });
+						if (updated?.data) {
+							setDigests(updated.data);
+							if (updated.data[0]) {
+								setSelectedDigest(updated.data[0]);
+							}
+						}
+						setGenerating(false);
+					});
+				}, 5000);
+			} else {
+				setGenerating(false);
+			}
+		});
+	}
+
+	function handleSelectDigest(d: DigestRecord) {
+		setSelectedDigest(d);
+	}
+
+	const sections = selectedDigest?.sections ? (selectedDigest.sections as DigestSections) : null;
+
+	// Replace contactId UUIDs with display names throughout text
+	const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+	function resolveText(text: string | undefined | null): string {
+		if (!text) return '';
+		if (Object.keys(contactMap).length === 0) return text;
+		return text.replace(UUID_RE, (match) => contactMap[match.toLowerCase()] ?? match);
+	}
+
+	return (
+		<div className="space-y-6">
+			{/* Period selector + generate button */}
+			<div className="flex items-center gap-3">
+				<div className="flex rounded-lg border border-border bg-card">
+					{(Object.entries(PERIOD_LABELS) as [Period, string][]).map(([key, label]) => (
+						<button
+							key={key}
+							type="button"
+							onClick={() => setPeriod(key)}
+							className={`px-4 py-2 text-sm font-medium transition-colors ${
+								period === key ? 'bg-gray-900 text-white' : 'text-muted-foreground hover:bg-accent'
+							} ${key === 'today' ? 'rounded-l-lg' : ''} ${key === 'week' ? 'rounded-r-lg' : ''}`}
+						>
+							{label}
+						</button>
+					))}
+				</div>
+				<button
+					type="button"
+					onClick={handleGenerate}
+					disabled={isPending || generating}
+					className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary/90 disabled:opacity-50"
+				>
+					{generating ? 'Generating...' : 'Generate Digest'}
+				</button>
+			</div>
+
+			<div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+				{/* Digest content */}
+				<div className="lg:col-span-2">
+					{selectedDigest ? (
+						<DigestContent
+							sections={sections}
+							content={selectedDigest.content}
+							resolveText={resolveText}
+						/>
+					) : (
+						<EmptyState />
+					)}
+				</div>
+
+				{/* Past digests sidebar */}
+				<div>
+					<h3 className="mb-3 text-sm font-semibold text-muted-foreground uppercase">
+						Past Digests
+					</h3>
+					{digests.length === 0 ? (
+						<p className="text-sm text-muted-foreground">No digests generated yet.</p>
+					) : (
+						<div className="space-y-2">
+							{digests.map((d) => (
+								<button
+									key={d.id}
+									type="button"
+									onClick={() => handleSelectDigest(d)}
+									className={`w-full rounded-lg border p-3 text-left transition-colors ${
+										selectedDigest?.id === d.id
+											? 'border-blue-300 bg-blue-50'
+											: 'border-border bg-card hover:border-border'
+									}`}
+								>
+									<p className="text-sm font-medium text-foreground">
+										{PERIOD_LABELS[d.period as Period] ?? d.period}
+									</p>
+									<p className="text-xs text-muted-foreground">{formatDate(d.generatedAt)}</p>
+									{d.messageCount !== null ? (
+										<p className="mt-1 text-xs text-muted-foreground">
+											{d.messageCount} messages, {d.contactCount} contacts
+										</p>
+									) : null}
+								</button>
+							))}
+						</div>
+					)}
+				</div>
+			</div>
+		</div>
+	);
+}
+
+function DigestContent({
+	sections,
+	content,
+	resolveText,
+}: {
+	sections: DigestSections | null;
+	content: string | null;
+	resolveText: (text: string | undefined | null) => string;
+}) {
+	if (!sections && !content) return <EmptyState />;
+
+	// If structured sections exist, render them richly
+	if (sections) {
+		return (
+			<div className="space-y-6">
+				{/* Activity Overview */}
+				{sections.activity_overview ? (
+					<Section title="Activity Overview">
+						<p className="text-sm text-foreground">
+							{resolveText(sections.activity_overview.summary)}
+						</p>
+						<div className="mt-3 grid grid-cols-3 gap-3">
+							<Stat label="Messages" value={sections.activity_overview.message_count} />
+							<Stat label="Conversations" value={sections.activity_overview.active_conversations} />
+							<Stat label="New Contacts" value={sections.activity_overview.new_contacts ?? 0} />
+						</div>
+					</Section>
+				) : null}
+
+				{/* Highlights */}
+				{sections.highlights && sections.highlights.length > 0 ? (
+					<Section title="Highlights">
+						<ul className="space-y-2">
+							{sections.highlights.map((h) => (
+								<li key={h.title} className="text-sm">
+									<span className="font-medium text-foreground">{resolveText(h.title)}</span>
+									<span className="text-muted-foreground"> — {resolveText(h.detail)}</span>
+								</li>
+							))}
+						</ul>
+					</Section>
+				) : null}
+
+				{/* Key Conversations */}
+				{sections.key_conversations && sections.key_conversations.length > 0 ? (
+					<Section title="Key Conversations">
+						<ul className="space-y-3">
+							{sections.key_conversations.map((c) => (
+								<li key={c.contact_ref} className="text-sm">
+									<div className="flex items-center gap-2">
+										<span className="font-medium text-foreground">
+											{resolveText(c.contact_ref)}
+										</span>
+										{c.sentiment ? <SentimentBadge sentiment={c.sentiment} /> : null}
+									</div>
+									<p className="mt-0.5 text-muted-foreground">{resolveText(c.summary)}</p>
+								</li>
+							))}
+						</ul>
+					</Section>
+				) : null}
+
+				{/* Action Items */}
+				{sections.action_items && sections.action_items.length > 0 ? (
+					<Section title="Action Items">
+						<ul className="space-y-2">
+							{sections.action_items.map((a) => (
+								<li key={a.item} className="flex items-start gap-2 text-sm">
+									<PriorityBadge priority={a.priority} />
+									<span className="text-foreground">{resolveText(a.item)}</span>
+								</li>
+							))}
+						</ul>
+					</Section>
+				) : null}
+
+				{/* Watch List */}
+				{sections.watch_list && sections.watch_list.length > 0 ? (
+					<Section title="Watch List">
+						<ul className="space-y-2">
+							{sections.watch_list.map((w) => (
+								<li key={w.contact_ref} className="text-sm">
+									<span className="font-medium text-amber-700">{resolveText(w.contact_ref)}</span>
+									<span className="text-muted-foreground"> — {resolveText(w.reason)}</span>
+								</li>
+							))}
+						</ul>
+					</Section>
+				) : null}
+			</div>
+		);
+	}
+
+	// Fallback: render plain text content
+	return (
+		<Section title="Digest">
+			<pre className="whitespace-pre-wrap text-sm text-foreground">{resolveText(content)}</pre>
+		</Section>
+	);
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+	return (
+		<div className="rounded-lg border border-border bg-card p-5">
+			<h3 className="mb-3 text-sm font-semibold text-foreground uppercase tracking-wide">
+				{title}
+			</h3>
+			{children}
+		</div>
+	);
+}
+
+function Stat({ label, value }: { label: string; value: number }) {
+	return (
+		<div className="rounded-md bg-muted p-3 text-center">
+			<p className="text-2xl font-bold text-foreground">{value}</p>
+			<p className="text-xs text-muted-foreground">{label}</p>
+		</div>
+	);
+}
+
+function SentimentBadge({ sentiment }: { sentiment: 'positive' | 'neutral' | 'negative' }) {
+	const colors = {
+		positive: 'bg-green-100 text-green-700',
+		neutral: 'bg-gray-100 text-gray-600',
+		negative: 'bg-red-100 text-red-700',
+	};
+	return (
+		<span className={`rounded-full px-2 py-0.5 text-xs font-medium ${colors[sentiment]}`}>
+			{sentiment}
+		</span>
+	);
+}
+
+function PriorityBadge({ priority }: { priority: 'high' | 'medium' | 'low' }) {
+	const colors = {
+		high: 'bg-red-100 text-red-700',
+		medium: 'bg-yellow-100 text-yellow-700',
+		low: 'bg-gray-100 text-gray-600',
+	};
+	return (
+		<span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${colors[priority]}`}>
+			{priority}
+		</span>
+	);
+}
+
+function EmptyState() {
+	return (
+		<div className="rounded-lg border border-border bg-muted p-12 text-center">
+			<p className="text-sm text-muted-foreground">
+				No digests yet. Select a period and click Generate Digest.
+			</p>
+		</div>
+	);
+}
+
+function formatDate(date: Date | string | null): string {
+	if (!date) return 'Unknown';
+	const d = typeof date === 'string' ? new Date(date) : date;
+	return d.toLocaleDateString('en-US', {
+		month: 'short',
+		day: 'numeric',
+		year: 'numeric',
+		hour: 'numeric',
+		minute: '2-digit',
+	});
+}

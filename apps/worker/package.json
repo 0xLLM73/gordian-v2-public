@@ -1,0 +1,44 @@
+{
+	"name": "worker",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "tsc --noEmit && node esbuild.config.mjs",
+		"dev": "tsx watch src/index.ts",
+		"purge:secrets": "tsx scripts/purge-runtime-secrets.ts",
+		"start": "node dist/index.js",
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run",
+		"deploy:fly:example": "cd ../.. && fly deploy --config apps/worker/fly.toml --dockerfile apps/worker/Dockerfile"
+	},
+	"dependencies": {
+		"@anthropic-ai/sdk": "^0.74.0",
+		"@google/generative-ai": "^0.24.1",
+		"@grammyjs/runner": "^2.0.3",
+		"@grammyjs/storage-redis": "^2.5.1",
+		"@hono/node-server": "^1.19.10",
+		"@repo/crypto": "workspace:*",
+		"@repo/db": "workspace:*",
+		"@repo/shared": "workspace:*",
+		"@supabase/supabase-js": "^2.95.3",
+		"big-integer": "^1.6.52",
+		"bullmq": "^5.76.4",
+		"density-clustering": "^1.3.0",
+		"dotenv": "^17.3.1",
+		"grammy": "^1.30.0",
+		"hono": "^4.12.12",
+		"ioredis": "^5.10.1",
+		"jose": "^5.9",
+		"posthog-node": "^5.28.0",
+		"postgres": "^3.4.0",
+		"redlock": "5.0.0-beta.2",
+		"telegram": "^2.26.22"
+	},
+	"devDependencies": {
+		"@types/node": "^20.0.0",
+		"esbuild": "^0.27.3",
+		"tsx": "^4.19.0",
+		"typescript": "^5.7.0"
+	}
+}

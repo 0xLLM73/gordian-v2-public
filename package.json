@@ -1,0 +1,54 @@
+{
+	"name": "gordian-v2",
+	"private": true,
+	"license": "MIT",
+	"packageManager": "pnpm@9.15.4",
+	"scripts": {
+		"audit:open-source": "node scripts/open-source-audit.mjs",
+		"build": "turbo build",
+		"check:publication": "node scripts/check-publication-readiness.mjs",
+		"db:migrate": "pnpm --filter @repo/db migrate",
+		"dev": "turbo dev",
+		"demo:infra": "docker compose up -d postgres redis",
+		"demo:setup": "pnpm demo:infra && pnpm db:migrate && pnpm seed:demo",
+		"demo:smoke": "tsx scripts/demo-smoke.ts",
+		"lint": "biome check .",
+		"lint:fix": "biome check --write .",
+		"purge:secrets": "pnpm --filter worker purge:secrets",
+		"seed:demo": "tsx scripts/seed.ts",
+		"test": "turbo test",
+		"typecheck": "turbo typecheck"
+	},
+	"devDependencies": {
+		"@aws-sdk/client-kms": "^3.700",
+		"@biomejs/biome": "^1.9.0",
+		"tsx": "^4.19.0",
+		"turbo": "^2.3.0",
+		"typescript": "^5.7.0",
+		"vite": "6.4.2",
+		"vitest": "^3.2.4"
+	},
+	"dependencies": {
+		"zod": "^4.3.6"
+	},
+	"pnpm": {
+		"overrides": {
+			"fast-xml-parser": ">=5.7.0",
+			"rollup": ">=4.59.0",
+			"minimatch": ">=10.2.3",
+			"esbuild": ">=0.25.0",
+			"@hono/node-server": "1.19.13",
+			"hono": ">=4.12.12",
+			"protobufjs": "7.5.5",
+			"undici": "7.25.0",
+			"postcss": ">=8.5.10",
+			"dompurify": ">=3.4.0",
+			"kysely": ">=0.28.16",
+			"lodash-es": ">=4.18.1",
+			"defu": ">=6.1.7",
+			"vite": "6.4.2",
+			"picomatch": ">=4.0.4",
+			"ip-address": ">=10.1.1"
+		}
+	}
+}

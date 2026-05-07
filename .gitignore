@@ -1,0 +1,86 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+.next/
+.turbo/
+out/
+*.tsbuildinfo
+
+# Environment
+.env*
+!.env.example
+
+# Claude Code
+.claude/
+.playwright-mcp/
+.mcp.json
+
+# Pentagon agent files
+PURPOSE.md
+SOUL.md
+team/
+
+# Supabase local
+supabase/.temp/
+
+# Screenshots
+smoke-*.png
+
+# Planning & Research
+docs/research/
+docs/DEEP_RESEARCH_PROMPTS_ROUND3.md
+docs/FEATURE_AUDIT.md
+docs/research/CROSS_CUTTING_ANALYSIS.md
+docs/AI_SYSTEM_COST.md
+docs/AI_OPTIMIZATION_COST.md
+docs/COST_OPTIMIZATION_ROADMAP.md
+docs/ai_knowledge_cost.md
+docs/AI_CHAT_SYSTEM.md
+docs/AI_COST_AUDIT.md
+docs/DECISION_PROVENANCE_GRAPH.md
+docs/KNOWLEDGE_SYSTEM_AUDIT.md
+docs/ONBOARDING_SYSTEM_AUDIT.md
+docs/arch_epiphany.md
+docs/implementation/
+docs/magic_moment.md
+docs/progressive_calibration.md
+MORNING_BRIEF.md
+old-repo.md
+refactor-spec.md
+
+# Screenshots (planning artifacts)
+*.png
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker
+docker-compose.override.yml
+
+# Debug
+npm-debug.log*
+pnpm-debug.log*
+
+# Test
+coverage/
+.test-accounts
+**/e2e/fixtures/.auth/
+**/test-results/
+**/playwright-report/
+
+# Drizzle
+packages/db/drizzle/meta/
+
+# Next.js
+apps/web/.next/
+apps/web/out/

@@ -1,0 +1,51 @@
+name: Bug Report
+description: Report a reproducible bug in the public codebase.
+title: "Bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include real Telegram messages, phone numbers, session strings, API keys, `.env` files, database dumps, or provider logs with secrets. Report sensitive security issues privately through the process in `SECURITY.md`.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction Steps
+      description: Use synthetic data or throwaway Telegram resources only.
+      placeholder: |
+        1. Run ...
+        2. Open ...
+        3. Click ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, Node.js version, pnpm version, package/app touched, and whether Telegram flags were enabled.
+      placeholder: |
+        OS:
+        Node:
+        pnpm:
+        App/package:
+        Telegram flags enabled: no
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation
+      description: Paste command results without secrets.
+      placeholder: |
+        pnpm audit:open-source
+        pnpm lint
+        pnpm typecheck
+        pnpm test

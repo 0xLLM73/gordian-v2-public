@@ -1,0 +1,315 @@
+import { MergeDialog } from '@/components/knowledge/merge-dialog';
+import { KNOWLEDGE_LINK_TYPE_COLORS, KNOWLEDGE_TYPE_COLORS } from '@/lib/colors';
+import { formatRelativeDate } from '@/lib/format';
+import { computeDecayedRelevance } from '@/lib/knowledge-utils';
+import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
+import {
+	getKnowledgeNeighbors,
+	getKnowledgeNode,
+	getSharedKnowledge,
+	listContactsByKnowledge,
+	searchKnowledgeNodes,
+} from '@repo/db';
+import type { KnowledgeNeighbor, KnowledgeNode } from '@repo/db';
+import Link from 'next/link';
+import { notFound } from 'next/navigation';
+
+function LinkTypeBadge({ type }: { type: string }) {
+	const colorClass = KNOWLEDGE_LINK_TYPE_COLORS[type] ?? 'bg-gray-100 text-gray-600';
+	return (
+		<span className={`rounded px-2 py-0.5 text-xs font-medium ${colorClass}`}>
+			{type.replace(/_/g, ' ')}
+		</span>
+	);
+}
+
+function TypeBadge({ type }: { type: string }) {
+	const colorClass = KNOWLEDGE_TYPE_COLORS[type] ?? 'bg-gray-100 text-gray-700';
+	return <span className={`rounded px-2 py-0.5 text-xs font-medium ${colorClass}`}>{type}</span>;
+}
+
+function RelatedEntitiesSection({ neighbors }: { neighbors: KnowledgeNeighbor[] }) {
+	if (neighbors.length === 0) {
+		return (
+			<div className="rounded-lg border border-border bg-card p-6">
+				<h2 className="mb-4 text-lg font-semibold text-foreground">Related Entities</h2>
+				<p className="text-sm text-muted-foreground">
+					No linked entities yet. The AI will connect related topics as it processes more
+					conversations.
+				</p>
+			</div>
+		);
+	}
+
+	const outbound = neighbors.filter((n) => n.direction === 'outbound');
+	const inbound = neighbors.filter((n) => n.direction === 'inbound');
+
+	return (
+		<div className="rounded-lg border border-border bg-card p-6">
+			<h2 className="mb-4 text-lg font-semibold text-foreground">
+				Related Entities{' '}
+				<span className="ml-1 text-sm font-normal text-muted-foreground">({neighbors.length})</span>
+			</h2>
+
+			{outbound.length > 0 && (
+				<div className="mb-5">
+					<p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+						Links to
+					</p>
+					<ul className="space-y-2">
+						{outbound.map((n) => (
+							<li key={`out-${n.node.id}`}>
+								<Link
+									href={`/knowledge/${n.node.id}`}
+									className="flex items-center gap-2 rounded-md p-2 transition-colors hover:bg-accent"
+								>
+									<span className="text-muted-foreground">&rarr;</span>
+									<span className="text-sm font-medium text-foreground">{n.node.displayName}</span>
+									<TypeBadge type={n.node.type} />
+									<LinkTypeBadge type={n.link.linkType} />
+								</Link>
+							</li>
+						))}
+					</ul>
+				</div>
+			)}
+
+			{inbound.length > 0 && (
+				<div>
+					<p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+						Linked from
+					</p>
+					<ul className="space-y-2">
+						{inbound.map((n) => (
+							<li key={`in-${n.node.id}`}>
+								<Link
+									href={`/knowledge/${n.node.id}`}
+									className="flex items-center gap-2 rounded-md p-2 transition-colors hover:bg-accent"
+								>
+									<span className="text-muted-foreground">&larr;</span>
+									<span className="text-sm font-medium text-foreground">{n.node.displayName}</span>
+									<TypeBadge type={n.node.type} />
+									<LinkTypeBadge type={n.link.linkType} />
+								</Link>
+							</li>
+						))}
+					</ul>
+				</div>
+			)}
+		</div>
+	);
+}
+
+function SharedKnowledgeSection({
+	sharedByContact,
+}: {
+	sharedByContact: Array<{ contactName: string; nodes: KnowledgeNode[] }>;
+}) {
+	const hasAny = sharedByContact.some((s) => s.nodes.length > 0);
+
+	if (!hasAny) return null;
+
+	return (
+		<div className="rounded-lg border border-indigo-100 bg-indigo-50 p-6">
+			<h2 className="mb-4 text-lg font-semibold text-foreground">Shared Context</h2>
+			<p className="mb-4 text-sm text-muted-foreground">
+				Knowledge topics in common with contacts on this node:
+			</p>
+			<div className="space-y-4">
+				{sharedByContact
+					.filter((s) => s.nodes.length > 0)
+					.map((s) => (
+						<div key={s.contactName}>
+							<p className="mb-1.5 text-xs font-semibold text-foreground">{s.contactName}</p>
+							<div className="flex flex-wrap gap-1.5">
+								{s.nodes.map((node) => (
+									<Link key={node.id} href={`/knowledge/${node.id}`}>
+										<span
+											className={`inline-block cursor-pointer rounded px-2 py-0.5 text-xs font-medium transition-opacity hover:opacity-80 ${KNOWLEDGE_TYPE_COLORS[node.type] ?? 'bg-gray-100 text-gray-700'}`}
+										>
+											{node.displayName}
+										</span>
+									</Link>
+								))}
+							</div>
+						</div>
+					))}
+			</div>
+		</div>
+	);
+}
+
+export default async function KnowledgeNodePage({
+	params,
+	searchParams,
+}: {
+	params: Promise<{ id: string }>;
+	searchParams: Promise<Record<string, string | undefined>>;
+}) {
+	const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+	const session = await requireSession();
+	const workspaceId = await getUserWorkspaceId(session.user.id);
+	if (!workspaceId) notFound();
+	const { id } = await params;
+	if (!UUID_RE.test(id)) notFound();
+	const sp = await searchParams;
+	const fromContactId = sp.fromContact;
+	if (fromContactId && !UUID_RE.test(fromContactId)) notFound();
+
+	const envelope = await getWorkspaceEnvelope(workspaceId);
+	if (!envelope) notFound();
+
+	const node = await getKnowledgeNode(workspaceId, id, envelope);
+	if (!node) notFound();
+
+	// Fetch linked contacts and neighbors in parallel
+	const [contactRows, neighbors] = await Promise.all([
+		listContactsByKnowledge(node.id, workspaceId, envelope),
+		getKnowledgeNeighbors(node.id, workspaceId, envelope),
+	]);
+
+	// SEC-006: Project only UI-needed fields — never serialize phone/email/notes/blind indexes into the page payload
+	const linkedContacts = contactRows.map((r) => ({
+		id: r.contact.id,
+		firstName: r.contact.firstName,
+		lastName: r.contact.lastName,
+	}));
+
+	// Shared knowledge: if viewing from a contact context, compute shared topics with each linked contact
+	let sharedByContact: Array<{ contactName: string; nodes: KnowledgeNode[] }> = [];
+	if (fromContactId) {
+		const others = linkedContacts.filter((c) => c.id !== fromContactId).slice(0, 5);
+		sharedByContact = await Promise.all(
+			others.map(async (c) => {
+				const contactName = [c.firstName, c.lastName].filter(Boolean).join(' ') || 'Unknown';
+				const nodes = await getSharedKnowledge(fromContactId, c.id, workspaceId, envelope);
+				return { contactName, nodes };
+			}),
+		);
+	}
+
+	// Merge candidates: search for similar nodes
+	const similar = await searchKnowledgeNodes(workspaceId, node.name, undefined, envelope);
+	const mergeCandidates = similar.filter((n) => n.id !== node.id).slice(0, 5);
+
+	return (
+		<div className="space-y-6">
+			<div>
+				<Link href="/knowledge" className="text-sm text-muted-foreground hover:text-foreground">
+					&larr; Back to Knowledge
+				</Link>
+			</div>
+
+			{/* Node header */}
+			<div className="rounded-lg border border-border bg-card p-6">
+				<div className="mb-3 flex items-center gap-3">
+					<span
+						className={`inline-block rounded px-2.5 py-1 text-sm font-medium ${KNOWLEDGE_TYPE_COLORS[node.type] || 'bg-gray-100 text-gray-700'}`}
+					>
+						{node.type}
+					</span>
+				</div>
+				<h1 className="text-2xl font-bold text-foreground">{node.displayName}</h1>
+				{node.description ? (
+					<p className="mt-2 text-sm text-muted-foreground">{node.description}</p>
+				) : null}
+				<div className="mt-4 flex items-center gap-4 text-sm text-muted-foreground">
+					<span>{node.mentionCount ?? 0} mentions</span>
+					{node.lastSeenAt ? (
+						<span
+							className={
+								computeDecayedRelevance(node.mentionCount ?? 0, node.lastSeenAt).opacity < 0.5
+									? 'text-orange-500'
+									: ''
+							}
+						>
+							Last seen {formatRelativeDate(node.lastSeenAt)}
+						</span>
+					) : null}
+				</div>
+			</div>
+
+			{/* Related Entities (Phase 32) */}
+			<RelatedEntitiesSection neighbors={neighbors} />
+
+			{/* Shared Context (Phase 32) — visible when viewing from a contact context */}
+			{fromContactId ? <SharedKnowledgeSection sharedByContact={sharedByContact} /> : null}
+
+			{/* Linked Contacts */}
+			<div className="rounded-lg border border-border bg-card p-6">
+				<h2 className="mb-4 text-lg font-semibold text-foreground">Contacts who know about this</h2>
+				{linkedContacts.length === 0 ? (
+					<p className="text-sm text-muted-foreground">
+						No contacts linked yet. Sync messages to discover connections.
+					</p>
+				) : (
+					<ul className="divide-y divide-gray-100">
+						{linkedContacts.map((contact) => {
+							const displayName =
+								[contact.firstName, contact.lastName].filter(Boolean).join(' ') || 'Unknown';
+							const initials = (contact.firstName || '?')[0].toUpperCase();
+
+							return (
+								<li key={contact.id}>
+									<Link
+										href={`/contacts/${contact.id}`}
+										className="flex items-center gap-3 py-3 transition-colors hover:text-indigo-700"
+									>
+										<div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-medium text-blue-700">
+											{initials}
+										</div>
+										<span className="text-sm font-medium text-foreground">{displayName}</span>
+									</Link>
+								</li>
+							);
+						})}
+					</ul>
+				)}
+			</div>
+
+			{/* Merge Candidates */}
+			{mergeCandidates.length > 0 ? (
+				<div className="rounded-lg border border-border bg-card p-6">
+					<h2 className="mb-1 text-lg font-semibold text-foreground">Similar Nodes</h2>
+					<p className="mb-4 text-sm text-muted-foreground">
+						These nodes have similar names and may be duplicates. Merge to combine their links and
+						mentions.
+					</p>
+					<ul className="divide-y divide-gray-100">
+						{mergeCandidates.map((candidate) => (
+							<li key={candidate.id} className="flex items-center justify-between py-3">
+								<Link
+									href={`/knowledge/${candidate.id}`}
+									className="flex items-center gap-2 transition-colors hover:text-indigo-700"
+								>
+									<TypeBadge type={candidate.type} />
+									<span className="text-sm font-medium text-foreground">
+										{candidate.displayName}
+									</span>
+									<span className="text-xs text-muted-foreground">
+										{candidate.mentionCount ?? 0} mentions
+									</span>
+								</Link>
+								<MergeDialog
+									survivor={{
+										id: node.id,
+										displayName: node.displayName,
+										type: node.type,
+										mentionCount: node.mentionCount,
+									}}
+									merged={{
+										id: candidate.id,
+										displayName: candidate.displayName,
+										type: candidate.type,
+										mentionCount: candidate.mentionCount,
+									}}
+								/>
+							</li>
+						))}
+					</ul>
+				</div>
+			) : null}
+		</div>
+	);
+}

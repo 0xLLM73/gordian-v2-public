@@ -1,0 +1,101 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mockInferSimilarityLinks = vi.hoisted(() => vi.fn());
+const mockIsFeatureEnabled = vi.hoisted(() => vi.fn());
+const mockListKnowledgeNodes = vi.hoisted(() => vi.fn());
+const mockListContactIdsByKnowledge = vi.hoisted(() => vi.fn());
+const mockCreateKnowledgeLink = vi.hoisted(() => vi.fn());
+
+vi.mock('@repo/db', () => ({
+	inferSimilarityLinks: mockInferSimilarityLinks,
+	isFeatureEnabled: mockIsFeatureEnabled,
+	listKnowledgeNodes: mockListKnowledgeNodes,
+	listContactIdsByKnowledge: mockListContactIdsByKnowledge,
+	createKnowledgeLink: mockCreateKnowledgeLink,
+}));
+
+import { runKnowledgeInference } from '../knowledge-inference';
+
+const WS = '550e8400-e29b-41d4-a716-446655440000';
+
+describe('runKnowledgeInference', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mockIsFeatureEnabled.mockResolvedValue(true);
+		mockCreateKnowledgeLink.mockResolvedValue({});
+		mockListContactIdsByKnowledge.mockResolvedValue([]);
+		mockInferSimilarityLinks.mockResolvedValue(0);
+	});
+
+	it('skips when feature flag is off', async () => {
+		mockIsFeatureEnabled.mockResolvedValue(false);
+		await runKnowledgeInference(WS);
+		expect(mockListKnowledgeNodes).not.toHaveBeenCalled();
+	});
+
+	it('skips when fewer than 2 nodes', async () => {
+		mockListKnowledgeNodes.mockResolvedValue([{ id: 'n1' }]);
+		await runKnowledgeInference(WS);
+		expect(mockInferSimilarityLinks).not.toHaveBeenCalled();
+	});
+
+	it('calls inferSimilarityLinks with correct threshold', async () => {
+		mockListKnowledgeNodes.mockResolvedValue([{ id: 'n1' }, { id: 'n2' }]);
+		mockInferSimilarityLinks.mockResolvedValue(5);
+		await runKnowledgeInference(WS);
+		expect(mockInferSimilarityLinks).toHaveBeenCalledWith(WS, 0.3);
+	});
+
+	it('continues co-occurrence pass even if similarity pass fails', async () => {
+		mockListKnowledgeNodes.mockResolvedValue([{ id: 'n1' }, { id: 'n2' }]);
+		mockInferSimilarityLinks.mockRejectedValue(new Error('pg down'));
+		await runKnowledgeInference(WS);
+		// Should not throw — error is caught and logged
+	});
+
+	it('creates co-occurrence link with Jaccard weight', async () => {
+		const n1 = { id: 'node-1' };
+		const n2 = { id: 'node-2' };
+		mockListKnowledgeNodes.mockResolvedValue([n1, n2]);
+
+		// Both nodes share 2 contacts, each has 3 contacts total
+		// listContactIdsByKnowledge returns string[] of contact IDs
+		mockListContactIdsByKnowledge.mockImplementation((nodeId: string) => {
+			if (nodeId === 'node-1') {
+				return Promise.resolve(['c-1', 'c-2', 'c-3']);
+			}
+			return Promise.resolve(['c-1', 'c-2', 'c-4']);
+		});
+
+		await runKnowledgeInference(WS);
+
+		// Jaccard: 2 / (3 + 3 - 2) = 0.5
+		expect(mockCreateKnowledgeLink).toHaveBeenCalledWith(
+			WS,
+			expect.any(String),
+			expect.any(String),
+			'related_to',
+			0.5,
+		);
+	});
+
+	it('skips co-occurrence edges with Jaccard < 0.05', async () => {
+		const n1 = { id: 'node-1' };
+		const n2 = { id: 'node-2' };
+		mockListKnowledgeNodes.mockResolvedValue([n1, n2]);
+
+		// 2 shared contacts out of 50 total each → Jaccard = 2/(50+50-2) ≈ 0.020
+		const contactsA = Array.from({ length: 50 }, (_, i) => `c-${i}`);
+		const contactsB = ['c-0', 'c-1', ...Array.from({ length: 48 }, (_, i) => `d-${i}`)];
+
+		mockListContactIdsByKnowledge.mockImplementation((nodeId: string) => {
+			if (nodeId === 'node-1') return Promise.resolve(contactsA);
+			return Promise.resolve(contactsB);
+		});
+
+		await runKnowledgeInference(WS);
+
+		// Jaccard ≈ 0.020 < 0.05 → no co-occurrence link created
+		expect(mockCreateKnowledgeLink).not.toHaveBeenCalled();
+	});
+});
