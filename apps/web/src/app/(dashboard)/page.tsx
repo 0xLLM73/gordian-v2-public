@@ -4,6 +4,7 @@ import { CommitmentActions } from '@/components/commitment-actions';
 import { ActNowViewTracker } from '@/components/dashboard/act-now-view-tracker';
 import { NewIntelViewTracker } from '@/components/dashboard/new-intel-view-tracker';
 import { SectionTimeWrapper } from '@/components/dashboard/section-time-wrapper';
+import { TelegramImportManagerCard } from '@/components/dashboard/telegram-import-manager-card';
 import { GhostingAlertSection } from '@/components/ghosting-alert-section';
 import { SyncButton } from '@/components/sync-button';
 import { Button } from '@/components/ui/button';
@@ -12,10 +13,11 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { DEAL_STAGE_BG_COLORS, HEALTH_BADGE_COLORS } from '@/lib/colors';
 import { formatCurrency, formatRelativeDate } from '@/lib/format';
 import { isRuntimeEnvEnabled } from '@/lib/runtime-env';
+import { isStoredSessionUnwrapOutsideImportsAllowed } from '@/lib/telegram-session-policy';
 import { track } from '@/lib/track';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
 import {
-	getCalibration,
+	getCalibrationCompletionStatus,
 	getContactsByIds,
 	getDashboardStats,
 	getHealthScoresByWorkspace,
@@ -47,6 +49,7 @@ export default async function DashboardPage({
 	const params = await searchParams;
 	const showWelcome = params.welcome === '1';
 	const telegramSyncEnabled = isRuntimeEnvEnabled('TELEGRAM_MTPROTO_ENABLED');
+	const contactSyncEnabled = telegramSyncEnabled && isStoredSessionUnwrapOutsideImportsAllowed();
 
 	return (
 		<div>
@@ -65,7 +68,11 @@ export default async function DashboardPage({
 					</Suspense>
 					<SyncButton
 						disabledReason={
-							telegramSyncEnabled ? undefined : 'Telegram sync is disabled in this demo build'
+							contactSyncEnabled
+								? undefined
+								: telegramSyncEnabled
+									? 'Contact sync is disabled; use Telegram history import'
+									: 'Telegram sync is disabled in this demo build'
 						}
 					/>
 				</div>
@@ -74,6 +81,12 @@ export default async function DashboardPage({
 			<Suspense fallback={null}>
 				<CalibrationBanner userId={session.user.id} workspaceId={workspaceId} />
 			</Suspense>
+
+			<TelegramImportManagerCard
+				disabledReason={
+					telegramSyncEnabled ? undefined : 'Telegram sync is disabled in this demo build'
+				}
+			/>
 
 			{/* Collapsible summary bar — stat cards de-emphasized */}
 			<Suspense fallback={<StatsSkeleton />}>
@@ -158,10 +171,7 @@ async function LastSyncInfo({ workspaceId }: { workspaceId: string }) {
 }
 
 async function CalibrationBanner({ userId, workspaceId }: { userId: string; workspaceId: string }) {
-	const envelope = await getWorkspaceEnvelope(workspaceId);
-	if (!envelope) return null;
-
-	const calibration = await getCalibration(userId, workspaceId, envelope);
+	const calibration = await getCalibrationCompletionStatus(userId, workspaceId);
 	if (calibration?.completedAt) return null;
 
 	return (

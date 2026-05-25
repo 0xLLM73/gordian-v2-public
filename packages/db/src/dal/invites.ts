@@ -97,16 +97,18 @@ export async function acceptInvite(token: string, userId: string) {
 		if (!invite) throw new Error('Invite not found or already used');
 		if (new Date() > invite.expiresAt) throw new Error('Invite has expired');
 
+		const [acceptedInvite] = await tx
+			.update(workspaceInvites)
+			.set({ acceptedAt: sql`now()` })
+			.where(and(eq(workspaceInvites.id, invite.id), isNull(workspaceInvites.acceptedAt)))
+			.returning({ id: workspaceInvites.id });
+		if (!acceptedInvite) throw new Error('Invite not found or already used');
+
 		await tx.insert(workspaceMembers).values({
 			workspaceId: invite.workspaceId,
 			userId,
 			role: invite.role,
 		});
-
-		await tx
-			.update(workspaceInvites)
-			.set({ acceptedAt: sql`now()` })
-			.where(eq(workspaceInvites.id, invite.id));
 
 		return invite;
 	});

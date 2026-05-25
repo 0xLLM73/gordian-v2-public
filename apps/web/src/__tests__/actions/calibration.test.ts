@@ -31,11 +31,13 @@ vi.mock('@/lib/workspace', () => ({
 
 const mockGetCalibration = vi.fn();
 const mockUpsertCalibration = vi.fn();
+const mockSaveConsent = vi.fn();
 
 vi.mock('@repo/db', () => ({
 	withWorkspaceRLS: vi.fn((_wsId: string, fn: (tx: unknown) => unknown) => fn({})),
 	getCalibration: mockGetCalibration,
 	upsertCalibration: mockUpsertCalibration,
+	saveConsent: mockSaveConsent,
 }));
 
 const MOCK_CALIBRATION = {
@@ -251,6 +253,110 @@ describe('calibration actions', () => {
 			const result = await getCalibrationStatusAction({});
 
 			expect(result?.data).toEqual({ exists: true, completed: false, version: 1 });
+		});
+	});
+
+	describe('saveConsentAction', () => {
+		it('persists consent with current Telegram consent version', async () => {
+			mockSaveConsent.mockResolvedValue(undefined);
+
+			const { saveConsentAction } = await import('@/app/actions/calibration');
+			const result = await saveConsentAction({
+				consentDataProcessing: true,
+				consentAiAnalysis: false,
+				consentTelegramAccess: true,
+				consentVersion: 2,
+			});
+
+			expect(result?.data).toEqual({ saved: true });
+			expect(mockSaveConsent).toHaveBeenCalledWith('user-1', WORKSPACE_ID, {
+				consentDataProcessing: true,
+				consentAiAnalysis: false,
+				consentTelegramAccess: true,
+				consentVersion: 2,
+			});
+		});
+
+		it('does not persist AI-analysis consent while AI processing is disabled', async () => {
+			vi.stubEnv('AI_PROCESSING_ENABLED', 'false');
+			mockSaveConsent.mockResolvedValue(undefined);
+
+			const { saveConsentAction } = await import('@/app/actions/calibration');
+			const result = await saveConsentAction({
+				consentDataProcessing: true,
+				consentAiAnalysis: true,
+				consentTelegramAccess: true,
+				consentVersion: 2,
+			});
+
+			expect(result?.data).toEqual({ saved: true });
+			expect(mockSaveConsent).toHaveBeenCalledWith('user-1', WORKSPACE_ID, {
+				consentDataProcessing: true,
+				consentAiAnalysis: false,
+				consentTelegramAccess: true,
+				consentVersion: 2,
+			});
+		});
+
+		it('persists AI-analysis consent when AI processing is enabled', async () => {
+			vi.stubEnv('AI_PROCESSING_ENABLED', 'true');
+			mockSaveConsent.mockResolvedValue(undefined);
+
+			const { saveConsentAction } = await import('@/app/actions/calibration');
+			const result = await saveConsentAction({
+				consentDataProcessing: true,
+				consentAiAnalysis: true,
+				consentTelegramAccess: true,
+				consentVersion: 2,
+			});
+
+			expect(result?.data).toEqual({ saved: true });
+			expect(mockSaveConsent).toHaveBeenCalledWith('user-1', WORKSPACE_ID, {
+				consentDataProcessing: true,
+				consentAiAnalysis: true,
+				consentTelegramAccess: true,
+				consentVersion: 2,
+			});
+		});
+
+		it('persists AI-analysis consent when local Qwen analysis is configured', async () => {
+			vi.stubEnv('AI_PROCESSING_ENABLED', 'false');
+			vi.stubEnv('COMMITMENT_LLM_PROVIDER', 'local');
+			vi.stubEnv('COMMITMENT_LLM_BASE_URL', 'http://localhost:11434/v1');
+			vi.stubEnv('COMMITMENT_LLM_MODEL', 'qwen3:4b-instruct');
+			vi.stubEnv('KNOWLEDGE_EMBEDDING_PROVIDER', 'local');
+			vi.stubEnv('KNOWLEDGE_EMBEDDING_PRESET', 'qwen');
+			vi.stubEnv('KNOWLEDGE_EMBEDDING_MODEL', 'qwen3-embedding:0.6b');
+			mockSaveConsent.mockResolvedValue(undefined);
+
+			const { saveConsentAction } = await import('@/app/actions/calibration');
+			const result = await saveConsentAction({
+				consentDataProcessing: true,
+				consentAiAnalysis: true,
+				consentTelegramAccess: true,
+				consentVersion: 2,
+			});
+
+			expect(result?.data).toEqual({ saved: true });
+			expect(mockSaveConsent).toHaveBeenCalledWith('user-1', WORKSPACE_ID, {
+				consentDataProcessing: true,
+				consentAiAnalysis: true,
+				consentTelegramAccess: true,
+				consentVersion: 2,
+			});
+		});
+
+		it('rejects stale Telegram consent versions', async () => {
+			const { saveConsentAction } = await import('@/app/actions/calibration');
+			const result = await saveConsentAction({
+				consentDataProcessing: true,
+				consentAiAnalysis: true,
+				consentTelegramAccess: true,
+				consentVersion: 1,
+			});
+
+			expect(result?.validationErrors).toBeDefined();
+			expect(mockSaveConsent).not.toHaveBeenCalled();
 		});
 	});
 });

@@ -1,6 +1,6 @@
 'use client';
 
-import { acceptInviteAction } from '@/app/actions/invites';
+import { inviteSignupAction } from '@/app/actions/invites';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -22,24 +22,22 @@ export function InviteSignupForm({ token, email }: { token: string; email: strin
 		setPending(true);
 
 		try {
-			// Create the account via Better Auth
-			const signupResult = await authClient.signUp.email({
+			const signupResult = await inviteSignupAction({
+				token,
 				name,
 				email: emailValue,
 				password,
 			});
 
-			if (signupResult.error) {
-				setError(signupResult.error.message || 'Failed to create account');
+			if (signupResult?.serverError || !signupResult?.data) {
+				setError(signupResult?.serverError || 'Failed to create account');
 				setPending(false);
 				return;
 			}
 
-			// Accept the invite (adds user to workspace)
-			const acceptResult = await acceptInviteAction({ token });
-
-			if (acceptResult?.serverError) {
-				setError(acceptResult.serverError);
+			const signInResult = await authClient.signIn.email({ email: emailValue, password });
+			if (signInResult.error) {
+				setError(signInResult.error.message || 'Account created. Please log in.');
 				setPending(false);
 				return;
 			}

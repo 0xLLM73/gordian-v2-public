@@ -4,7 +4,7 @@
  * grammY bot is mocked, but the function chain is real.
  */
 import { saveBrief } from '@repo/db';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { selectPromptVariant } from '../bandit';
 import { inferWithCache } from '../cached-inference';
 import { generateEmbedding } from '../embeddings';
@@ -19,13 +19,11 @@ const mockDbSelect = vi.hoisted(() => vi.fn());
 const mockSendMessage = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 
 vi.mock('bullmq', () => ({
-	Worker: vi.fn(function MockWorker(name: string, processor: (job: unknown) => Promise<unknown>) {
+	Worker: vi.fn((name: string, processor: (job: unknown) => Promise<unknown>) => {
 		if (name === 'briefs') processorStore.fn = processor;
 		return { on: vi.fn() };
 	}),
-	Queue: vi.fn(function MockQueue() {
-		return { add: vi.fn(() => Promise.resolve()), on: vi.fn() };
-	}),
+	Queue: vi.fn(() => ({ add: vi.fn(() => Promise.resolve()), on: vi.fn() })),
 }));
 
 vi.mock('../../realtime/broadcast', () => ({
@@ -81,6 +79,10 @@ vi.mock('../bandit', () => ({ selectPromptVariant: vi.fn() }));
 vi.mock('../cached-inference', () => ({ inferWithCache: vi.fn() }));
 vi.mock('../embeddings', () => ({ generateEmbedding: vi.fn() }));
 
+afterEach(() => {
+	vi.unstubAllEnvs();
+});
+
 function chainResult(rows: unknown[]) {
 	return {
 		from: vi.fn().mockReturnValue({
@@ -112,6 +114,7 @@ SUGGESTED ACTIONS
 
 	beforeEach(async () => {
 		vi.clearAllMocks();
+		vi.stubEnv('TELEGRAM_SEND_ENABLED', 'true');
 		await import('../morning-brief');
 
 		vi.mocked(generateEmbedding).mockResolvedValue([0.1, 0.2, 0.3] as unknown as Awaited<
@@ -174,6 +177,31 @@ SUGGESTED ACTIONS
 		expect(htmlContent).toContain('Alice Chen');
 
 		// 5. Broadcast was sent (web dashboard notification)
+		expect(mockBroadcastUpdate).toHaveBeenCalledWith(
+			'ws-1',
+			'morning-brief',
+			expect.objectContaining({ ready: true }),
+		);
+	});
+
+	it('skips Telegram push when TELEGRAM_SEND_ENABLED is false', async () => {
+		vi.stubEnv('TELEGRAM_SEND_ENABLED', 'false');
+		mockDbSelect.mockReturnValueOnce(
+			chainResult([
+				{
+					encryptedWrk: Buffer.from('test-wrk-key').toString('base64'),
+					kmsContext: { workspaceId: 'ws-1' },
+					wrkVersion: 1,
+				},
+			]),
+		);
+
+		await processorStore.fn?.({
+			data: { userId: 'user-abc', workspaceId: 'ws-1', timezone: 'UTC' },
+		});
+
+		expect(mockSendMessage).not.toHaveBeenCalled();
+		expect(saveBrief).toHaveBeenCalled();
 		expect(mockBroadcastUpdate).toHaveBeenCalledWith(
 			'ws-1',
 			'morning-brief',

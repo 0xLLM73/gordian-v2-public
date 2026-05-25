@@ -8,6 +8,14 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { IntroActions } from './intro-actions';
 
+export interface IntroSourceEvidence {
+	id: string;
+	contactId: string | null;
+	text: string | null;
+	isOutgoing: boolean;
+	sentAt: string | null;
+}
+
 interface IntroCardCollapsibleProps {
 	name: string;
 	introduced1Name: string;
@@ -23,6 +31,9 @@ interface IntroCardCollapsibleProps {
 	note: string | null;
 	detectedAt: string;
 	introductionId: string;
+	sourceMessageIds: string[];
+	sourceEvidence: IntroSourceEvidence[];
+	sourceEvidenceUnavailable: boolean;
 	EditIntroButton: React.ComponentType<{
 		introductionId: string;
 		initialContext: string;
@@ -45,9 +56,13 @@ export function IntroCardCollapsible({
 	note,
 	detectedAt,
 	introductionId,
+	sourceMessageIds,
+	sourceEvidence,
+	sourceEvidenceUnavailable,
 	EditIntroButton,
 }: IntroCardCollapsibleProps) {
 	const [expanded, setExpanded] = useState(false);
+	const statusLabel = getStatusLabel(status);
 
 	return (
 		<div className="p-4">
@@ -74,7 +89,7 @@ export function IntroCardCollapsible({
 							INTRO_STATUS_COLORS[status] || 'bg-gray-100 text-gray-500',
 						)}
 					>
-						{status}
+						{statusLabel}
 					</span>
 					<ChevronDown
 						className={cn(
@@ -121,6 +136,12 @@ export function IntroCardCollapsible({
 
 					{note ? <p className="text-sm text-muted-foreground">{note}</p> : null}
 
+					<SourceEvidence
+						sourceMessageIds={sourceMessageIds}
+						evidence={sourceEvidence}
+						unavailable={sourceEvidenceUnavailable}
+					/>
+
 					<div className="flex items-center gap-1 pt-1">
 						<EditIntroButton
 							introductionId={introductionId}
@@ -133,4 +154,90 @@ export function IntroCardCollapsible({
 			) : null}
 		</div>
 	);
+}
+
+function SourceEvidence({
+	sourceMessageIds,
+	evidence,
+	unavailable,
+}: {
+	sourceMessageIds: string[];
+	evidence: IntroSourceEvidence[];
+	unavailable: boolean;
+}) {
+	if (sourceMessageIds.length === 0) {
+		return (
+			<p className="rounded bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
+				No source messages captured.
+			</p>
+		);
+	}
+
+	if (unavailable || evidence.length === 0) {
+		return (
+			<div className="rounded bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
+				<p className="font-medium text-foreground">Source messages captured</p>
+				<p className="mt-1">
+					{sourceMessageIds.length} message
+					{sourceMessageIds.length === 1 ? '' : 's'} linked. Preview text is unavailable.
+				</p>
+				<div className="mt-2 flex flex-wrap gap-1">
+					{sourceMessageIds.slice(0, 4).map((id) => (
+						<span key={id} className="rounded bg-background px-1.5 py-0.5 font-mono">
+							{id.slice(0, 8)}
+						</span>
+					))}
+				</div>
+			</div>
+		);
+	}
+
+	const previewedIds = new Set(evidence.map((message) => message.id));
+	const missingCount = sourceMessageIds.filter((id) => !previewedIds.has(id)).length;
+
+	return (
+		<div className="rounded bg-muted/60 px-3 py-2">
+			<div className="mb-2 flex items-center justify-between gap-2">
+				<p className="text-xs font-medium text-foreground">Source evidence</p>
+				<span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+					{evidence.length} preview{evidence.length === 1 ? '' : 's'}
+				</span>
+			</div>
+			<div className="space-y-2">
+				{evidence.map((message) => (
+					<div key={message.id} className="text-xs">
+						<p className="line-clamp-2 text-foreground">{message.text || '(no text)'}</p>
+						<p className="mt-0.5 text-muted-foreground">
+							{message.isOutgoing ? 'Outgoing' : 'Incoming'}
+							{message.sentAt ? ` - ${formatEvidenceDate(message.sentAt)}` : ''}
+						</p>
+					</div>
+				))}
+			</div>
+			{missingCount > 0 ? (
+				<p className="mt-2 text-xs text-muted-foreground">
+					{missingCount} linked source message
+					{missingCount === 1 ? '' : 's'} could not be previewed.
+				</p>
+			) : null}
+		</div>
+	);
+}
+
+function getStatusLabel(status: string): string {
+	if (status === 'triage') return 'needs review';
+	if (status === 'active') return 'active';
+	if (status === 'archive') return 'archived';
+	return status;
+}
+
+function formatEvidenceDate(value: string): string {
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return '';
+	return new Intl.DateTimeFormat(undefined, {
+		month: 'short',
+		day: 'numeric',
+		hour: 'numeric',
+		minute: '2-digit',
+	}).format(date);
 }

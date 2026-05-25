@@ -13,6 +13,7 @@ const mockFindRecentDecision = vi.hoisted(() => vi.fn());
 const mockFindSimilarDecisions = vi.hoisted(() => vi.fn());
 const mockFindDecisionByEntityId = vi.hoisted(() => vi.fn());
 const mockGetMessagesByContact = vi.hoisted(() => vi.fn());
+const mockHasUserAiAnalysisConsent = vi.hoisted(() => vi.fn());
 
 const mockGenerateEmbedding = vi.hoisted(() => vi.fn());
 const mockPrefilterEntities = vi.hoisted(() => vi.fn());
@@ -35,16 +36,15 @@ vi.mock('@repo/db', () => ({
 	findSimilarDecisions: mockFindSimilarDecisions,
 	findDecisionByEntityId: mockFindDecisionByEntityId,
 	getMessagesByContact: mockGetMessagesByContact,
+	hasUserAiAnalysisConsent: mockHasUserAiAnalysisConsent,
 }));
 
 vi.mock('bullmq', () => ({
-	Worker: vi.fn(function MockWorker(_name: string, processor: unknown) {
+	Worker: vi.fn((_name: string, processor: unknown) => {
 		processorStore.fn = processor as (job: unknown) => Promise<unknown>;
 		return { on: vi.fn() };
 	}),
-	Queue: vi.fn(function MockQueue() {
-		return { add: vi.fn(), on: vi.fn() };
-	}),
+	Queue: vi.fn(() => ({ add: vi.fn(), on: vi.fn() })),
 }));
 
 vi.mock('../../ai/embeddings', () => ({
@@ -101,6 +101,7 @@ describe('decision-recording worker', () => {
 		mockCreateEdge.mockResolvedValue({});
 		mockFindRecentDecision.mockResolvedValue(null);
 		mockFindSimilarDecisions.mockResolvedValue([]);
+		mockHasUserAiAnalysisConsent.mockResolvedValue(true);
 	});
 
 	it('captures the worker processor', () => {

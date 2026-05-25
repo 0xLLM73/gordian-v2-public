@@ -17,6 +17,10 @@ vi.mock('@/lib/auth', () => ({
 	},
 }));
 
+vi.mock('@/lib/rate-limit', () => ({
+	checkRateLimit: vi.fn(() => ({ allowed: true, retryAfterMs: 0 })),
+}));
+
 const WORKSPACE_ID = '550e8400-e29b-41d4-a716-446655440000';
 
 vi.mock('@/lib/workspace', () => ({
@@ -33,13 +37,30 @@ vi.mock('@/lib/workspace', () => ({
 const mockUpsertPreferences = vi.fn(() => Promise.resolve({ success: true }));
 const mockDeleteWhere = vi.fn().mockResolvedValue([]);
 const mockDelete = vi.fn(() => ({ where: mockDeleteWhere }));
+const mockSelectWhere = vi.fn().mockResolvedValue([]);
+const mockSelectFrom = vi.fn(() => ({ where: mockSelectWhere }));
+const mockSelect = vi.fn(() => ({ from: mockSelectFrom }));
+const mockDeleteSessionKek = vi.fn(() => Promise.resolve());
+const mockDeleteUserAccountOnly = vi.fn(() => Promise.resolve());
+const mockDeleteAccountData = vi.fn(() => Promise.resolve());
+const mockIsWorkspaceOwner = vi.fn(() => Promise.resolve(false));
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
+
+vi.mock('@repo/crypto', () => ({
+	deleteSessionKek: mockDeleteSessionKek,
+}));
+
+vi.mock('@/lib/workspace-authz', () => ({
+	isWorkspaceOwner: mockIsWorkspaceOwner,
+}));
 
 vi.mock('@repo/db', () => ({
 	withWorkspaceRLS: vi.fn((_wsId: string, fn: (tx: unknown) => unknown) => fn({})),
 	upsertPreferences: mockUpsertPreferences,
-	db: { delete: mockDelete },
+	deleteUserAccountOnly: mockDeleteUserAccountOnly,
+	deleteAccountData: mockDeleteAccountData,
+	db: { delete: mockDelete, select: mockSelect },
 	accounts: {},
 	eq: vi.fn(),
 	and: vi.fn(),
@@ -51,6 +72,13 @@ describe('settings actions', () => {
 		vi.stubEnv('WORKER_URL', 'http://localhost:3001');
 		vi.stubEnv('WORKER_INTERNAL_SECRET', 'test-secret');
 		mockDelete.mockReturnValue({ where: mockDeleteWhere });
+		mockSelect.mockReturnValue({ from: mockSelectFrom });
+		mockSelectFrom.mockReturnValue({ where: mockSelectWhere });
+		mockSelectWhere.mockResolvedValue([]);
+		mockDeleteSessionKek.mockResolvedValue(undefined);
+		mockDeleteUserAccountOnly.mockResolvedValue(undefined);
+		mockDeleteAccountData.mockResolvedValue(undefined);
+		mockIsWorkspaceOwner.mockResolvedValue(false);
 		mockFetch.mockResolvedValue({ ok: true });
 	});
 
@@ -120,6 +148,7 @@ describe('settings actions', () => {
 			const { disconnectTelegramAction } = await import('@/app/actions/settings');
 
 			mockFetch.mockResolvedValue({ ok: true });
+			mockSelectWhere.mockResolvedValue([{ sessionKekEncrypted: Buffer.from('kek-marker') }]);
 
 			const result = await disconnectTelegramAction({});
 
@@ -135,6 +164,7 @@ describe('settings actions', () => {
 					body: JSON.stringify({ userId: 'user-1' }),
 				}),
 			);
+			expect(mockDeleteSessionKek).toHaveBeenCalledWith('user-1', Buffer.from('kek-marker'));
 			expect(mockDelete).toHaveBeenCalled();
 			expect(mockDeleteWhere).toHaveBeenCalled();
 		});
@@ -182,6 +212,121 @@ describe('settings actions', () => {
 			} finally {
 				if (saved !== undefined) vi.stubEnv('WORKER_URL', saved);
 			}
+		});
+	});
+
+	describe('deleteAccountAction', () => {
+		it('cleans runtime state and deletes only the user account for non-owner workspace members', async () => {
+			const { deleteAccountAction } = await import('@/app/actions/settings');
+			mockSelectWhere.mockResolvedValueOnce([{ sessionKekEncrypted: Buffer.from('kek-marker') }]);
+
+			const result = await deleteAccountAction({ confirmation: 'DELETE' });
+
+			expect(result?.data?.deleted).toBe(true);
+			expect(mockIsWorkspaceOwner).toHaveBeenCalledWith(WORKSPACE_ID, 'user-1');
+			expect(mockFetch).toHaveBeenCalledWith(
+				'http://localhost:3001/telegram/disconnect-session',
+				expect.objectContaining({
+					method: 'POST',
+					body: JSON.stringify({ userId: 'user-1' }),
+				}),
+			);
+			expect(mockFetch).toHaveBeenCalledWith(
+				'http://localhost:3001/runtime/cleanup-deletion',
+				expect.objectContaining({
+					method: 'POST',
+					headers: expect.objectContaining({
+						'X-Internal-Secret': 'test-secret',
+					}),
+					body: JSON.stringify({ userId: 'user-1', workspaceId: WORKSPACE_ID }),
+				}),
+			);
+			expect(mockDeleteSessionKek).toHaveBeenCalledWith('user-1', Buffer.from('kek-marker'));
+			expect(mockDeleteUserAccountOnly).toHaveBeenCalledWith('user-1');
+			expect(mockDeleteAccountData).not.toHaveBeenCalled();
+		});
+
+		it('still deletes the user account when runtime cleanup fails', async () => {
+			mockFetch
+				.mockResolvedValueOnce({ ok: true })
+				.mockRejectedValueOnce(new Error('worker unavailable'));
+			const { deleteAccountAction } = await import('@/app/actions/settings');
+
+			const result = await deleteAccountAction({ confirmation: 'DELETE' });
+
+			expect(result?.data?.deleted).toBe(true);
+			expect(mockDeleteUserAccountOnly).toHaveBeenCalledWith('user-1');
+			expect(mockDeleteAccountData).not.toHaveBeenCalled();
+		});
+
+		it('denies account-only deletion for workspace owners', async () => {
+			const { deleteAccountAction } = await import('@/app/actions/settings');
+			mockIsWorkspaceOwner.mockResolvedValueOnce(true);
+
+			const result = await deleteAccountAction({ confirmation: 'DELETE' });
+
+			expect(result?.serverError).toBe(
+				'Workspace owners must delete the workspace explicitly before deleting their user account',
+			);
+			expect(mockFetch).not.toHaveBeenCalled();
+			expect(mockDeleteUserAccountOnly).not.toHaveBeenCalled();
+			expect(mockDeleteAccountData).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('deleteWorkspaceAction', () => {
+		it('requires workspace ownership before deleting workspace data', async () => {
+			const { deleteWorkspaceAction } = await import('@/app/actions/settings');
+			mockIsWorkspaceOwner.mockResolvedValueOnce(false);
+
+			const result = await deleteWorkspaceAction({ confirmation: 'DELETE WORKSPACE' });
+
+			expect(result?.serverError).toBe('Unauthorized');
+			expect(mockFetch).not.toHaveBeenCalled();
+			expect(mockDeleteAccountData).not.toHaveBeenCalled();
+		});
+
+		it('cleans runtime state and deletes workspace data for owners only', async () => {
+			const { deleteWorkspaceAction } = await import('@/app/actions/settings');
+			mockIsWorkspaceOwner.mockResolvedValueOnce(true);
+			mockSelectWhere.mockResolvedValueOnce([{ sessionKekEncrypted: Buffer.from('kek-marker') }]);
+
+			const result = await deleteWorkspaceAction({ confirmation: 'DELETE WORKSPACE' });
+
+			expect(result?.data?.deleted).toBe(true);
+			expect(mockFetch).toHaveBeenCalledWith(
+				'http://localhost:3001/telegram/disconnect-session',
+				expect.objectContaining({
+					method: 'POST',
+					body: JSON.stringify({ userId: 'user-1' }),
+				}),
+			);
+			expect(mockFetch).toHaveBeenCalledWith(
+				'http://localhost:3001/runtime/cleanup-deletion',
+				expect.objectContaining({
+					method: 'POST',
+					headers: expect.objectContaining({
+						'X-Internal-Secret': 'test-secret',
+					}),
+					body: JSON.stringify({ userId: 'user-1', workspaceId: WORKSPACE_ID }),
+				}),
+			);
+			expect(mockDeleteSessionKek).toHaveBeenCalledWith('user-1', Buffer.from('kek-marker'));
+			expect(mockDeleteAccountData).toHaveBeenCalledWith(WORKSPACE_ID, 'user-1');
+			expect(mockDeleteUserAccountOnly).not.toHaveBeenCalled();
+		});
+
+		it('still deletes workspace data when runtime cleanup fails', async () => {
+			const { deleteWorkspaceAction } = await import('@/app/actions/settings');
+			mockIsWorkspaceOwner.mockResolvedValueOnce(true);
+			mockFetch
+				.mockResolvedValueOnce({ ok: true })
+				.mockRejectedValueOnce(new Error('worker unavailable'));
+
+			const result = await deleteWorkspaceAction({ confirmation: 'DELETE WORKSPACE' });
+
+			expect(result?.data?.deleted).toBe(true);
+			expect(mockDeleteAccountData).toHaveBeenCalledWith(WORKSPACE_ID, 'user-1');
 		});
 	});
 });

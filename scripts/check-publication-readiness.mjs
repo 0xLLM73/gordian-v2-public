@@ -74,6 +74,48 @@ function assertLocalGovernanceFiles() {
 	) {
 		fail('SECURITY.md must include vulnerability reporting instructions');
 	}
+
+	if (existsSync('.github/dependabot.yml')) assertDependabotCoverage();
+}
+
+function dependabotUpdates(config) {
+	const updates = [];
+	let current = null;
+	for (const line of config.split(/\r?\n/)) {
+		const ecosystem = line.match(/^\s*-\s*package-ecosystem:\s*"?([^"\s]+)"?\s*$/);
+		if (ecosystem) {
+			current = { ecosystem: ecosystem[1], directory: null };
+			updates.push(current);
+			continue;
+		}
+
+		const directory = line.match(/^\s*directory:\s*"?([^"\s]+)"?\s*$/);
+		if (directory && current) current.directory = directory[1];
+	}
+
+	return updates;
+}
+
+function assertDependabotCoverage() {
+	const updates = dependabotUpdates(readFileSync('.github/dependabot.yml', 'utf8'));
+	for (const required of [
+		{ ecosystem: 'npm', directory: '/' },
+		{ ecosystem: 'github-actions', directory: '/' },
+		{ ecosystem: 'docker', directory: '/apps/web' },
+		{ ecosystem: 'docker', directory: '/apps/worker' },
+		{ ecosystem: 'docker-compose', directory: '/' },
+	]) {
+		if (
+			!updates.some(
+				(update) =>
+					update.ecosystem === required.ecosystem && update.directory === required.directory,
+			)
+		) {
+			fail(
+				`.github/dependabot.yml must cover ${required.ecosystem} dependencies in ${required.directory}`,
+			);
+		}
+	}
 }
 
 function assertRepoMetadata(repo) {

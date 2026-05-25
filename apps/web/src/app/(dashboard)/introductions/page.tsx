@@ -1,37 +1,62 @@
 import { ConnectionList } from '@/components/connections/connection-list';
 import { EventFilter } from '@/components/connections/event-filter';
 import { CreateIntroForm } from '@/components/introductions/create-intro-form';
-import { IntroCardCollapsible } from '@/components/introductions/intro-card-collapsible';
+import {
+	IntroCardCollapsible,
+	type IntroSourceEvidence,
+} from '@/components/introductions/intro-card-collapsible';
 import { IntroducerLeaderboard } from '@/components/introductions/introducer-leaderboard';
+import { cn } from '@/lib/utils';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
-import { getContactsByIds, getDistinctEvents, listIntroductions } from '@repo/db';
+import { getContactsByIds, getDistinctEvents, getMessagesByIds, listIntroductions } from '@repo/db';
 import Link from 'next/link';
 import { Suspense } from 'react';
+
+type IntroStatusFilter = 'triage' | 'active' | 'archive' | 'all';
+
+const INTRO_STATUS_FILTERS: Array<{ value: IntroStatusFilter; label: string }> = [
+	{ value: 'triage', label: 'Needs review' },
+	{ value: 'active', label: 'Active' },
+	{ value: 'archive', label: 'Archived' },
+	{ value: 'all', label: 'All' },
+];
 
 export default async function IntroductionsPage({
 	searchParams,
 }: {
-	searchParams: Promise<{ event?: string }>;
+	searchParams: Promise<{ event?: string; status?: string }>;
 }) {
 	const session = await requireSession();
 	const workspaceId = await getUserWorkspaceId(session.user.id);
-	const { event } = await searchParams;
+	const { event, status } = await searchParams;
+	const introStatus = parseIntroStatusFilter(status);
 
 	const envelope = workspaceId ? await getWorkspaceEnvelope(workspaceId) : null;
 	const events = workspaceId && envelope ? await getDistinctEvents(workspaceId, envelope) : [];
 
 	return (
 		<div>
-			<h1 className="mb-6 text-2xl font-bold text-foreground">Network</h1>
+			<div className="mb-6">
+				<h1 className="text-2xl font-bold text-foreground">Introductions</h1>
+				<p className="mt-1 text-sm text-muted-foreground">
+					Review detected introductions, keep active relationships visible, and close out dismissed
+					items.
+				</p>
+			</div>
 
-			<div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+			<div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
 				<div>
 					<div className="mb-4 flex items-center justify-between">
-						<h2 className="text-lg font-semibold text-foreground">Introductions</h2>
+						<h2 className="text-lg font-semibold text-foreground">Review queue</h2>
 						{workspaceId ? <CreateIntroForm /> : null}
 					</div>
+					<IntroStatusTabs currentStatus={introStatus} event={event} />
 					<Suspense fallback={<ListSkeleton />}>
-						{workspaceId ? <IntroductionsList workspaceId={workspaceId} /> : <EmptyState />}
+						{workspaceId ? (
+							<IntroductionsList workspaceId={workspaceId} status={introStatus} />
+						) : (
+							<EmptyState status={introStatus} />
+						)}
 					</Suspense>
 					{workspaceId ? (
 						<Suspense>
@@ -58,47 +83,87 @@ export default async function IntroductionsPage({
 	);
 }
 
-async function IntroductionsList({ workspaceId }: { workspaceId: string }) {
+async function IntroductionsList({
+	workspaceId,
+	status,
+}: {
+	workspaceId: string;
+	status: IntroStatusFilter;
+}) {
 	const { EditIntroButton } = await import('@/components/introductions/edit-intro-button');
 	const envelope = await getWorkspaceEnvelope(workspaceId);
-	if (!envelope) return <EmptyState />;
-	const introductions = await listIntroductions(workspaceId, { limit: 50 }, envelope);
+	if (!envelope) return <EmptyState status={status} />;
+	const introductions = await listIntroductions(
+		workspaceId,
+		{ status: status === 'all' ? undefined : status, limit: 50 },
+		envelope,
+	);
 
 	if (!introductions || introductions.length === 0) {
-		return <EmptyState />;
+		return <EmptyState status={status} />;
 	}
 
 	const contactIds = new Set<string>();
+	const sourceMessageIds = new Set<string>();
 	for (const intro of introductions) {
 		if (intro.introducerContactId) contactIds.add(intro.introducerContactId);
 		if (intro.introducedContactId1) contactIds.add(intro.introducedContactId1);
 		if (intro.introducedContactId2) contactIds.add(intro.introducedContactId2);
+		for (const messageId of getIntroSourceMessageIds(intro)) {
+			sourceMessageIds.add(messageId);
+		}
 	}
 
 	const contactMap = new Map<string, string>();
 	if (contactIds.size > 0) {
-		const envelope = await getWorkspaceEnvelope(workspaceId);
-		if (envelope) {
-			const contacts = await getContactsByIds(workspaceId, [...contactIds], envelope);
-			for (const c of contacts) {
-				contactMap.set(
-					c.id as string,
-					[c.firstName as string, c.lastName as string].filter(Boolean).join(' ') || 'Unknown',
-				);
+		const contacts = await getContactsByIds(workspaceId, [...contactIds], envelope);
+		for (const c of contacts) {
+			contactMap.set(
+				c.id as string,
+				[c.firstName as string, c.lastName as string].filter(Boolean).join(' ') || 'Unknown',
+			);
+		}
+	}
+
+	const sourceEvidenceById = new Map<string, IntroSourceEvidence>();
+	let sourceEvidenceUnavailable = false;
+	if (sourceMessageIds.size > 0) {
+		try {
+			const sourceMessages = await getMessagesByIds(workspaceId, [...sourceMessageIds], envelope);
+			for (const message of sourceMessages) {
+				const id = message.id as string;
+				sourceEvidenceById.set(id, {
+					id,
+					contactId: (message.contactId as string | null) ?? null,
+					text: (message.text as string | null) ?? null,
+					isOutgoing: Boolean(message.isOutgoing),
+					sentAt: toIsoString(message.sentAt),
+				});
 			}
+		} catch (error) {
+			sourceEvidenceUnavailable = true;
+			console.warn('Unable to load introduction source message evidence', error);
 		}
 	}
 
 	return (
 		<div className="divide-y divide-border rounded-lg border border-border">
-			{introductions.map((intro) => (
-				<IntroductionCard
-					key={intro.id}
-					intro={intro}
-					contactMap={contactMap}
-					EditIntroButton={EditIntroButton}
-				/>
-			))}
+			{introductions.map((intro) => {
+				const introSourceIds = getIntroSourceMessageIds(intro);
+				return (
+					<IntroductionCard
+						key={intro.id}
+						intro={intro}
+						contactMap={contactMap}
+						sourceMessageIds={introSourceIds}
+						sourceEvidence={introSourceIds
+							.map((id) => sourceEvidenceById.get(id))
+							.filter((message): message is IntroSourceEvidence => Boolean(message))}
+						sourceEvidenceUnavailable={sourceEvidenceUnavailable}
+						EditIntroButton={EditIntroButton}
+					/>
+				);
+			})}
 		</div>
 	);
 }
@@ -106,10 +171,16 @@ async function IntroductionsList({ workspaceId }: { workspaceId: string }) {
 function IntroductionCard({
 	intro,
 	contactMap,
+	sourceMessageIds,
+	sourceEvidence,
+	sourceEvidenceUnavailable,
 	EditIntroButton,
 }: {
 	intro: Record<string, unknown>;
 	contactMap: Map<string, string>;
+	sourceMessageIds: string[];
+	sourceEvidence: IntroSourceEvidence[];
+	sourceEvidenceUnavailable: boolean;
 	EditIntroButton: React.ComponentType<{
 		introductionId: string;
 		initialContext: string;
@@ -143,20 +214,49 @@ function IntroductionCard({
 			note={(intro.note as string | null) ?? null}
 			detectedAt={intro.detectedAt as string}
 			introductionId={intro.id as string}
+			sourceMessageIds={sourceMessageIds}
+			sourceEvidence={sourceEvidence}
+			sourceEvidenceUnavailable={sourceEvidenceUnavailable}
 			EditIntroButton={EditIntroButton}
 		/>
 	);
 }
 
-function EmptyState() {
+function IntroStatusTabs({
+	currentStatus,
+	event,
+}: {
+	currentStatus: IntroStatusFilter;
+	event?: string;
+}) {
+	return (
+		<div className="mb-4 overflow-x-auto">
+			<div className="inline-flex rounded-lg bg-muted p-1">
+				{INTRO_STATUS_FILTERS.map((tab) => (
+					<Link
+						key={tab.value}
+						href={buildIntroStatusHref(tab.value, event)}
+						className={cn(
+							'rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors',
+							currentStatus === tab.value && 'bg-background text-foreground shadow-sm',
+						)}
+					>
+						{tab.label}
+					</Link>
+				))}
+			</div>
+		</div>
+	);
+}
+
+function EmptyState({ status = 'triage' }: { status?: IntroStatusFilter }) {
+	const copy = getEmptyStateCopy(status);
+
 	return (
 		<div className="space-y-4">
 			<div className="rounded-lg border border-border bg-card p-6 text-center">
-				<h3 className="text-sm font-semibold text-foreground">No introductions detected yet</h3>
-				<p className="mt-1 text-sm text-muted-foreground">
-					Gordian automatically detects introductions from your group chats, or you can record them
-					manually. Here&apos;s what they look like:
-				</p>
+				<h3 className="text-sm font-semibold text-foreground">{copy.title}</h3>
+				<p className="mt-1 text-sm text-muted-foreground">{copy.description}</p>
 			</div>
 
 			<div className="divide-y divide-border rounded-lg border border-dashed border-muted-foreground/30 opacity-60">
@@ -203,6 +303,62 @@ function EmptyState() {
 			</p>
 		</div>
 	);
+}
+
+function parseIntroStatusFilter(status: string | undefined): IntroStatusFilter {
+	if (status === 'active' || status === 'archive' || status === 'all') return status;
+	return 'triage';
+}
+
+function buildIntroStatusHref(status: IntroStatusFilter, event: string | undefined): string {
+	const params = new URLSearchParams();
+	if (status !== 'triage') params.set('status', status);
+	if (event) params.set('event', event);
+	const query = params.toString();
+	return query ? `/introductions?${query}` : '/introductions';
+}
+
+function getIntroSourceMessageIds(intro: Record<string, unknown>): string[] {
+	const sourceMessageIds = intro.sourceMessageIds;
+	if (!Array.isArray(sourceMessageIds)) return [];
+	return sourceMessageIds.filter((id): id is string => typeof id === 'string' && id.length > 0);
+}
+
+function toIsoString(value: unknown): string | null {
+	if (!value) return null;
+	const date = value instanceof Date ? value : new Date(value as string);
+	if (Number.isNaN(date.getTime())) return null;
+	return date.toISOString();
+}
+
+function getEmptyStateCopy(status: IntroStatusFilter): {
+	title: string;
+	description: string;
+} {
+	if (status === 'active') {
+		return {
+			title: 'No active introductions',
+			description: 'Approved introductions will appear here after review.',
+		};
+	}
+	if (status === 'archive') {
+		return {
+			title: 'No archived introductions',
+			description: 'Dismissed or completed introductions will appear here.',
+		};
+	}
+	if (status === 'all') {
+		return {
+			title: 'No introductions detected yet',
+			description:
+				'Gordian automatically detects introductions from your group chats, or you can record them manually.',
+		};
+	}
+	return {
+		title: 'No introductions need review',
+		description:
+			'Newly detected introductions will appear here before they become active relationship records.',
+	};
 }
 
 function ConnectionsEmptyState() {

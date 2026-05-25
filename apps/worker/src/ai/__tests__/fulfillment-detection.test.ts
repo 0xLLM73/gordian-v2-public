@@ -24,11 +24,9 @@ const createSpy = vi.fn().mockResolvedValue({
 });
 
 vi.mock('@anthropic-ai/sdk', () => ({
-	default: vi.fn(function MockAnthropic() {
-		return {
-			messages: { create: createSpy },
-		};
-	}),
+	default: vi.fn().mockImplementation(() => ({
+		messages: { create: createSpy },
+	})),
 }));
 
 // Mock bandit

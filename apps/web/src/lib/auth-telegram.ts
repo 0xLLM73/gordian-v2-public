@@ -1,11 +1,13 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { generateWorkspaceWrk } from '@repo/crypto';
+import { deleteSessionKek, generateWorkspaceWrk } from '@repo/crypto';
 import { accounts, and, createWorkspace, db, eq, sql } from '@repo/db';
+import { TELEGRAM_CONSENT_VERSION } from '@repo/shared';
 import type { BetterAuthPlugin } from 'better-auth';
 import { createAuthEndpoint } from 'better-auth/api';
 import { z } from 'zod';
 
 import { isRuntimeEnvEnabled } from './runtime-env';
+import { isTelegramRelinkAllowed } from './telegram-relink';
 import { track } from './track';
 import { getUserWorkspaceId } from './workspace';
 
@@ -24,6 +26,77 @@ async function ensureWorkspace(userId: string): Promise<void> {
 		await createWorkspace(userId, 'My Workspace', encryptedWrk.toString('base64'), kmsContext);
 	} catch (err) {
 		console.error('[auth-telegram] Failed to auto-create workspace for user', err);
+	}
+}
+
+async function storeTelegramSession(params: {
+	accountId?: string;
+	encryptedSession: string;
+	sessionKekEncrypted: string;
+	telegramUserId: string;
+	userId: string;
+}): Promise<void> {
+	const sessionKekBlob = Buffer.from(params.sessionKekEncrypted, 'base64');
+
+	if (params.accountId) {
+		await db.execute(sql`
+			/* gordian:pre-encrypted-telegram-session:v1 */
+			UPDATE accounts
+			SET access_token = ${params.encryptedSession},
+				session_kek_encrypted = ${sessionKekBlob},
+				updated_at = now()
+			WHERE id = ${params.accountId}
+				AND provider_id = 'telegram'
+				AND account_id = ${params.telegramUserId}
+		`);
+		return;
+	}
+
+	await db.execute(sql`
+		/* gordian:pre-encrypted-telegram-session:v1 */
+		INSERT INTO accounts (
+			id,
+			user_id,
+			provider_id,
+			account_id,
+			access_token,
+			session_kek_encrypted,
+			created_at,
+			updated_at
+		)
+		VALUES (
+			${crypto.randomUUID()},
+			${params.userId},
+			'telegram',
+			${params.telegramUserId},
+			${params.encryptedSession},
+			${sessionKekBlob},
+			now(),
+			now()
+		)
+	`);
+}
+
+async function deleteSessionKekBestEffort(
+	userId: string,
+	sessionKekEncrypted: string,
+): Promise<void> {
+	try {
+		await deleteSessionKek(userId, Buffer.from(sessionKekEncrypted, 'base64'));
+	} catch (err) {
+		console.warn('[auth-telegram] Failed to delete unused Telegram session KEK', err);
+	}
+}
+
+async function deletePreviousSessionKekBestEffort(
+	userId: string,
+	sessionKekEncrypted?: Buffer | null,
+): Promise<void> {
+	if (!sessionKekEncrypted) return;
+	try {
+		await deleteSessionKek(userId, sessionKekEncrypted);
+	} catch (err) {
+		console.warn('[auth-telegram] Failed to delete previous Telegram session KEK', err);
 	}
 }
 
@@ -80,7 +153,7 @@ function isTelegramLinkingEnabled(): boolean {
  * 4. Client calls /api/auth/telegram/verify-code with phone + code
  * 5. Plugin proxies to worker for verification
  * 6. Worker encrypts session before returning from verify-code (ASA-002)
- * 7. Plugin stores encrypted session + KEK blob in accounts table via raw SQL
+ * 7. Plugin stores pre-encrypted session + KEK marker in accounts table
  * 8. On 2FA: returns requires2FA flag for password input
  */
 export const telegramAuthPlugin = {
@@ -92,6 +165,7 @@ export const telegramAuthPlugin = {
 				method: 'POST',
 				body: z.object({
 					phone: z.string(),
+					consentVersion: z.number().int().min(TELEGRAM_CONSENT_VERSION),
 				}),
 			},
 			async (ctx) => {
@@ -283,11 +357,28 @@ export const telegramAuthPlugin = {
 
 				if (existingAccounts.length > 0) {
 					const existing = existingAccounts[0];
+					if (!isTelegramRelinkAllowed(existing.userId, userId)) {
+						await deleteSessionKekBestEffort(userId, sessionKekEncrypted);
+						return ctx.json(
+							{ error: 'Telegram account is already linked to another user.' },
+							{ status: 409 },
+						);
+					}
 
-					// Store encrypted session + KEK blob via raw SQL (bypass Drizzle custom type)
-					await db.execute(
-						sql`UPDATE accounts SET access_token = ${encryptedSession}, session_kek_encrypted = decode(${sessionKekEncrypted}, 'base64'), updated_at = now() WHERE id = ${existing.id}`,
-					);
+					try {
+						await storeTelegramSession({
+							accountId: existing.id,
+							encryptedSession,
+							sessionKekEncrypted,
+							telegramUserId,
+							userId: existing.userId,
+						});
+					} catch (err) {
+						await deleteSessionKekBestEffort(existing.userId, sessionKekEncrypted);
+						throw err;
+					}
+
+					await deletePreviousSessionKekBestEffort(existing.userId, existing.sessionKekEncrypted);
 
 					// P2: Notify user via Telegram that a new session was linked
 					fetch(`${workerUrl}/telegram/notify-session`, {
@@ -316,23 +407,25 @@ export const telegramAuthPlugin = {
 
 				const user = { id: userId };
 
-				// 4. Create Telegram account (without accessToken — Better Auth adapter doesn't
-				//    know about sessionKekEncrypted, so we set both columns via raw SQL below)
-				await ctx.context.internalAdapter.createAccount({
-					userId: user.id,
-					providerId: 'telegram',
-					accountId: telegramUserId,
-				});
+				// 4. Store encrypted Telegram account link in one write. The session value is
+				// already encrypted by the worker with a per-session KEK, so this intentionally
+				// bypasses Drizzle's workspace TSK custom type.
+				try {
+					await storeTelegramSession({
+						encryptedSession,
+						sessionKekEncrypted,
+						telegramUserId,
+						userId: user.id,
+					});
+				} catch (err) {
+					await deleteSessionKekBestEffort(user.id, sessionKekEncrypted);
+					throw err;
+				}
 
-				// 5. Store encrypted session + KEK blob via raw SQL
-				await db.execute(
-					sql`UPDATE accounts SET access_token = ${encryptedSession}, session_kek_encrypted = decode(${sessionKekEncrypted}, 'base64'), updated_at = now() WHERE user_id = ${user.id} AND provider_id = 'telegram' AND account_id = ${telegramUserId}`,
-				);
-
-				// 6. Auto-create workspace if user doesn't have one
+				// 5. Auto-create workspace if user doesn't have one
 				await ensureWorkspace(user.id);
 
-				// 7. Return workspace ID so client can advance through onboarding
+				// 6. Return workspace ID so client can advance through onboarding
 				const wsId = await getUserWorkspaceId(user.id);
 
 				if (wsId) {

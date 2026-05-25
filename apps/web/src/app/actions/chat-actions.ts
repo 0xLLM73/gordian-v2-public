@@ -2,7 +2,13 @@
 
 import { isRuntimeEnvEnabled } from '@/lib/runtime-env';
 import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
-import { createCommitment, createDeal, createGoal, getContact, updateDeal } from '@repo/db';
+import {
+	createCommitment,
+	createDeal,
+	createGoal,
+	getAccessibleContact,
+	updateDeal,
+} from '@repo/db';
 import { z } from 'zod';
 
 export const executeCommitmentAction = workspaceAction
@@ -120,7 +126,12 @@ export const executeTelegramSendAction = workspaceAction
 
 		if (!ctx.envelope) throw new Error('Workspace encryption key not found');
 
-		const contact = await getContact(ctx.workspaceId, parsedInput.contactId, ctx.envelope);
+		const contact = await getAccessibleContact(
+			ctx.workspaceId,
+			ctx.session.user.id,
+			parsedInput.contactId,
+			ctx.envelope,
+		);
 		if (!contact) throw new Error('Not found');
 		if (!contact.telegramId) throw new Error('Contact has no Telegram ID');
 
@@ -157,7 +168,7 @@ export const executeTelegramSendAction = workspaceAction
 			action: 'send',
 			resourceType: 'message',
 			resourceId: parsedInput.contactId,
-			metadata: { channel: 'telegram', contactName: parsedInput.contactName },
+			metadata: { channel: 'telegram', contactNameProvided: Boolean(parsedInput.contactName) },
 		});
 
 		return { success: true, contactName: parsedInput.contactName };

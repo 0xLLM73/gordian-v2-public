@@ -1,5 +1,8 @@
 'use client';
 
+import { redactErrorMessage } from '@repo/shared';
+import React from 'react';
+
 export default function DashboardError({
 	error,
 	reset,
@@ -7,6 +10,12 @@ export default function DashboardError({
 	error: Error & { digest?: string };
 	reset: () => void;
 }) {
+	const developmentMessage = React.useMemo(
+		() =>
+			process.env.NODE_ENV === 'development' && error.message ? redactErrorMessage(error) : null,
+		[error],
+	);
+
 	return (
 		<div className="flex min-h-screen items-center justify-center bg-muted px-4">
 			<div className="w-full max-w-md rounded-lg border border-red-200 bg-card p-8 shadow-stripe-sm">
@@ -17,15 +26,15 @@ export default function DashboardError({
 
 				{error.digest && (
 					<div className="mt-4 rounded bg-red-50 p-3">
-						<p className="text-xs font-mono text-red-600">Digest: {error.digest}</p>
+						<p className="text-xs font-mono text-red-600">Diagnostic code: {error.digest}</p>
 					</div>
 				)}
 
-				{process.env.NODE_ENV === 'development' && error.message && (
+				{developmentMessage ? (
 					<div className="mt-4 rounded bg-muted p-3">
-						<p className="text-xs font-mono text-foreground">{error.message}</p>
+						<p className="text-xs font-mono text-foreground">{developmentMessage}</p>
 					</div>
-				)}
+				) : null}
 
 				<button
 					type="button"

@@ -3,9 +3,10 @@
 import { workspaceAction } from '@/lib/safe-action';
 import { track } from '@/lib/track';
 import {
+	canAccessContact,
 	createContact as dalCreateContact,
-	getContact as dalGetContact,
-	listContacts as dalListContacts,
+	getAccessibleContact as dalGetAccessibleContact,
+	getAccessibleContacts as dalGetAccessibleContacts,
 	searchContactByEmail as dalSearchByEmail,
 	searchContactByName as dalSearchByName,
 	searchContactByPhone as dalSearchByPhone,
@@ -13,10 +14,55 @@ import {
 } from '@repo/db';
 import { z } from 'zod';
 
+const emailSchema = z.string().email().max(320);
+const optionalTrimmedString = (max: number) => z.string().trim().max(max).optional();
+const optionalTrimmedEmail = z
+	.string()
+	.trim()
+	.max(320)
+	.refine((value) => value.length === 0 || emailSchema.safeParse(value).success, {
+		message: 'Invalid email',
+	})
+	.optional();
+const optionalTrimmedNullableString = (max: number) =>
+	z.string().trim().max(max).nullable().optional();
+const createContactInputSchema = z
+	.object({
+		firstName: optionalTrimmedString(200),
+		lastName: optionalTrimmedString(200),
+		phone: optionalTrimmedString(50),
+		email: optionalTrimmedEmail,
+		notes: optionalTrimmedString(5000),
+		telegramId: optionalTrimmedString(100),
+	})
+	.refine(contactHasName, {
+		message: 'Enter at least a first or last name.',
+		path: ['firstName'],
+	});
+
+function emptyToUndefined(value: string | undefined): string | undefined {
+	return value && value.length > 0 ? value : undefined;
+}
+
+function contactHasName(input: { firstName?: string; lastName?: string }): boolean {
+	return Boolean(input.firstName || input.lastName);
+}
+
+async function filterAccessibleContacts<T extends { id: string }>(
+	workspaceId: string,
+	userId: string,
+	items: T[],
+): Promise<T[]> {
+	const allowed = await Promise.all(
+		items.map((item) => canAccessContact(workspaceId, userId, item.id)),
+	);
+	return items.filter((_, index) => allowed[index]);
+}
+
 export const searchContactsAction = workspaceAction
 	.schema(
 		z.object({
-			query: z.string().min(1).max(200),
+			query: z.string().trim().min(1).max(200),
 			field: z.enum(['name', 'phone', 'email']).default('name'),
 		}),
 	)
@@ -26,11 +72,23 @@ export const searchContactsAction = workspaceAction
 
 		switch (parsedInput.field) {
 			case 'name':
-				return dalSearchByName(workspaceId, parsedInput.query, envelope);
+				return filterAccessibleContacts(
+					workspaceId,
+					ctx.session.user.id,
+					await dalSearchByName(workspaceId, parsedInput.query, envelope),
+				);
 			case 'phone':
-				return dalSearchByPhone(workspaceId, parsedInput.query, envelope);
+				return filterAccessibleContacts(
+					workspaceId,
+					ctx.session.user.id,
+					await dalSearchByPhone(workspaceId, parsedInput.query, envelope),
+				);
 			case 'email':
-				return dalSearchByEmail(workspaceId, parsedInput.query, envelope);
+				return filterAccessibleContacts(
+					workspaceId,
+					ctx.session.user.id,
+					await dalSearchByEmail(workspaceId, parsedInput.query, envelope),
+				);
 		}
 	});
 
@@ -45,40 +103,69 @@ export const getContactAction = workspaceAction
 		track(ctx.workspaceId, ctx.session.user.id, 'view_contact', {
 			contactId: parsedInput.contactId,
 		});
-		return dalGetContact(ctx.workspaceId, parsedInput.contactId, ctx.envelope);
+		const contact = await dalGetAccessibleContact(
+			ctx.workspaceId,
+			ctx.session.user.id,
+			parsedInput.contactId,
+			ctx.envelope,
+		);
+		if (!contact) throw new Error('Not found');
+		return contact;
 	});
 
 export const createContactAction = workspaceAction
-	.schema(
-		z.object({
-			firstName: z.string().max(200).optional(),
-			lastName: z.string().max(200).optional(),
-			phone: z.string().max(50).optional(),
-			email: z.string().email().max(320).optional(),
-			notes: z.string().max(5000).optional(),
-			telegramId: z.string().max(100).optional(),
-		}),
-	)
+	.schema(createContactInputSchema)
 	.action(async ({ parsedInput, ctx }) => {
 		if (!ctx.envelope) throw new Error('Workspace encryption key not found');
-		return dalCreateContact(ctx.workspaceId, parsedInput, ctx.envelope);
+		return dalCreateContact(
+			ctx.workspaceId,
+			{
+				firstName: emptyToUndefined(parsedInput.firstName),
+				lastName: emptyToUndefined(parsedInput.lastName),
+				phone: emptyToUndefined(parsedInput.phone),
+				email: emptyToUndefined(parsedInput.email),
+				notes: emptyToUndefined(parsedInput.notes),
+				telegramId: emptyToUndefined(parsedInput.telegramId),
+			},
+			ctx.envelope,
+		);
 	});
 
 export const updateContactAction = workspaceAction
 	.schema(
 		z.object({
 			contactId: z.string().uuid(),
-			firstName: z.string().max(200).optional(),
-			lastName: z.string().max(200).optional(),
-			phone: z.string().max(50).optional(),
-			email: z.string().email().max(320).optional(),
-			notes: z.string().max(5000).optional(),
+			firstName: optionalTrimmedString(200),
+			lastName: optionalTrimmedString(200),
+			phone: optionalTrimmedString(50),
+			email: optionalTrimmedEmail,
+			notes: optionalTrimmedNullableString(5000),
 		}),
 	)
 	.action(async ({ parsedInput, ctx }) => {
 		const { contactId, ...input } = parsedInput;
 		if (!ctx.envelope) throw new Error('Workspace encryption key not found');
-		return dalUpdateContact(ctx.workspaceId, contactId, input, ctx.envelope);
+		const allowed = await canAccessContact(ctx.workspaceId, ctx.session.user.id, contactId);
+		if (!allowed) throw new Error('Not found');
+		return dalUpdateContact(
+			ctx.workspaceId,
+			contactId,
+			{
+				firstName: emptyToUndefined(input.firstName),
+				lastName: emptyToUndefined(input.lastName),
+				phone: emptyToUndefined(input.phone),
+				email: emptyToUndefined(input.email),
+				notes:
+					input.notes === null
+						? null
+						: input.notes === undefined
+							? undefined
+							: input.notes.length > 0
+								? input.notes
+								: null,
+			},
+			ctx.envelope,
+		);
 	});
 
 export const listContactsAction = workspaceAction
@@ -90,7 +177,7 @@ export const listContactsAction = workspaceAction
 	)
 	.action(async ({ parsedInput, ctx }) => {
 		if (!ctx.envelope) throw new Error('Workspace encryption key not found');
-		return dalListContacts(ctx.workspaceId, ctx.envelope, {
+		return dalGetAccessibleContacts(ctx.workspaceId, ctx.session.user.id, ctx.envelope, {
 			limit: parsedInput.limit,
 			offset: parsedInput.offset,
 		});

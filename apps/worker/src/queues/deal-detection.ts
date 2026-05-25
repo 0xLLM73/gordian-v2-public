@@ -13,6 +13,8 @@
  */
 
 import { type SealedEnvelope, decrypt, deriveKeys, maskEntities, unwrapWrk } from '@repo/crypto';
+import { hasUserAiAnalysisConsent } from '@repo/db';
+import { redactSensitive } from '@repo/shared';
 import { Queue, Worker } from 'bullmq';
 import { classifyDealIntent } from '../ai/deal-classifier';
 import { extractDealCandidate } from '../ai/deal-extraction';
@@ -27,6 +29,7 @@ export interface DealDetectionJobData {
 	encryptedText: string;
 	chatId: string;
 	sourceMessageId: string;
+	userId: string;
 	workspaceId: string;
 	contactId?: string;
 	/** Encrypted key envelope — never plaintext keys in job payloads */
@@ -42,6 +45,12 @@ export interface DealDetectionJobData {
 export const dealDetectionQueue = new Queue<DealDetectionJobData>('deal-detection', {
 	connection,
 	prefix: '{ai-flow}',
+	defaultJobOptions: {
+		attempts: 2,
+		backoff: { type: 'exponential', delay: 5000 },
+		removeOnComplete: true,
+		removeOnFail: { count: 25, age: 3600 },
+	},
 });
 
 // ─── Helpers ────────────────────────────────────────────────────────────────────
@@ -60,7 +69,14 @@ export const dealDetectionWorker = new Worker<DealDetectionJobData>(
 	'deal-detection',
 	withRLS(async (job) => {
 		const data = job.data;
-		const { workspaceId, chatId, sourceMessageId, contactId } = data;
+		const { workspaceId, chatId, sourceMessageId, contactId, userId } = data;
+
+		if (!(await hasUserAiAnalysisConsent(userId, workspaceId))) {
+			console.log(
+				`[deal-detection] AI consent no longer persisted for workspace=${workspaceId.slice(0, 8)} user=${userId.slice(0, 8)}, skipping`,
+			);
+			return { skipped: true, reason: 'no_ai_consent' };
+		}
 
 		// Step 1: Decrypt message text
 		const envelope = envelopeFromJob(data);
@@ -106,5 +122,5 @@ export const dealDetectionWorker = new Worker<DealDetectionJobData>(
 // ─── Event Logging ──────────────────────────────────────────────────────────────
 
 dealDetectionWorker.on('failed', (job, err) => {
-	console.error(`[deal-detection] Job ${job?.id} failed:`, err.message);
+	console.error(`[deal-detection] Job ${job?.id} failed:`, redactSensitive(err));
 });

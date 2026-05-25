@@ -159,6 +159,30 @@ describe('GI4 — Goal Extraction', () => {
 		expect(userMessage).toContain('Contact');
 	});
 
+	it('masks structured PII before sending transcripts to Haiku', async () => {
+		mockHaikuCreate.mockResolvedValue({ content: [] });
+
+		const { extractGoals } = await import('../goal-extraction');
+		await extractGoals(
+			[
+				{
+					role: 'user',
+					content: 'I want to follow up with alice@example.com at +1-555-123-4567',
+					timestamp: '2026-03-01T10:00:00Z',
+				},
+			],
+			REF_TIME,
+			Buffer.from('workspace-salt'),
+		);
+
+		const callArgs = mockHaikuCreate.mock.calls[0][0];
+		const userMessage = callArgs.messages[0].content;
+		expect(userMessage).not.toContain('alice@example.com');
+		expect(userMessage).not.toContain('+1-555-123-4567');
+		expect(userMessage).toContain('EMAIL_');
+		expect(userMessage).toContain('PHONE_');
+	});
+
 	it('passes Helicone headers for cost tracking', async () => {
 		mockGetHeliconeHeaders.mockReturnValue({ 'Helicone-Property-Feature': 'goal-extraction' });
 		mockHaikuCreate.mockResolvedValue({ content: [] });

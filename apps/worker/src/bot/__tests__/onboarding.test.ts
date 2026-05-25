@@ -36,22 +36,20 @@ vi.mock('grammy', () => {
 	>();
 	let filterCount = 0;
 	return {
-		Composer: vi.fn(function MockComposer() {
-			return {
-				command: vi.fn((name: string, handler: (ctx: unknown) => Promise<void>) => {
-					handlers.set(name, handler);
-				}),
-				on: vi.fn(() => ({
-					filter: vi.fn(
-						(filterFn: (ctx: unknown) => boolean, handler: (ctx: unknown) => Promise<void>) => {
-							filters.set(`filter-${filterCount++}`, { filter: filterFn, handler });
-						},
-					),
-				})),
-				_handlers: handlers,
-				_filters: filters,
-			};
-		}),
+		Composer: vi.fn().mockImplementation(() => ({
+			command: vi.fn((name: string, handler: (ctx: unknown) => Promise<void>) => {
+				handlers.set(name, handler);
+			}),
+			on: vi.fn(() => ({
+				filter: vi.fn(
+					(filterFn: (ctx: unknown) => boolean, handler: (ctx: unknown) => Promise<void>) => {
+						filters.set(`filter-${filterCount++}`, { filter: filterFn, handler });
+					},
+				),
+			})),
+			_handlers: handlers,
+			_filters: filters,
+		})),
 	};
 });
 

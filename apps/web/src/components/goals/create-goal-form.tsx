@@ -55,6 +55,8 @@ export function CreateGoalForm() {
 		},
 		onError: () => toast.error('Failed to create goal'),
 	});
+	const trimmedTitle = title.trim();
+	const trimmedDescription = description.trim();
 
 	useEffect(() => {
 		const params = new URLSearchParams(window.location.search);
@@ -129,15 +131,15 @@ export function CreateGoalForm() {
 					<Button
 						onClick={() =>
 							execute({
-								title,
+								title: trimmedTitle,
 								type,
-								description: description || undefined,
+								description: trimmedDescription || undefined,
 								targetCount: Number(targetCount) || 5,
 								targetDate: targetDate ? new Date(targetDate).toISOString() : undefined,
 								contactId: contactId || undefined,
 							})
 						}
-						disabled={isExecuting || !title}
+						disabled={isExecuting || !trimmedTitle}
 					>
 						{isExecuting ? 'Creating...' : 'Create Goal'}
 					</Button>

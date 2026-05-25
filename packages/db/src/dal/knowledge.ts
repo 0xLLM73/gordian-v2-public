@@ -1,4 +1,4 @@
-import { computeBlindIndex, getCurrentKeys, withKeys } from '@repo/crypto';
+import { withKeys } from '@repo/crypto';
 import type { SealedEnvelope } from '@repo/crypto';
 import { and, eq, sql } from '@repo/db';
 import { desc, inArray, isNotNull } from 'drizzle-orm';
@@ -6,21 +6,33 @@ import { db } from '../client';
 import { contacts } from '../schema/contacts';
 import {
 	knowledgeContacts,
+	knowledgeEvidence,
 	type knowledgeExtractionLog,
 	knowledgeLinks,
 	knowledgeNodes,
 } from '../schema/knowledge';
 
 export type KnowledgeNode = typeof knowledgeNodes.$inferSelect;
-/** KnowledgeNode without embedding or metadata — safe for browser responses. */
-export type KnowledgeNodePublic = Omit<KnowledgeNode, 'embedding' | 'metadata'>;
+export type KnowledgeReviewStatus = 'unreviewed' | 'reviewed' | 'needs_review';
+/** KnowledgeNode without embedding or raw metadata — safe for browser responses. */
+export type KnowledgeNodePublic = Omit<KnowledgeNode, 'embedding' | 'metadata'> & {
+	reviewStatus?: KnowledgeReviewStatus | null;
+	reviewedAt?: string | null;
+};
 /** Vector search result — embedding excluded, DB-computed similarity included. */
 export type KnowledgeSearchResult = KnowledgeNodePublic & {
 	metadata?: Record<string, unknown> | null;
 	similarity: number;
 };
 export type KnowledgeContact = typeof knowledgeContacts.$inferSelect;
+export type KnowledgeEvidence = typeof knowledgeEvidence.$inferSelect;
 export type KnowledgeExtractionLogEntry = typeof knowledgeExtractionLog.$inferSelect;
+
+const evidenceRecencyOrder = sql`coalesce(${knowledgeEvidence.occurredAt}, ${knowledgeEvidence.createdAt}) desc`;
+export const DEFAULT_KNOWLEDGE_SEARCH_MIN_SIMILARITY = 0.62;
+export const DEFAULT_KNOWLEDGE_MESSAGE_RECALL_LIMIT = 30;
+export const DEFAULT_KNOWLEDGE_MESSAGE_RECALL_NODE_LIMIT = 20;
+export const DEFAULT_KNOWLEDGE_MESSAGE_RECALL_MIN_SCORE = 0.62;
 
 export interface CreateKnowledgeNodeInput {
 	type:
@@ -41,11 +53,158 @@ export interface CreateKnowledgeNodeInput {
 }
 
 export interface UpdateKnowledgeNodeInput {
+	type?: CreateKnowledgeNodeInput['type'];
+	name?: string;
 	displayName?: string;
-	description?: string;
+	description?: string | null;
 	embedding?: number[];
 	mentionCount?: number;
 	lastSeenAt?: Date;
+	metadata?: Record<string, unknown> | null;
+}
+
+export type KnowledgeEvidenceKind =
+	| 'llm_extracted'
+	| 'embedding_match'
+	| 'contact_cooccurrence'
+	| 'manual'
+	| 'inferred_weak';
+
+export interface CreateKnowledgeEvidenceInput {
+	knowledgeNodeId: string;
+	relatedKnowledgeNodeId?: string | null;
+	contactId?: string | null;
+	messageId?: string | null;
+	relationType: string;
+	evidenceKind: KnowledgeEvidenceKind;
+	confidence?: number | null;
+	snippet?: string | null;
+	occurredAt?: Date | null;
+	metadata?: Record<string, unknown> | null;
+}
+
+export interface KnowledgeContactEvidenceInput {
+	messageId?: string | null;
+	snippet?: string | null;
+	occurredAt?: Date | null;
+	evidenceKind?: KnowledgeEvidenceKind;
+	confidence?: number | null;
+	metadata?: Record<string, unknown> | null;
+	envelope?: SealedEnvelope;
+}
+
+export interface KnowledgeLinkEvidenceInput {
+	messageId?: string | null;
+	snippet?: string | null;
+	occurredAt?: Date | null;
+	evidenceKind?: KnowledgeEvidenceKind;
+	confidence?: number | null;
+	metadata?: Record<string, unknown> | null;
+	envelope?: SealedEnvelope;
+}
+
+export interface KnowledgeSearchEvidenceItem {
+	id: string;
+	contactId: string | null;
+	messageId: string | null;
+	relationType: string;
+	evidenceKind: KnowledgeEvidenceKind;
+	confidence: number | null;
+	snippet: string | null;
+	occurredAt: Date | null;
+	createdAt: Date;
+}
+
+export interface KnowledgeSearchContactItem {
+	id: string;
+	firstName: string | null;
+	lastName: string | null;
+	relationType: KnowledgeContact['relationType'];
+	strength: number;
+	evidenceCount: number;
+	lastEvidenceAt: Date;
+	evidence: KnowledgeSearchEvidenceItem[];
+}
+
+export interface KnowledgeSearchResultWithEvidence {
+	node: KnowledgeNodePublic;
+	similarity: number | null;
+	matchScore: number;
+	matchReasons: string[];
+	exactMatch: boolean;
+	aliasMatch: boolean;
+	messageRecallScore: number | null;
+	messageHitCount: number;
+	messageMatchedEvidenceIds: string[];
+	messageMatchedAt: Date | null;
+	messageRecallReasons: string[];
+	evidenceCount: number;
+	aggregateEvidenceCount: number;
+	latestEvidenceAt: Date | null;
+	topConfidence: number | null;
+	connectedContactCount: number;
+	connectedContactsWithEvidence: number;
+	contacts: KnowledgeSearchContactItem[];
+	evidence: KnowledgeSearchEvidenceItem[];
+}
+
+export interface SearchKnowledgeNodesWithEvidenceOptions {
+	type?: ListKnowledgeNodesOptions['type'];
+	limit?: number;
+	minSimilarity?: number;
+	messageRecallQueryText?: string;
+	messageRecallLimit?: number;
+	messageRecallNodeLimit?: number;
+	minMessageRecallScore?: number;
+	evidenceLimitPerNode?: number;
+	contactLimitPerNode?: number;
+}
+
+export interface LegacyKnowledgeEvidenceWorkspaceSummary {
+	workspaceId: string;
+	totalKnowledgeContactRows: number;
+	rowsWithoutEvidence: number;
+}
+
+export interface LegacyKnowledgeEvidenceNodeTypeSummary {
+	nodeType: string;
+	totalKnowledgeContactRows: number;
+	rowsWithoutEvidence: number;
+}
+
+export interface LegacyKnowledgeEvidenceNodeGap {
+	workspaceId: string;
+	nodeId: string;
+	nodeType: string;
+	rowsWithoutEvidence: number;
+	aggregateEvidenceCount: number;
+	latestLegacyEvidenceAt: Date | null;
+}
+
+export interface LegacyKnowledgeEvidenceContactGap {
+	workspaceId: string;
+	contactId: string;
+	rowsWithoutEvidence: number;
+	aggregateEvidenceCount: number;
+	latestLegacyEvidenceAt: Date | null;
+}
+
+export interface LegacyKnowledgeEvidenceReport {
+	totalKnowledgeContactRows: number;
+	rowsWithoutEvidence: number;
+	byWorkspace: LegacyKnowledgeEvidenceWorkspaceSummary[];
+	byNodeType: LegacyKnowledgeEvidenceNodeTypeSummary[];
+	topNodesMissingEvidence: LegacyKnowledgeEvidenceNodeGap[];
+	topContactsMissingEvidence: LegacyKnowledgeEvidenceContactGap[];
+	recommendedNextAction: string;
+}
+
+export interface KnowledgeAnalysisContactCandidate {
+	id: string;
+	messageCount: number;
+	latestMessageAt: Date | null;
+	messageHorizon: Date | null;
+	stale: boolean;
 }
 
 /** Column selection that excludes `embedding` — use for all browser-facing queries. */
@@ -61,8 +220,40 @@ const knowledgeNodeColumns = {
 	mentionCount: knowledgeNodes.mentionCount,
 	firstSeenAt: knowledgeNodes.firstSeenAt,
 	lastSeenAt: knowledgeNodes.lastSeenAt,
+	reviewStatus:
+		sql<KnowledgeReviewStatus | null>`${knowledgeNodes.metadata}->'review'->>'status'`.as(
+			'reviewStatus',
+		),
+	reviewedAt: sql<string | null>`${knowledgeNodes.metadata}->'review'->>'reviewedAt'`.as(
+		'reviewedAt',
+	),
 	createdAt: knowledgeNodes.createdAt,
 };
+
+const KNOWLEDGE_SEARCH_PREFIX_PATTERNS = [
+	/^who\s+(?:has\s+)?(?:talked|spoke|chatted)\s+about\s+/i,
+	/^who\s+(?:has\s+)?mentioned\s+/i,
+	/^who\s+(?:is\s+)?(?:interested\s+in|working\s+on|using|building)\s+/i,
+	/^people\s+(?:who\s+are\s+)?(?:interested\s+in|working\s+on|using|building)\s+/i,
+	/^people\s+(?:who\s+)?(?:talked\s+about|mentioned|know\s+about)\s+/i,
+	/^contacts\s+(?:who\s+are\s+)?(?:interested\s+in|working\s+on|using|building)\s+/i,
+	/^contacts\s+(?:who\s+)?(?:talked\s+about|mentioned|know\s+about)\s+/i,
+	/^show\s+me\s+(?:people|contacts)\s+(?:who\s+)?(?:talked\s+about|mentioned|interested\s+in)\s+/i,
+	/^find\s+(?:people|contacts)\s+(?:who\s+)?(?:talked\s+about|mentioned|interested\s+in)\s+/i,
+];
+
+export function normalizeKnowledgeSearchQuery(query: string): string {
+	let normalized = query
+		.replace(/[?!.]+$/g, '')
+		.replace(/\s+/g, ' ')
+		.trim();
+
+	for (const pattern of KNOWLEDGE_SEARCH_PREFIX_PATTERNS) {
+		normalized = normalized.replace(pattern, '').trim();
+	}
+
+	return normalized.replace(/[?!.]+$/g, '').trim();
+}
 
 /**
  * KG-1: Wrap a query in a transaction with iterative HNSW scanning enabled.
@@ -137,11 +328,18 @@ export async function updateKnowledgeNode(
 ): Promise<KnowledgeNode | null> {
 	return withKeys(envelope, async () => {
 		const updates: Record<string, unknown> = {};
+		if (data.type !== undefined) updates.type = data.type;
+		if (data.name !== undefined) {
+			const normalizedName = data.name.toLowerCase();
+			updates.name = normalizedName;
+			updates.nameBlindIndex = normalizedName;
+		}
 		if (data.displayName !== undefined) updates.displayName = data.displayName;
 		if (data.description !== undefined) updates.description = data.description;
 		if (data.embedding !== undefined) updates.embedding = data.embedding;
 		if (data.mentionCount !== undefined) updates.mentionCount = data.mentionCount;
 		if (data.lastSeenAt !== undefined) updates.lastSeenAt = data.lastSeenAt;
+		if (data.metadata !== undefined) updates.metadata = data.metadata;
 
 		const result = await db
 			.update(knowledgeNodes)
@@ -256,15 +454,13 @@ export async function searchKnowledgeNodes(
 	if (query && envelope) {
 		// Blind index exact match on name — SEC-ENC-101
 		return withKeys(envelope, async () => {
-			const keys = getCurrentKeys();
-			const queryHash = computeBlindIndex(query.toLowerCase(), keys.bik);
 			const rows = await db
 				.select(knowledgeNodeColumns)
 				.from(knowledgeNodes)
 				.where(
 					and(
 						eq(knowledgeNodes.workspaceId, workspaceId),
-						eq(knowledgeNodes.nameBlindIndex, queryHash),
+						eq(knowledgeNodes.nameBlindIndex, query.toLowerCase()),
 					),
 				)
 				.orderBy(sql`${knowledgeNodes.mentionCount} desc`)
@@ -276,6 +472,981 @@ export async function searchKnowledgeNodes(
 	return listKnowledgeNodes(workspaceId, { limit: 20 }, envelope) as Promise<
 		KnowledgeSearchResult[]
 	>;
+}
+
+interface KnowledgeSearchCandidate {
+	node: KnowledgeNodePublic;
+	similarity: number | null;
+	exactMatch: boolean;
+	aliasMatch: boolean;
+	matchReasons: Set<string>;
+	messageRecallScore: number | null;
+	messageHitCount: number;
+	messageMatchedEvidenceIds: Set<string>;
+	messageMatchedAt: Date | null;
+	messageRecallReasons: Set<string>;
+}
+
+interface KnowledgeMessageRecallHit {
+	memoryId: string;
+	messageId: string;
+	content: string | null;
+	category: string;
+	rrfScore: number;
+	semanticScore: number;
+	ftsRank: number;
+	contactId: string | null;
+	memoryCreatedAt: Date | null;
+}
+
+interface KnowledgeMessageRecallEvidenceRow {
+	node: KnowledgeNodePublic;
+	evidenceId: string;
+	messageId: string;
+	occurredAt: Date | null;
+	createdAt: Date;
+	memoryHit: KnowledgeMessageRecallHit;
+}
+
+async function findExactKnowledgeNodes(
+	workspaceId: string,
+	normalizedQuery: string,
+	envelope: SealedEnvelope,
+	opts: Pick<SearchKnowledgeNodesWithEvidenceOptions, 'type' | 'limit'>,
+): Promise<KnowledgeNodePublic[]> {
+	if (!normalizedQuery) return [];
+
+	return withKeys(envelope, async () => {
+		const conditions = [
+			eq(knowledgeNodes.workspaceId, workspaceId),
+			eq(knowledgeNodes.nameBlindIndex, normalizedQuery.toLowerCase()),
+		];
+		if (opts.type) {
+			conditions.push(
+				eq(knowledgeNodes.type, opts.type as (typeof knowledgeNodes.type.enumValues)[number]),
+			);
+		}
+
+		return await db
+			.select(knowledgeNodeColumns)
+			.from(knowledgeNodes)
+			.where(and(...conditions))
+			.orderBy(desc(knowledgeNodes.mentionCount))
+			.limit(opts.limit ?? 20);
+	});
+}
+
+async function findAliasKnowledgeNodes(
+	workspaceId: string,
+	normalizedQuery: string,
+	envelope: SealedEnvelope,
+	opts: Pick<SearchKnowledgeNodesWithEvidenceOptions, 'type' | 'limit'>,
+): Promise<KnowledgeNodePublic[]> {
+	if (!normalizedQuery) return [];
+
+	return withKeys(envelope, async () => {
+		const conditions = [
+			eq(knowledgeNodes.workspaceId, workspaceId),
+			sql`${normalizedQuery.toLowerCase()} = ANY(${knowledgeNodes.aliases})`,
+		];
+		if (opts.type) {
+			conditions.push(
+				eq(knowledgeNodes.type, opts.type as (typeof knowledgeNodes.type.enumValues)[number]),
+			);
+		}
+
+		return await db
+			.select(knowledgeNodeColumns)
+			.from(knowledgeNodes)
+			.where(and(...conditions))
+			.orderBy(desc(knowledgeNodes.mentionCount))
+			.limit(opts.limit ?? 20);
+	});
+}
+
+function addKnowledgeSearchCandidate(
+	candidates: Map<string, KnowledgeSearchCandidate>,
+	node: KnowledgeNodePublic,
+	reason: string,
+	opts?: { similarity?: number | null; exactMatch?: boolean; aliasMatch?: boolean },
+) {
+	const existing = candidates.get(node.id);
+	if (existing) {
+		existing.matchReasons.add(reason);
+		existing.exactMatch = existing.exactMatch || opts?.exactMatch === true;
+		existing.aliasMatch = existing.aliasMatch || opts?.aliasMatch === true;
+		if (typeof opts?.similarity === 'number') {
+			existing.similarity =
+				typeof existing.similarity === 'number'
+					? Math.max(existing.similarity, opts.similarity)
+					: opts.similarity;
+		}
+		return;
+	}
+
+	candidates.set(node.id, {
+		node,
+		similarity: opts?.similarity ?? null,
+		exactMatch: opts?.exactMatch === true,
+		aliasMatch: opts?.aliasMatch === true,
+		matchReasons: new Set([reason]),
+		messageRecallScore: null,
+		messageHitCount: 0,
+		messageMatchedEvidenceIds: new Set(),
+		messageMatchedAt: null,
+		messageRecallReasons: new Set(),
+	});
+}
+
+function compareOptionalDates(a?: Date | null, b?: Date | null): number {
+	const aTime = a?.getTime() ?? 0;
+	const bTime = b?.getTime() ?? 0;
+	return bTime - aTime;
+}
+
+function bestOptionalDate(a?: Date | null, b?: Date | null): Date | null {
+	if (!a) return b ?? null;
+	if (!b) return a;
+	return a.getTime() >= b.getTime() ? a : b;
+}
+
+function rowsFromExecute<T>(result: unknown): T[] {
+	if (Array.isArray(result)) return result as T[];
+	if (
+		result &&
+		typeof result === 'object' &&
+		'rows' in result &&
+		Array.isArray((result as { rows?: unknown }).rows)
+	) {
+		return (result as { rows: T[] }).rows;
+	}
+	return [];
+}
+
+function toReportNumber(value: unknown): number {
+	if (typeof value === 'number') return value;
+	if (typeof value === 'bigint') return Number(value);
+	if (typeof value === 'string') return Number.parseInt(value, 10) || 0;
+	return 0;
+}
+
+function toReportDate(value: unknown): Date | null {
+	if (value instanceof Date) return value;
+	if (typeof value === 'string' && value.length > 0) {
+		const date = new Date(value);
+		return Number.isNaN(date.getTime()) ? null : date;
+	}
+	return null;
+}
+
+function toReportString(value: unknown): string | null {
+	return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function normalizeMemoryRecallScore(hit: KnowledgeMessageRecallHit): number {
+	const semanticScore = Number.isFinite(hit.semanticScore) ? hit.semanticScore : 0;
+	const ftsScore = hit.ftsRank > 0 ? Math.min(0.95, 0.72 + Math.min(hit.ftsRank, 1) * 0.2) : 0;
+	const rrfScore = Number.isFinite(hit.rrfScore) ? Math.min(0.88, hit.rrfScore * 10) : 0;
+	return Math.max(semanticScore, ftsScore, rrfScore);
+}
+
+function isConfidentMemoryRecallHit(
+	hit: KnowledgeMessageRecallHit,
+	minMessageRecallScore: number,
+): boolean {
+	return hit.ftsRank > 0 || normalizeMemoryRecallScore(hit) >= minMessageRecallScore;
+}
+
+function mapMemoryRecallRows(rows: Array<Record<string, unknown>>): KnowledgeMessageRecallHit[] {
+	return rows
+		.map((row) => ({
+			memoryId: toReportString(row.memoryId ?? row.memory_id ?? row.id) ?? '',
+			messageId: toReportString(row.messageId ?? row.message_id) ?? '',
+			content: toReportString(row.content),
+			category: toReportString(row.category) ?? 'general',
+			rrfScore: Number(row.rrfScore ?? row.rrf_score ?? 0),
+			semanticScore: Number(row.semanticScore ?? row.semantic_score ?? 0),
+			ftsRank: Number(row.ftsRank ?? row.fts_rank ?? 0),
+			contactId: toReportString(row.contactId ?? row.contact_id),
+			memoryCreatedAt: toReportDate(row.memoryCreatedAt ?? row.memory_created_at),
+		}))
+		.filter((row) => row.memoryId && row.messageId);
+}
+
+async function searchMessageLinkedMemoriesForKnowledgeRecall(
+	workspaceId: string,
+	queryText: string,
+	queryEmbedding: number[] | undefined,
+	opts: { limit: number; minMessageRecallScore: number },
+): Promise<KnowledgeMessageRecallHit[]> {
+	const normalizedQuery = queryText.trim();
+	if (!normalizedQuery) return [];
+
+	const messageIdExpr = sql`
+		coalesce(
+			m.metadata->>'messageId',
+			m.metadata->>'message_id',
+			m.metadata->>'sourceMessageId',
+			m.metadata->>'source_message_id'
+		)
+	`;
+
+	const messageIdCase = sql`
+		CASE
+			WHEN ${messageIdExpr} ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+			THEN ${messageIdExpr}
+			ELSE NULL
+		END
+	`;
+
+	const result =
+		queryEmbedding && queryEmbedding.length > 0
+			? await db.execute(sql`
+				WITH hits AS (
+					SELECT
+						id,
+						category,
+						rrf_score,
+						semantic_score,
+						fts_rank
+					FROM hybrid_search(
+						${workspaceId}::uuid,
+						${`[${queryEmbedding.join(',')}]`}::halfvec(512),
+						${normalizedQuery},
+						NULL::memory_category,
+						${opts.limit}
+					)
+				)
+					SELECT
+						h.id::text AS "memoryId",
+						${messageIdCase} AS "messageId",
+						NULL::text AS content,
+					h.category::text AS category,
+					h.rrf_score::float AS "rrfScore",
+					h.semantic_score::float AS "semanticScore",
+					h.fts_rank::float AS "ftsRank",
+					m.contact_id::text AS "contactId",
+					m.created_at AS "memoryCreatedAt"
+				FROM hits h
+				INNER JOIN memories m
+					ON m.id = h.id
+					AND m.category = h.category
+					AND m.workspace_id = ${workspaceId}::uuid
+				WHERE ${messageIdCase} IS NOT NULL
+				ORDER BY h.rrf_score DESC
+				LIMIT ${opts.limit}
+			`)
+			: await db.execute(sql`
+				SELECT
+					m.id::text AS "memoryId",
+					${messageIdCase} AS "messageId",
+					m.content_sanitized AS content,
+					m.category::text AS category,
+					ts_rank(
+						to_tsvector('english', m.content_sanitized),
+						plainto_tsquery('english', ${normalizedQuery})
+					)::float AS "rrfScore",
+					0::float AS "semanticScore",
+					ts_rank(
+						to_tsvector('english', m.content_sanitized),
+						plainto_tsquery('english', ${normalizedQuery})
+					)::float AS "ftsRank",
+					m.contact_id::text AS "contactId",
+					m.created_at AS "memoryCreatedAt"
+				FROM memories m
+				WHERE m.workspace_id = ${workspaceId}::uuid
+					AND m.content_sanitized IS NOT NULL
+					AND ${messageIdCase} IS NOT NULL
+					AND to_tsvector('english', m.content_sanitized) @@ plainto_tsquery('english', ${normalizedQuery})
+				ORDER BY "ftsRank" DESC
+				LIMIT ${opts.limit}
+			`);
+
+	return mapMemoryRecallRows(rowsFromExecute<Record<string, unknown>>(result)).filter((hit) =>
+		isConfidentMemoryRecallHit(hit, opts.minMessageRecallScore),
+	);
+}
+
+function addMessageRecallToCandidate(
+	candidate: KnowledgeSearchCandidate,
+	row: KnowledgeMessageRecallEvidenceRow,
+) {
+	const score = normalizeMemoryRecallScore(row.memoryHit);
+	candidate.messageRecallScore =
+		typeof candidate.messageRecallScore === 'number'
+			? Math.max(candidate.messageRecallScore, score)
+			: score;
+	candidate.messageMatchedEvidenceIds.add(row.evidenceId);
+	candidate.messageHitCount = candidate.messageMatchedEvidenceIds.size;
+	candidate.messageMatchedAt = bestOptionalDate(
+		candidate.messageMatchedAt,
+		row.occurredAt ?? row.memoryHit.memoryCreatedAt ?? row.createdAt,
+	);
+	candidate.matchReasons.add('evidence_message_match');
+	candidate.messageRecallReasons.add('evidence_message_match');
+	if (row.memoryHit.ftsRank > 0) candidate.messageRecallReasons.add('memory_full_text');
+	if (row.memoryHit.semanticScore > 0) candidate.messageRecallReasons.add('memory_semantic');
+}
+
+function computeKnowledgeSearchScore(input: {
+	candidate: KnowledgeSearchCandidate;
+	evidenceCount: number;
+	topConfidence: number | null;
+	connectedContactsWithEvidence: number;
+	latestEvidenceAt: Date | null;
+}): number {
+	const {
+		candidate,
+		evidenceCount,
+		topConfidence,
+		connectedContactsWithEvidence,
+		latestEvidenceAt,
+	} = input;
+
+	if (candidate.exactMatch) return 1;
+	if (candidate.aliasMatch) return 0.96;
+
+	let score = Math.max(0, candidate.similarity ?? 0) * 0.78;
+	score += Math.min(evidenceCount, 20) * 0.006;
+	score += Math.min(connectedContactsWithEvidence, 5) * 0.018;
+	if (typeof topConfidence === 'number') score += topConfidence * 0.07;
+
+	if (latestEvidenceAt) {
+		const ageDays = Math.max(0, (Date.now() - latestEvidenceAt.getTime()) / 86_400_000);
+		if (ageDays <= 30) score += 0.04;
+		else if (ageDays <= 180) score += 0.02;
+	}
+
+	// Ranking remains intentionally inspectable: node recall establishes the
+	// anchor, then exact mapped message evidence adds a bounded recall boost.
+	if (typeof candidate.messageRecallScore === 'number') {
+		score += Math.min(candidate.messageRecallScore, 1) * 0.16;
+		score += Math.min(candidate.messageHitCount, 5) * 0.025;
+	}
+
+	return Math.min(1, Number(score.toFixed(4)));
+}
+
+export async function searchKnowledgeNodesWithEvidence(
+	workspaceId: string,
+	query: string,
+	embedding: number[] | undefined,
+	envelope: SealedEnvelope,
+	opts?: SearchKnowledgeNodesWithEvidenceOptions,
+): Promise<KnowledgeSearchResultWithEvidence[]> {
+	const normalizedQuery = normalizeKnowledgeSearchQuery(query);
+	if (!normalizedQuery) return [];
+
+	const limit = opts?.limit ?? 20;
+	const minSimilarity = opts?.minSimilarity ?? DEFAULT_KNOWLEDGE_SEARCH_MIN_SIMILARITY;
+	const messageRecallLimit = opts?.messageRecallLimit ?? DEFAULT_KNOWLEDGE_MESSAGE_RECALL_LIMIT;
+	const messageRecallNodeLimit =
+		opts?.messageRecallNodeLimit ?? DEFAULT_KNOWLEDGE_MESSAGE_RECALL_NODE_LIMIT;
+	const minMessageRecallScore =
+		opts?.minMessageRecallScore ?? DEFAULT_KNOWLEDGE_MESSAGE_RECALL_MIN_SCORE;
+	const evidenceLimitPerNode = opts?.evidenceLimitPerNode ?? 3;
+	const contactLimitPerNode = opts?.contactLimitPerNode ?? 3;
+	const candidates = new Map<string, KnowledgeSearchCandidate>();
+
+	const [exactNodes, aliasNodes] = await Promise.all([
+		findExactKnowledgeNodes(workspaceId, normalizedQuery, envelope, { type: opts?.type, limit }),
+		findAliasKnowledgeNodes(workspaceId, normalizedQuery, envelope, { type: opts?.type, limit }),
+	]);
+
+	for (const node of exactNodes) {
+		addKnowledgeSearchCandidate(candidates, node, 'exact name', { exactMatch: true });
+	}
+	for (const node of aliasNodes) {
+		addKnowledgeSearchCandidate(candidates, node, 'alias', { aliasMatch: true });
+	}
+
+	if (embedding && embedding.length > 0) {
+		const semanticMatches = await searchKnowledgeNodes(
+			workspaceId,
+			normalizedQuery,
+			embedding,
+			envelope,
+		);
+		for (const node of semanticMatches) {
+			if (opts?.type && node.type !== opts.type) continue;
+			const similarity = node.similarity ?? 0;
+			const alreadyExact = candidates.has(node.id);
+			if (!alreadyExact && similarity < minSimilarity) continue;
+			addKnowledgeSearchCandidate(candidates, node, 'semantic similarity', { similarity });
+		}
+	}
+
+	if (opts?.messageRecallQueryText) {
+		const memoryHits = await searchMessageLinkedMemoriesForKnowledgeRecall(
+			workspaceId,
+			opts.messageRecallQueryText,
+			embedding,
+			{ limit: messageRecallLimit, minMessageRecallScore },
+		);
+		const messageIds = [...new Set(memoryHits.map((hit) => hit.messageId))].slice(
+			0,
+			messageRecallLimit,
+		);
+
+		if (messageIds.length > 0) {
+			const bestHitByMessageId = new Map<string, KnowledgeMessageRecallHit>();
+			for (const hit of memoryHits) {
+				const existing = bestHitByMessageId.get(hit.messageId);
+				if (!existing || normalizeMemoryRecallScore(hit) > normalizeMemoryRecallScore(existing)) {
+					bestHitByMessageId.set(hit.messageId, hit);
+				}
+			}
+
+			const recallRows = await withKeys(envelope, async () => {
+				const conditions = [
+					eq(knowledgeEvidence.workspaceId, workspaceId),
+					inArray(knowledgeEvidence.messageId, messageIds),
+				];
+				if (opts?.type) {
+					conditions.push(
+						eq(knowledgeNodes.type, opts.type as (typeof knowledgeNodes.type.enumValues)[number]),
+					);
+				}
+
+				return db
+					.select({
+						nodeId: knowledgeNodes.id,
+						workspaceId: knowledgeNodes.workspaceId,
+						type: knowledgeNodes.type,
+						name: knowledgeNodes.name,
+						displayName: knowledgeNodes.displayName,
+						description: knowledgeNodes.description,
+						nameBlindIndex: knowledgeNodes.nameBlindIndex,
+						aliases: knowledgeNodes.aliases,
+						mentionCount: knowledgeNodes.mentionCount,
+						firstSeenAt: knowledgeNodes.firstSeenAt,
+						lastSeenAt: knowledgeNodes.lastSeenAt,
+						createdAt: knowledgeNodes.createdAt,
+						evidenceId: knowledgeEvidence.id,
+						messageId: knowledgeEvidence.messageId,
+						evidenceOccurredAt: knowledgeEvidence.occurredAt,
+						evidenceCreatedAt: knowledgeEvidence.createdAt,
+					})
+					.from(knowledgeEvidence)
+					.innerJoin(
+						knowledgeNodes,
+						and(
+							eq(knowledgeEvidence.knowledgeNodeId, knowledgeNodes.id),
+							eq(knowledgeNodes.workspaceId, workspaceId),
+						),
+					)
+					.where(and(...conditions))
+					.orderBy(evidenceRecencyOrder, desc(knowledgeEvidence.createdAt))
+					.limit(messageRecallNodeLimit);
+			});
+
+			for (const row of recallRows) {
+				if (!row.messageId) continue;
+				const memoryHit = bestHitByMessageId.get(row.messageId);
+				if (!memoryHit) continue;
+				const node: KnowledgeNodePublic = {
+					id: row.nodeId,
+					workspaceId: row.workspaceId,
+					type: row.type,
+					name: row.name,
+					displayName: row.displayName,
+					description: row.description,
+					nameBlindIndex: row.nameBlindIndex,
+					aliases: row.aliases,
+					mentionCount: row.mentionCount,
+					firstSeenAt: row.firstSeenAt,
+					lastSeenAt: row.lastSeenAt,
+					createdAt: row.createdAt,
+				};
+				addKnowledgeSearchCandidate(candidates, node, 'evidence_message_match');
+				const candidate = candidates.get(row.nodeId);
+				if (!candidate) continue;
+				addMessageRecallToCandidate(candidate, {
+					node,
+					evidenceId: row.evidenceId,
+					messageId: row.messageId,
+					occurredAt: row.evidenceOccurredAt,
+					createdAt: row.evidenceCreatedAt,
+					memoryHit,
+				});
+			}
+		}
+	}
+
+	const candidateList = [...candidates.values()].slice(0, Math.max(limit, messageRecallNodeLimit));
+	if (candidateList.length === 0) return [];
+
+	const nodeIds = candidateList.map((candidate) => candidate.node.id);
+
+	const { contactRows, evidenceRows } = await withKeys(envelope, async () => {
+		const [contactsForNodes, evidenceForNodes] = await Promise.all([
+			db
+				.select({
+					nodeId: knowledgeContacts.knowledgeNodeId,
+					contactId: contacts.id,
+					firstName: contacts.firstName,
+					lastName: contacts.lastName,
+					relationType: knowledgeContacts.relationType,
+					strength: knowledgeContacts.strength,
+					evidenceCount: knowledgeContacts.evidenceCount,
+					lastEvidenceAt: knowledgeContacts.lastEvidenceAt,
+				})
+				.from(knowledgeContacts)
+				.innerJoin(
+					contacts,
+					and(eq(knowledgeContacts.contactId, contacts.id), eq(contacts.workspaceId, workspaceId)),
+				)
+				.where(
+					and(
+						eq(knowledgeContacts.workspaceId, workspaceId),
+						inArray(knowledgeContacts.knowledgeNodeId, nodeIds),
+					),
+				)
+				.orderBy(desc(knowledgeContacts.evidenceCount), desc(knowledgeContacts.lastEvidenceAt)),
+			db
+				.select({
+					id: knowledgeEvidence.id,
+					knowledgeNodeId: knowledgeEvidence.knowledgeNodeId,
+					contactId: knowledgeEvidence.contactId,
+					messageId: knowledgeEvidence.messageId,
+					relationType: knowledgeEvidence.relationType,
+					evidenceKind: knowledgeEvidence.evidenceKind,
+					confidence: knowledgeEvidence.confidence,
+					snippet: knowledgeEvidence.snippet,
+					occurredAt: knowledgeEvidence.occurredAt,
+					createdAt: knowledgeEvidence.createdAt,
+				})
+				.from(knowledgeEvidence)
+				.where(
+					and(
+						eq(knowledgeEvidence.workspaceId, workspaceId),
+						inArray(knowledgeEvidence.knowledgeNodeId, nodeIds),
+					),
+				)
+				.orderBy(evidenceRecencyOrder, desc(knowledgeEvidence.createdAt)),
+		]);
+
+		return { contactRows: contactsForNodes, evidenceRows: evidenceForNodes };
+	});
+
+	const contactsByNode = new Map<string, typeof contactRows>();
+	for (const row of contactRows) {
+		const rows = contactsByNode.get(row.nodeId) ?? [];
+		rows.push(row);
+		contactsByNode.set(row.nodeId, rows);
+	}
+
+	const evidenceByNode = new Map<string, typeof evidenceRows>();
+	const evidenceByContact = new Map<string, typeof evidenceRows>();
+	for (const row of evidenceRows) {
+		const rows = evidenceByNode.get(row.knowledgeNodeId) ?? [];
+		rows.push(row);
+		evidenceByNode.set(row.knowledgeNodeId, rows);
+
+		if (row.contactId) {
+			const key = `${row.knowledgeNodeId}:${row.contactId}:${row.relationType}`;
+			const contactEvidence = evidenceByContact.get(key) ?? [];
+			contactEvidence.push(row);
+			evidenceByContact.set(key, contactEvidence);
+		}
+	}
+
+	const results = candidateList.map((candidate): KnowledgeSearchResultWithEvidence => {
+		const nodeEvidence = evidenceByNode.get(candidate.node.id) ?? [];
+		const matchedEvidenceIds = candidate.messageMatchedEvidenceIds;
+		const rankedNodeEvidence =
+			matchedEvidenceIds.size > 0
+				? nodeEvidence.slice().sort((a, b) => {
+						const aMatched = matchedEvidenceIds.has(a.id);
+						const bMatched = matchedEvidenceIds.has(b.id);
+						if (aMatched !== bMatched) return aMatched ? -1 : 1;
+						return compareOptionalDates(a.occurredAt ?? a.createdAt, b.occurredAt ?? b.createdAt);
+					})
+				: nodeEvidence;
+		const nodeContacts = contactsByNode.get(candidate.node.id) ?? [];
+		const aggregateEvidenceCount = nodeContacts.reduce((sum, row) => sum + row.evidenceCount, 0);
+		const latestEvidenceAt =
+			rankedNodeEvidence[0]?.occurredAt ??
+			rankedNodeEvidence[0]?.createdAt ??
+			nodeContacts
+				.slice()
+				.sort((a, b) => compareOptionalDates(a.lastEvidenceAt, b.lastEvidenceAt))[0]
+				?.lastEvidenceAt ??
+			null;
+		const topConfidence =
+			nodeEvidence.reduce<number | null>((max, row) => {
+				if (typeof row.confidence !== 'number') return max;
+				return max === null ? row.confidence : Math.max(max, row.confidence);
+			}, null) ??
+			nodeContacts.reduce<number | null>((max, row) => {
+				if (typeof row.strength !== 'number') return max;
+				return max === null ? row.strength : Math.max(max, row.strength);
+			}, null);
+		const connectedContactsWithEvidence = new Set(
+			nodeEvidence.filter((row) => row.contactId).map((row) => row.contactId),
+		).size;
+
+		const evidence = rankedNodeEvidence.slice(0, evidenceLimitPerNode).map((row) => ({
+			id: row.id,
+			contactId: row.contactId,
+			messageId: row.messageId,
+			relationType: row.relationType,
+			evidenceKind: row.evidenceKind,
+			confidence: row.confidence,
+			snippet: row.snippet,
+			occurredAt: row.occurredAt,
+			createdAt: row.createdAt,
+		}));
+
+		const contactsForResult = nodeContacts
+			.slice()
+			.sort((a, b) => {
+				const aEvidence =
+					evidenceByContact.get(`${a.nodeId}:${a.contactId}:${a.relationType}`) ?? [];
+				const bEvidence =
+					evidenceByContact.get(`${b.nodeId}:${b.contactId}:${b.relationType}`) ?? [];
+				if (aEvidence.length !== bEvidence.length) return bEvidence.length - aEvidence.length;
+				if (a.evidenceCount !== b.evidenceCount) return b.evidenceCount - a.evidenceCount;
+				if (a.strength !== b.strength) return b.strength - a.strength;
+				return compareOptionalDates(a.lastEvidenceAt, b.lastEvidenceAt);
+			})
+			.slice(0, contactLimitPerNode)
+			.map((row) => {
+				const contactEvidence =
+					evidenceByContact.get(`${row.nodeId}:${row.contactId}:${row.relationType}`) ?? [];
+				return {
+					id: row.contactId,
+					firstName: row.firstName,
+					lastName: row.lastName,
+					relationType: row.relationType,
+					strength: row.strength,
+					evidenceCount: row.evidenceCount,
+					lastEvidenceAt: row.lastEvidenceAt,
+					evidence: contactEvidence.slice(0, evidenceLimitPerNode).map((evidenceRow) => ({
+						id: evidenceRow.id,
+						contactId: evidenceRow.contactId,
+						messageId: evidenceRow.messageId,
+						relationType: evidenceRow.relationType,
+						evidenceKind: evidenceRow.evidenceKind,
+						confidence: evidenceRow.confidence,
+						snippet: evidenceRow.snippet,
+						occurredAt: evidenceRow.occurredAt,
+						createdAt: evidenceRow.createdAt,
+					})),
+				};
+			});
+
+		const matchReasons = [...candidate.matchReasons];
+		if (nodeEvidence.length > 0) matchReasons.push('message evidence');
+		if (connectedContactsWithEvidence > 0) matchReasons.push('contact evidence');
+		if (latestEvidenceAt) matchReasons.push('recent activity');
+		if (candidate.messageHitCount > 0) matchReasons.push('matched in message evidence');
+
+		return {
+			node: candidate.node,
+			similarity: candidate.similarity,
+			matchScore: computeKnowledgeSearchScore({
+				candidate,
+				evidenceCount: nodeEvidence.length,
+				topConfidence,
+				connectedContactsWithEvidence,
+				latestEvidenceAt,
+			}),
+			matchReasons: [...new Set(matchReasons)],
+			exactMatch: candidate.exactMatch,
+			aliasMatch: candidate.aliasMatch,
+			messageRecallScore: candidate.messageRecallScore,
+			messageHitCount: candidate.messageHitCount,
+			messageMatchedEvidenceIds: [...candidate.messageMatchedEvidenceIds],
+			messageMatchedAt: candidate.messageMatchedAt,
+			messageRecallReasons: [...candidate.messageRecallReasons],
+			evidenceCount: nodeEvidence.length,
+			aggregateEvidenceCount,
+			latestEvidenceAt,
+			topConfidence,
+			connectedContactCount: nodeContacts.length,
+			connectedContactsWithEvidence,
+			contacts: contactsForResult,
+			evidence,
+		};
+	});
+
+	return results
+		.sort((a, b) => {
+			if (a.exactMatch !== b.exactMatch) return a.exactMatch ? -1 : 1;
+			if (a.aliasMatch !== b.aliasMatch) return a.aliasMatch ? -1 : 1;
+			if (a.matchScore !== b.matchScore) return b.matchScore - a.matchScore;
+			return (b.node.mentionCount ?? 0) - (a.node.mentionCount ?? 0);
+		})
+		.slice(0, limit);
+}
+
+/**
+ * Dry-run report for legacy aggregate contact-topic links that do not have
+ * source message evidence rows yet. This function never writes data.
+ */
+export async function getLegacyKnowledgeEvidenceReport(): Promise<LegacyKnowledgeEvidenceReport> {
+	const [totalsResult, byWorkspaceResult, byNodeTypeResult, topNodesResult, topContactsResult] =
+		await Promise.all([
+			db.execute(sql`
+				SELECT
+					count(DISTINCT kc.id)::int AS "totalKnowledgeContactRows",
+					count(DISTINCT kc.id) FILTER (WHERE ke.id IS NULL)::int AS "rowsWithoutEvidence"
+				FROM knowledge_contacts kc
+				LEFT JOIN knowledge_evidence ke
+					ON ke.workspace_id = kc.workspace_id
+					AND ke.knowledge_node_id = kc.knowledge_node_id
+					AND ke.contact_id = kc.contact_id
+					AND ke.relation_type = kc.relation_type
+			`),
+			db.execute(sql`
+				SELECT
+					kc.workspace_id::text AS "workspaceId",
+					count(DISTINCT kc.id)::int AS "totalKnowledgeContactRows",
+					count(DISTINCT kc.id) FILTER (WHERE ke.id IS NULL)::int AS "rowsWithoutEvidence"
+				FROM knowledge_contacts kc
+				LEFT JOIN knowledge_evidence ke
+					ON ke.workspace_id = kc.workspace_id
+					AND ke.knowledge_node_id = kc.knowledge_node_id
+					AND ke.contact_id = kc.contact_id
+					AND ke.relation_type = kc.relation_type
+				GROUP BY kc.workspace_id
+				ORDER BY "rowsWithoutEvidence" DESC
+			`),
+			db.execute(sql`
+				SELECT
+					kn.type::text AS "nodeType",
+					count(DISTINCT kc.id)::int AS "totalKnowledgeContactRows",
+					count(DISTINCT kc.id) FILTER (WHERE ke.id IS NULL)::int AS "rowsWithoutEvidence"
+				FROM knowledge_contacts kc
+				INNER JOIN knowledge_nodes kn
+					ON kn.id = kc.knowledge_node_id
+					AND kn.workspace_id = kc.workspace_id
+				LEFT JOIN knowledge_evidence ke
+					ON ke.workspace_id = kc.workspace_id
+					AND ke.knowledge_node_id = kc.knowledge_node_id
+					AND ke.contact_id = kc.contact_id
+					AND ke.relation_type = kc.relation_type
+				GROUP BY kn.type
+				ORDER BY "rowsWithoutEvidence" DESC
+			`),
+			db.execute(sql`
+				SELECT
+					kc.workspace_id::text AS "workspaceId",
+					kc.knowledge_node_id::text AS "nodeId",
+					kn.type::text AS "nodeType",
+					count(DISTINCT kc.id)::int AS "rowsWithoutEvidence",
+					coalesce(sum(kc.evidence_count), 0)::int AS "aggregateEvidenceCount",
+					max(kc.last_evidence_at) AS "latestLegacyEvidenceAt"
+				FROM knowledge_contacts kc
+				INNER JOIN knowledge_nodes kn
+					ON kn.id = kc.knowledge_node_id
+					AND kn.workspace_id = kc.workspace_id
+				LEFT JOIN knowledge_evidence ke
+					ON ke.workspace_id = kc.workspace_id
+					AND ke.knowledge_node_id = kc.knowledge_node_id
+					AND ke.contact_id = kc.contact_id
+					AND ke.relation_type = kc.relation_type
+				WHERE ke.id IS NULL
+				GROUP BY kc.workspace_id, kc.knowledge_node_id, kn.type
+				ORDER BY "rowsWithoutEvidence" DESC, "aggregateEvidenceCount" DESC
+				LIMIT 20
+			`),
+			db.execute(sql`
+				SELECT
+					kc.workspace_id::text AS "workspaceId",
+					kc.contact_id::text AS "contactId",
+					count(DISTINCT kc.id)::int AS "rowsWithoutEvidence",
+					coalesce(sum(kc.evidence_count), 0)::int AS "aggregateEvidenceCount",
+					max(kc.last_evidence_at) AS "latestLegacyEvidenceAt"
+				FROM knowledge_contacts kc
+				LEFT JOIN knowledge_evidence ke
+					ON ke.workspace_id = kc.workspace_id
+					AND ke.knowledge_node_id = kc.knowledge_node_id
+					AND ke.contact_id = kc.contact_id
+					AND ke.relation_type = kc.relation_type
+				WHERE ke.id IS NULL
+				GROUP BY kc.workspace_id, kc.contact_id
+				ORDER BY "rowsWithoutEvidence" DESC, "aggregateEvidenceCount" DESC
+				LIMIT 20
+			`),
+		]);
+
+	const totals = rowsFromExecute<{
+		totalKnowledgeContactRows: unknown;
+		rowsWithoutEvidence: unknown;
+	}>(totalsResult)[0];
+
+	const rowsWithoutEvidence = toReportNumber(totals?.rowsWithoutEvidence);
+
+	return {
+		totalKnowledgeContactRows: toReportNumber(totals?.totalKnowledgeContactRows),
+		rowsWithoutEvidence,
+		byWorkspace: rowsFromExecute<{
+			workspaceId: string;
+			totalKnowledgeContactRows: unknown;
+			rowsWithoutEvidence: unknown;
+		}>(byWorkspaceResult).map((row) => ({
+			workspaceId: row.workspaceId,
+			totalKnowledgeContactRows: toReportNumber(row.totalKnowledgeContactRows),
+			rowsWithoutEvidence: toReportNumber(row.rowsWithoutEvidence),
+		})),
+		byNodeType: rowsFromExecute<{
+			nodeType: string;
+			totalKnowledgeContactRows: unknown;
+			rowsWithoutEvidence: unknown;
+		}>(byNodeTypeResult).map((row) => ({
+			nodeType: row.nodeType,
+			totalKnowledgeContactRows: toReportNumber(row.totalKnowledgeContactRows),
+			rowsWithoutEvidence: toReportNumber(row.rowsWithoutEvidence),
+		})),
+		topNodesMissingEvidence: rowsFromExecute<{
+			workspaceId: string;
+			nodeId: string;
+			nodeType: string;
+			rowsWithoutEvidence: unknown;
+			aggregateEvidenceCount: unknown;
+			latestLegacyEvidenceAt: unknown;
+		}>(topNodesResult).map((row) => ({
+			workspaceId: row.workspaceId,
+			nodeId: row.nodeId,
+			nodeType: row.nodeType,
+			rowsWithoutEvidence: toReportNumber(row.rowsWithoutEvidence),
+			aggregateEvidenceCount: toReportNumber(row.aggregateEvidenceCount),
+			latestLegacyEvidenceAt: toReportDate(row.latestLegacyEvidenceAt),
+		})),
+		topContactsMissingEvidence: rowsFromExecute<{
+			workspaceId: string;
+			contactId: string;
+			rowsWithoutEvidence: unknown;
+			aggregateEvidenceCount: unknown;
+			latestLegacyEvidenceAt: unknown;
+		}>(topContactsResult).map((row) => ({
+			workspaceId: row.workspaceId,
+			contactId: row.contactId,
+			rowsWithoutEvidence: toReportNumber(row.rowsWithoutEvidence),
+			aggregateEvidenceCount: toReportNumber(row.aggregateEvidenceCount),
+			latestLegacyEvidenceAt: toReportDate(row.latestLegacyEvidenceAt),
+		})),
+		recommendedNextAction:
+			rowsWithoutEvidence > 0
+				? 'Run a reviewed evidence backfill that deterministically maps legacy links to candidate messages or memories before writing knowledge_evidence rows.'
+				: 'No legacy aggregate-only contact-topic links found. Keep monitoring after new extraction runs.',
+	};
+}
+
+/**
+ * Store one evidence/provenance row for a knowledge claim.
+ * Snippets are encryptedText, so callers must pass an envelope when snippet is present.
+ */
+export async function createKnowledgeEvidence(
+	workspaceId: string,
+	data: CreateKnowledgeEvidenceInput,
+	envelope?: SealedEnvelope,
+): Promise<KnowledgeEvidence> {
+	if (data.snippet && !envelope) {
+		throw new Error('createKnowledgeEvidence: envelope required when snippet is provided');
+	}
+
+	const doInsert = async () => {
+		const result = await db
+			.insert(knowledgeEvidence)
+			.values({
+				workspaceId,
+				knowledgeNodeId: data.knowledgeNodeId,
+				relatedKnowledgeNodeId: data.relatedKnowledgeNodeId ?? null,
+				contactId: data.contactId ?? null,
+				messageId: data.messageId ?? null,
+				relationType: data.relationType,
+				evidenceKind: data.evidenceKind,
+				confidence: data.confidence ?? null,
+				snippet: data.snippet ?? null,
+				occurredAt: data.occurredAt ?? null,
+				metadata: data.metadata ?? null,
+			})
+			.returning();
+		const row = result[0];
+		if (!row) throw new Error('createKnowledgeEvidence: insert returned no rows');
+		return row;
+	};
+
+	return envelope ? withKeys(envelope, doInsert) : doInsert();
+}
+
+export async function listEvidenceForKnowledgeNode(
+	workspaceId: string,
+	nodeId: string,
+	envelope: SealedEnvelope,
+	opts?: { limit?: number },
+): Promise<KnowledgeEvidence[]> {
+	const limit = opts?.limit ?? 25;
+	return withKeys(envelope, async () =>
+		db
+			.select()
+			.from(knowledgeEvidence)
+			.where(
+				and(
+					eq(knowledgeEvidence.workspaceId, workspaceId),
+					eq(knowledgeEvidence.knowledgeNodeId, nodeId),
+				),
+			)
+			.orderBy(evidenceRecencyOrder, desc(knowledgeEvidence.createdAt))
+			.limit(limit),
+	);
+}
+
+export async function listEvidenceForKnowledgeContact(
+	workspaceId: string,
+	nodeId: string,
+	contactId: string,
+	envelope: SealedEnvelope,
+	opts?: { relationType?: string; limit?: number },
+): Promise<KnowledgeEvidence[]> {
+	const limit = opts?.limit ?? 10;
+	const conditions = [
+		eq(knowledgeEvidence.workspaceId, workspaceId),
+		eq(knowledgeEvidence.knowledgeNodeId, nodeId),
+		eq(knowledgeEvidence.contactId, contactId),
+	];
+	if (opts?.relationType) {
+		conditions.push(eq(knowledgeEvidence.relationType, opts.relationType));
+	}
+
+	return withKeys(envelope, async () =>
+		db
+			.select()
+			.from(knowledgeEvidence)
+			.where(and(...conditions))
+			.orderBy(evidenceRecencyOrder, desc(knowledgeEvidence.createdAt))
+			.limit(limit),
+	);
+}
+
+export async function listEvidenceForKnowledgeLink(
+	workspaceId: string,
+	nodeId: string,
+	relatedNodeId: string,
+	envelope: SealedEnvelope,
+	opts?: { relationType?: string; limit?: number },
+): Promise<KnowledgeEvidence[]> {
+	const limit = opts?.limit ?? 10;
+	const conditions = [
+		eq(knowledgeEvidence.workspaceId, workspaceId),
+		eq(knowledgeEvidence.knowledgeNodeId, nodeId),
+		eq(knowledgeEvidence.relatedKnowledgeNodeId, relatedNodeId),
+	];
+	if (opts?.relationType) {
+		conditions.push(eq(knowledgeEvidence.relationType, opts.relationType));
+	}
+
+	return withKeys(envelope, async () =>
+		db
+			.select()
+			.from(knowledgeEvidence)
+			.where(and(...conditions))
+			.orderBy(evidenceRecencyOrder, desc(knowledgeEvidence.createdAt))
+			.limit(limit),
+	);
 }
 
 /**
@@ -297,16 +1468,27 @@ export async function linkContactToKnowledge(
 		| 'decided'
 		| 'experienced_outcome',
 	strength = 1.0,
+	evidence?: KnowledgeContactEvidenceInput,
 ): Promise<KnowledgeContact> {
+	if (evidence?.snippet && !evidence.envelope) {
+		throw new Error('linkContactToKnowledge: envelope required when evidence snippet is provided');
+	}
+
+	const values: typeof knowledgeContacts.$inferInsert = {
+		workspaceId,
+		knowledgeNodeId: nodeId,
+		contactId,
+		relationType,
+		strength,
+	};
+	if (evidence?.occurredAt) {
+		values.lastEvidenceAt = evidence.occurredAt;
+	}
+	const evidenceOccurredAtIso = evidence?.occurredAt?.toISOString();
+
 	const result = await db
 		.insert(knowledgeContacts)
-		.values({
-			workspaceId,
-			knowledgeNodeId: nodeId,
-			contactId,
-			relationType,
-			strength,
-		})
+		.values(values)
 		.onConflictDoUpdate({
 			target: [
 				knowledgeContacts.knowledgeNodeId,
@@ -316,13 +1498,89 @@ export async function linkContactToKnowledge(
 			set: {
 				evidenceCount: sql`${knowledgeContacts.evidenceCount} + 1`,
 				strength,
-				lastEvidenceAt: sql`now()`,
+				lastEvidenceAt: evidenceOccurredAtIso
+					? sql`GREATEST(${knowledgeContacts.lastEvidenceAt}, ${evidenceOccurredAtIso}::timestamptz)`
+					: sql`now()`,
 			},
 		})
 		.returning();
 	const row = result[0];
 	if (!row) throw new Error('linkContactToKnowledge: insert returned no rows');
+	if (evidence) {
+		await createKnowledgeEvidence(
+			workspaceId,
+			{
+				knowledgeNodeId: nodeId,
+				contactId,
+				messageId: evidence.messageId ?? null,
+				relationType,
+				evidenceKind: evidence.evidenceKind ?? 'manual',
+				confidence: evidence.confidence ?? strength,
+				snippet: evidence.snippet ?? null,
+				occurredAt: evidence.occurredAt ?? null,
+				metadata: evidence.metadata ?? null,
+			},
+			evidence.envelope,
+		);
+	}
 	return row;
+}
+
+export interface KnowledgeContactWithEvidence {
+	contact: typeof contacts.$inferSelect;
+	link: KnowledgeContact;
+	evidence: KnowledgeEvidence[];
+}
+
+/**
+ * Return linked contacts plus supporting evidence snippets for a topic node.
+ * Requires an envelope because contact names and evidence snippets are encrypted.
+ */
+export async function listContactsWithEvidenceForKnowledgeNode(
+	nodeId: string,
+	workspaceId: string,
+	envelope: SealedEnvelope,
+	opts?: { evidenceLimitPerContact?: number },
+): Promise<KnowledgeContactWithEvidence[]> {
+	const evidenceLimit = opts?.evidenceLimitPerContact ?? 3;
+
+	return withKeys(envelope, async () => {
+		const contactRows = await db
+			.select({ contact: contacts, link: knowledgeContacts })
+			.from(knowledgeContacts)
+			.innerJoin(
+				contacts,
+				and(eq(knowledgeContacts.contactId, contacts.id), eq(contacts.workspaceId, workspaceId)),
+			)
+			.where(
+				and(
+					eq(knowledgeContacts.knowledgeNodeId, nodeId),
+					eq(knowledgeContacts.workspaceId, workspaceId),
+				),
+			);
+
+		if (contactRows.length === 0) return [];
+
+		const contactIds = contactRows.map((r) => r.contact.id);
+		const evidenceRows = await db
+			.select()
+			.from(knowledgeEvidence)
+			.where(
+				and(
+					eq(knowledgeEvidence.workspaceId, workspaceId),
+					eq(knowledgeEvidence.knowledgeNodeId, nodeId),
+					inArray(knowledgeEvidence.contactId, contactIds),
+				),
+			)
+			.orderBy(evidenceRecencyOrder, desc(knowledgeEvidence.createdAt));
+
+		return contactRows.map((row) => ({
+			...row,
+			evidence: evidenceRows
+				.filter((e) => e.contactId === row.contact.id && e.relationType === row.link.relationType)
+				.slice(0, evidenceLimit),
+		}));
+	});
 }
 
 /**
@@ -461,7 +1719,22 @@ export async function mergeKnowledgeNodes(
 			)
 		`);
 
-			// Step 3: Add merged node's name to survivor's aliases + combine mention counts
+			// Step 3: Transfer evidence rows that point at the merged node.
+			await tx.execute(sql`
+			UPDATE knowledge_evidence
+			SET knowledge_node_id = ${survivorId}::uuid
+			WHERE knowledge_node_id = ${mergedId}::uuid
+			AND workspace_id = ${workspaceId}::uuid
+		`);
+
+			await tx.execute(sql`
+			UPDATE knowledge_evidence
+			SET related_knowledge_node_id = ${survivorId}::uuid
+			WHERE related_knowledge_node_id = ${mergedId}::uuid
+			AND workspace_id = ${workspaceId}::uuid
+		`);
+
+			// Step 4: Add merged node's name to survivor's aliases + combine mention counts
 			await tx.execute(sql`
 			UPDATE knowledge_nodes
 			SET
@@ -471,7 +1744,7 @@ export async function mergeKnowledgeNodes(
 			AND workspace_id = ${workspaceId}::uuid
 		`);
 
-			// Step 4: Delete remaining conflict links and the merged node
+			// Step 5: Delete remaining conflict links and the merged node
 			await tx
 				.delete(knowledgeContacts)
 				.where(
@@ -515,15 +1788,13 @@ export async function findNodeByNameAnyType(
 	envelope: SealedEnvelope,
 ): Promise<KnowledgeNode | null> {
 	return withKeys(envelope, async () => {
-		const keys = getCurrentKeys();
-		const nameHash = computeBlindIndex(normalizedName, keys.bik);
 		const result = await db
 			.select()
 			.from(knowledgeNodes)
 			.where(
 				and(
 					eq(knowledgeNodes.workspaceId, workspaceId),
-					eq(knowledgeNodes.nameBlindIndex, nameHash),
+					eq(knowledgeNodes.nameBlindIndex, normalizedName),
 				),
 			)
 			.orderBy(desc(knowledgeNodes.mentionCount))
@@ -638,7 +1909,12 @@ export async function createKnowledgeLink(
 	targetNodeId: string,
 	linkType: KnowledgeLinkType,
 	weight?: number,
+	evidence?: KnowledgeLinkEvidenceInput,
 ): Promise<KnowledgeLink> {
+	if (evidence?.snippet && !evidence.envelope) {
+		throw new Error('createKnowledgeLink: envelope required when evidence snippet is provided');
+	}
+
 	const result = await db
 		.insert(knowledgeLinks)
 		.values({ workspaceId, sourceNodeId, targetNodeId, linkType, weight })
@@ -654,6 +1930,23 @@ export async function createKnowledgeLink(
 		.returning();
 	const row = result[0];
 	if (!row) throw new Error('createKnowledgeLink: insert returned no rows');
+	if (evidence) {
+		await createKnowledgeEvidence(
+			workspaceId,
+			{
+				knowledgeNodeId: sourceNodeId,
+				relatedKnowledgeNodeId: targetNodeId,
+				messageId: evidence.messageId ?? null,
+				relationType: linkType,
+				evidenceKind: evidence.evidenceKind ?? 'manual',
+				confidence: evidence.confidence ?? weight ?? null,
+				snippet: evidence.snippet ?? null,
+				occurredAt: evidence.occurredAt ?? null,
+				metadata: evidence.metadata ?? null,
+			},
+			evidence.envelope,
+		);
+	}
 	return row;
 }
 
@@ -1109,23 +2402,149 @@ export async function getContactsNeedingExtraction(
 	limit = 50,
 ): Promise<string[]> {
 	const rows = await db.execute(sql`
-		SELECT c.id
-		FROM contacts c
-		LEFT JOIN knowledge_extraction_log kel
-			ON kel.contact_id = c.id
-			AND kel.workspace_id = c.workspace_id
-		WHERE c.workspace_id = ${workspaceId}::uuid
-		AND (
-			kel.id IS NULL
-			OR kel.message_horizon < (
-				SELECT MAX(m.sent_at)
-				FROM messages m
-				WHERE m.contact_id = c.id
+		WITH contact_messages AS (
+			SELECT
+				c.id,
+				c.source_account_id,
+				MAX(m.sent_at) AS latest_message_at
+			FROM contacts c
+			INNER JOIN messages m
+				ON m.contact_id = c.id
 				AND m.workspace_id = c.workspace_id
+			WHERE c.workspace_id = ${workspaceId}::uuid
+			GROUP BY c.id, c.source_account_id
+		),
+		candidates AS (
+			SELECT
+				cm.id,
+				cm.source_account_id,
+				cm.latest_message_at,
+				kel.last_extracted_at,
+				kel.message_horizon
+			FROM contact_messages cm
+			LEFT JOIN knowledge_extraction_log kel
+				ON kel.contact_id = cm.id
+				AND kel.workspace_id = ${workspaceId}::uuid
+			WHERE (
+				kel.id IS NULL
+				OR kel.message_horizon IS NULL
+				OR kel.message_horizon < cm.latest_message_at
 			)
+		),
+		ranked AS (
+			SELECT
+				id,
+				source_account_id,
+				latest_message_at,
+				last_extracted_at,
+				ROW_NUMBER() OVER (
+					PARTITION BY source_account_id
+					ORDER BY last_extracted_at ASC NULLS FIRST, latest_message_at DESC NULLS LAST
+				) AS source_rank
+			FROM candidates
 		)
-		ORDER BY kel.last_extracted_at ASC NULLS FIRST
+		SELECT id
+		FROM ranked
+		ORDER BY source_rank ASC, last_extracted_at ASC NULLS FIRST, latest_message_at DESC NULLS LAST
 		LIMIT ${limit}
 	`);
 	return (rows as unknown as Array<{ id: string }>).map((r) => r.id);
+}
+
+/**
+ * Return contact/message counts for manual knowledge analysis estimates.
+ * `includeFresh=true` is used for an explicit full rebuild; the default only
+ * returns contacts whose messages are newer than their extraction cursor.
+ */
+export async function getKnowledgeAnalysisContactCandidates(
+	workspaceId: string,
+	options: { includeFresh?: boolean; limit?: number } = {},
+): Promise<KnowledgeAnalysisContactCandidate[]> {
+	const limit = options.limit ?? 50;
+	const freshnessFilter = options.includeFresh
+		? sql``
+		: sql`AND (
+			kel.id IS NULL
+			OR kel.message_horizon IS NULL
+			OR kel.message_horizon < cm.latest_message_at
+		)`;
+
+	const rows = await db.execute(sql`
+		WITH contact_messages AS (
+			SELECT
+				c.id,
+				c.source_account_id,
+				COUNT(m.id)::int AS message_count,
+				MAX(m.sent_at) AS latest_message_at
+			FROM contacts c
+			INNER JOIN messages m
+				ON m.contact_id = c.id
+				AND m.workspace_id = c.workspace_id
+			WHERE c.workspace_id = ${workspaceId}::uuid
+			GROUP BY c.id, c.source_account_id
+		)
+		, candidates AS (
+			SELECT
+				cm.id,
+				cm.source_account_id,
+				cm.message_count,
+				cm.latest_message_at,
+				kel.message_horizon,
+				(
+					kel.id IS NULL
+					OR kel.message_horizon IS NULL
+					OR kel.message_horizon < cm.latest_message_at
+				) AS stale
+			FROM contact_messages cm
+			LEFT JOIN knowledge_extraction_log kel
+				ON kel.contact_id = cm.id
+				AND kel.workspace_id = ${workspaceId}::uuid
+			WHERE 1 = 1
+			${freshnessFilter}
+		),
+		ranked AS (
+			SELECT
+				*,
+				ROW_NUMBER() OVER (
+					PARTITION BY source_account_id
+					ORDER BY stale DESC, latest_message_at DESC NULLS LAST
+				) AS source_rank
+			FROM candidates
+		)
+		SELECT
+			id,
+			message_count,
+			latest_message_at,
+			message_horizon,
+			stale
+		FROM ranked
+		ORDER BY source_rank ASC, stale DESC, latest_message_at DESC NULLS LAST
+		LIMIT ${limit}
+	`);
+
+	return (
+		rows as unknown as Array<{
+			id: string;
+			message_count?: number | string;
+			messageCount?: number | string;
+			latest_message_at?: Date | string | null;
+			latestMessageAt?: Date | string | null;
+			message_horizon?: Date | string | null;
+			messageHorizon?: Date | string | null;
+			stale?: boolean;
+		}>
+	).map((row) => ({
+		id: row.id,
+		messageCount: Number(row.message_count ?? row.messageCount ?? 0),
+		latestMessageAt: coerceDate(row.latest_message_at ?? row.latestMessageAt),
+		messageHorizon: coerceDate(row.message_horizon ?? row.messageHorizon),
+		stale: row.stale === true,
+	}));
+}
+
+function coerceDate(value: Date | string | null | undefined): Date | null {
+	if (!value) return null;
+	if (value instanceof Date) return value;
+	const parsed = new Date(value);
+	return Number.isNaN(parsed.getTime()) ? null : parsed;
 }

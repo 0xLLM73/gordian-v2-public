@@ -1,7 +1,7 @@
 import { auth } from '@/lib/auth';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { getUserWorkspaceId, getWorkspaceEnvelope } from '@/lib/workspace';
-import { getHealthScoresByWorkspace, listContacts } from '@repo/db';
+import { getHealthScoresByWorkspace, getUserTelegramAccountIds, listContacts } from '@repo/db';
 import { headers } from 'next/headers';
 import { NextResponse } from 'next/server';
 
@@ -36,8 +36,16 @@ export async function GET(req: Request) {
 	const url = new URL(req.url);
 	const rawLimit = Number(url.searchParams.get('limit'));
 	const limit = rawLimit > 0 && rawLimit <= 100 ? rawLimit : 30;
+	const telegramAccountIds = await getUserTelegramAccountIds(session.user.id);
 
-	const contacts = await listContacts(workspaceId, envelope, { limit });
+	if (telegramAccountIds.length === 0) {
+		return NextResponse.json([]);
+	}
+
+	const contacts = await listContacts(workspaceId, envelope, {
+		limit,
+		sourceAccountIds: telegramAccountIds,
+	});
 
 	// Build a map of health scores keyed by contactId for O(1) lookup
 	const healthScores = await getHealthScoresByWorkspace(workspaceId, { limit: 200 });

@@ -20,16 +20,14 @@ vi.mock('../../redis', () => ({
 }));
 
 vi.mock('bullmq', () => ({
-	Worker: vi.fn(function MockWorker(_name: string, processor: MockProcessor) {
+	Worker: vi.fn().mockImplementation((_name: string, processor: MockProcessor) => {
 		// Store the processor so tests can invoke it directly
 		(Worker as unknown as { __processor: MockProcessor }).__processor = processor;
 		return { on: vi.fn() };
 	}),
-	Queue: vi.fn(function MockQueue() {
-		return {
-			add: vi.fn(),
-		};
-	}),
+	Queue: vi.fn().mockImplementation(() => ({
+		add: vi.fn(),
+	})),
 }));
 
 const Worker = (await import('bullmq')).Worker as unknown as { __processor: MockProcessor };

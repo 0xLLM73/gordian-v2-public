@@ -1,6 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { Tool } from '@anthropic-ai/sdk/resources/messages';
+import { maskEntities } from '@repo/crypto';
+import { assertAiProcessingEnabled, getHeliconeApiKey } from '@repo/shared';
 import { getHeliconeHeaders } from './cached-inference';
+import { prefilterEntities } from './prefilter';
 
 /**
  * Goal Extraction Pipeline (GI4):
@@ -21,11 +24,10 @@ import { getHeliconeHeaders } from './cached-inference';
 let _haiku: Anthropic | null = null;
 function getHaikuClient(): Anthropic {
 	if (!_haiku) {
+		const heliconeApiKey = getHeliconeApiKey();
 		_haiku = new Anthropic({
-			baseURL: process.env.HELICONE_API_KEY ? 'https://anthropic.helicone.ai' : undefined,
-			defaultHeaders: process.env.HELICONE_API_KEY
-				? { 'Helicone-Auth': `Bearer ${process.env.HELICONE_API_KEY}` }
-				: undefined,
+			baseURL: heliconeApiKey ? 'https://anthropic.helicone.ai' : undefined,
+			defaultHeaders: heliconeApiKey ? { 'Helicone-Auth': `Bearer ${heliconeApiKey}` } : undefined,
 		});
 	}
 	return _haiku;
@@ -113,17 +115,48 @@ export interface GoalExtractionResult {
 	goals: ExtractedGoal[];
 }
 
+type TranscriptMessage = { role: string; content: string; timestamp: string };
+
+function redactStructuredEntities(text: string): string {
+	const detectedEntities = prefilterEntities(text);
+	if (detectedEntities.length === 0) return text;
+
+	return [...detectedEntities]
+		.sort((a, b) => b.start - a.start)
+		.reduce(
+			(masked, entity) =>
+				`${masked.slice(0, entity.start)}[${entity.type}]${masked.slice(entity.end)}`,
+			text,
+		);
+}
+
+function maskModelContent(content: string, workspaceSalt?: Buffer): string {
+	const detectedEntities = prefilterEntities(content);
+	if (!workspaceSalt) return redactStructuredEntities(content);
+	return maskEntities(content, workspaceSalt, detectedEntities).maskedText;
+}
+
+function buildModelTranscript(messages: TranscriptMessage[], workspaceSalt?: Buffer): string {
+	return messages
+		.map((m) => {
+			const speaker = m.role === 'user' ? 'CRM Owner' : 'Contact';
+			return `[${m.timestamp}] ${speaker}: ${maskModelContent(m.content, workspaceSalt)}`;
+		})
+		.join('\n');
+}
+
 /**
  * Extract goals/objectives from a conversation transcript.
  * Uses Haiku for cost-effective extraction.
  */
 export async function extractGoals(
-	messages: Array<{ role: string; content: string; timestamp: string }>,
+	messages: TranscriptMessage[],
 	referenceTime: string,
+	workspaceSalt?: Buffer,
 ): Promise<GoalExtractionResult> {
-	const transcript = messages
-		.map((m) => `[${m.timestamp}] ${m.role === 'user' ? 'CRM Owner' : 'Contact'}: ${m.content}`)
-		.join('\n');
+	assertAiProcessingEnabled('Claude goal extraction');
+
+	const transcript = buildModelTranscript(messages, workspaceSalt);
 
 	const heliconeHeaders = getHeliconeHeaders({
 		feature: 'goal-extraction',

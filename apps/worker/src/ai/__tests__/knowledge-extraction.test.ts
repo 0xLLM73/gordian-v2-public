@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockInferWithGemini = vi.hoisted(() => vi.fn());
 const mockGenerateEmbedding = vi.hoisted(() => vi.fn());
+const mockGenerateEmbeddingsCached = vi.hoisted(() => vi.fn());
 const mockSearchKnowledgeNodes = vi.hoisted(() => vi.fn());
 const mockCreateKnowledgeNode = vi.hoisted(() => vi.fn());
 const mockLinkContactToKnowledge = vi.hoisted(() => vi.fn());
@@ -20,7 +21,8 @@ vi.mock('../gemini-inference', () => ({
 }));
 
 vi.mock('../embeddings', () => ({
-	generateEmbedding: mockGenerateEmbedding,
+	generateEmbeddingCached: mockGenerateEmbedding,
+	generateEmbeddingsCached: mockGenerateEmbeddingsCached,
 }));
 
 vi.mock('@repo/crypto', () => ({
@@ -92,7 +94,11 @@ describe('keywordPreFilter', () => {
 describe('extractKnowledgeEntities', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.unstubAllEnvs();
 		mockGenerateEmbedding.mockResolvedValue(fakeEmbedding);
+		mockGenerateEmbeddingsCached.mockImplementation((texts: string[]) =>
+			Promise.resolve(texts.map((_text, index) => ({ embedding: fakeEmbedding, index }))),
+		);
 		mockSearchKnowledgeNodes.mockResolvedValue([]);
 		mockCreateKnowledgeNode.mockResolvedValue({ id: 'node-1', name: 'ethereum' });
 		mockLinkContactToKnowledge.mockResolvedValue({});
@@ -127,6 +133,52 @@ describe('extractKnowledgeEntities', () => {
 		expect(params.userPrompt).toContain('Extract knowledge entities');
 	});
 
+	it('skips LLM extraction when the KG LLM provider is disabled', async () => {
+		vi.stubEnv('KNOWLEDGE_LLM_PROVIDER', 'disabled');
+
+		await extractKnowledgeEntities(domainMessages, CONTACT, WS, testSalt, testEnvelope);
+
+		expect(mockInferWithGemini).not.toHaveBeenCalled();
+		expect(mockUpsertExtractionLog).toHaveBeenCalledWith(
+			WS,
+			CONTACT,
+			expect.objectContaining({ llmCalled: false }),
+		);
+	});
+
+	it('records the latest processed message timestamp as messageHorizon', async () => {
+		const latestTimestamp = '2026-05-03T14:30:00.000Z';
+		mockInferWithGemini.mockResolvedValue(geminiJsonResponse([]));
+
+		await extractKnowledgeEntities(
+			[
+				{
+					id: 'msg-older',
+					text: 'We are researching Ethereum protocol infrastructure',
+					timestamp: '2026-05-01T12:00:00.000Z',
+				},
+				{
+					id: 'msg-latest',
+					text: 'Solana validator infrastructure is the current project focus',
+					timestamp: latestTimestamp,
+				},
+			],
+			CONTACT,
+			WS,
+			testSalt,
+			testEnvelope,
+		);
+
+		expect(mockUpsertExtractionLog).toHaveBeenCalledWith(
+			WS,
+			CONTACT,
+			expect.objectContaining({
+				messageHorizon: new Date(latestTimestamp),
+				llmCalled: true,
+			}),
+		);
+	});
+
 	it('filters out entities with confidence < 0.7', async () => {
 		mockInferWithGemini.mockResolvedValue(
 			geminiJsonResponse([
@@ -155,7 +207,13 @@ describe('extractKnowledgeEntities', () => {
 		expect(mockCreateKnowledgeNode).toHaveBeenCalledTimes(1);
 		expect(mockCreateKnowledgeNode).toHaveBeenCalledWith(
 			WS,
-			expect.objectContaining({ name: 'ethereum' }),
+			expect.objectContaining({
+				name: 'ethereum',
+				metadata: expect.objectContaining({
+					embeddingFingerprintKey:
+						'openai:cloud:custom:text-embedding-3-small:512:kg-embedding-format-v1',
+				}),
+			}),
 			testEnvelope,
 		);
 	});
@@ -221,6 +279,207 @@ describe('extractKnowledgeEntities', () => {
 		expect(mockCreateKnowledgeNode).toHaveBeenCalledTimes(2);
 		expect(mockLinkContactToKnowledge).toHaveBeenCalledTimes(1);
 	});
+
+	it('writes evidence metadata when message ids and timestamps are available', async () => {
+		const occurredAt = '2026-05-01T12:00:00.000Z';
+		mockInferWithGemini.mockResolvedValue(
+			geminiJsonResponse([
+				{
+					type: 'technology',
+					name: 'solana',
+					displayName: 'Solana',
+					description: 'Layer 1 blockchain',
+					relationshipType: 'works_on',
+					confidence: 0.92,
+				},
+			]),
+		);
+
+		await extractKnowledgeEntities(
+			[
+				{
+					id: 'msg-1',
+					text: 'We are building Solana validator infrastructure for the next launch',
+					timestamp: occurredAt,
+				},
+			],
+			CONTACT,
+			WS,
+			testSalt,
+			testEnvelope,
+		);
+
+		expect(mockLinkContactToKnowledge).toHaveBeenCalledWith(
+			WS,
+			'node-1',
+			CONTACT,
+			'works_on',
+			0.92,
+			expect.objectContaining({
+				messageId: 'msg-1',
+				snippet: expect.stringContaining('Solana validator'),
+				occurredAt: new Date(occurredAt),
+				evidenceKind: 'llm_extracted',
+				confidence: 0.92,
+				metadata: expect.objectContaining({
+					source: 'gemini_flash',
+					entityType: 'technology',
+					sourceMessageSelection: {
+						method: 'exact_normalized_name',
+					},
+				}),
+				envelope: testEnvelope,
+			}),
+		);
+		const metadata = mockLinkContactToKnowledge.mock.calls[0]?.[5]?.metadata as Record<
+			string,
+			unknown
+		>;
+		expect(metadata.normalizedName).toBeUndefined();
+		expect(JSON.stringify(metadata)).not.toContain('solana');
+	});
+
+	it('selects the source message with an exact entity mention from a batch', async () => {
+		mockInferWithGemini.mockResolvedValue(
+			geminiJsonResponse([
+				{
+					type: 'project',
+					name: 'solana',
+					displayName: 'Solana',
+					description: 'Layer 1 blockchain',
+					relationshipType: 'interested_in',
+					confidence: 0.88,
+				},
+			]),
+		);
+
+		await extractKnowledgeEntities(
+			[
+				{
+					id: 'msg-older',
+					text: 'We should catch up about protocol research',
+					timestamp: '2026-05-01T00:00:00Z',
+				},
+				{
+					id: 'msg-source',
+					text: 'Solana infra is the thing I am focused on',
+					timestamp: '2026-05-02T00:00:00Z',
+				},
+				{
+					id: 'msg-latest',
+					text: 'Conference logistics for next week',
+					timestamp: '2026-05-03T00:00:00Z',
+				},
+			],
+			CONTACT,
+			WS,
+			testSalt,
+			testEnvelope,
+		);
+
+		expect(mockLinkContactToKnowledge).toHaveBeenCalledWith(
+			WS,
+			'node-1',
+			CONTACT,
+			'interested_in',
+			0.88,
+			expect.objectContaining({
+				messageId: 'msg-source',
+				snippet: expect.stringContaining('Solana infra'),
+				metadata: expect.objectContaining({
+					sourceMessageSelection: {
+						method: 'exact_normalized_name',
+					},
+				}),
+			}),
+		);
+	});
+
+	it('falls back safely when source message id is missing', async () => {
+		mockInferWithGemini.mockResolvedValue(
+			geminiJsonResponse([
+				{
+					type: 'topic',
+					name: 'defi',
+					displayName: 'DeFi',
+					description: 'Decentralized finance',
+					relationshipType: 'knows_about',
+					confidence: 0.83,
+				},
+			]),
+		);
+
+		await extractKnowledgeEntities(
+			[{ text: 'DeFi liquidity keeps coming up', timestamp: '2026-05-04T00:00:00Z' }],
+			CONTACT,
+			WS,
+			testSalt,
+			testEnvelope,
+		);
+
+		expect(mockLinkContactToKnowledge).toHaveBeenCalledWith(
+			WS,
+			'node-1',
+			CONTACT,
+			'knows_about',
+			0.83,
+			expect.objectContaining({
+				messageId: undefined,
+				snippet: expect.stringContaining('DeFi liquidity'),
+				metadata: expect.objectContaining({
+					sourceMessageSelection: {
+						method: 'exact_normalized_name',
+					},
+				}),
+			}),
+		);
+	});
+
+	it('uses model-provided sourceMention when entity names do not appear verbatim', async () => {
+		mockInferWithGemini.mockResolvedValue(
+			geminiJsonResponse([
+				{
+					type: 'project',
+					name: 'solana validator program',
+					displayName: 'Solana Validator Program',
+					description: 'Validator launch work',
+					relationshipType: 'works_on',
+					confidence: 0.9,
+					sourceMention: 'validator launch',
+				},
+			]),
+		);
+
+		await extractKnowledgeEntities(
+			[
+				{
+					id: 'msg-mention',
+					text: 'The validator launch is my main workstream this month',
+					timestamp: '2026-05-05T00:00:00Z',
+				},
+			],
+			CONTACT,
+			WS,
+			testSalt,
+			testEnvelope,
+		);
+
+		expect(mockLinkContactToKnowledge).toHaveBeenCalledWith(
+			WS,
+			'node-1',
+			CONTACT,
+			'works_on',
+			0.9,
+			expect.objectContaining({
+				messageId: 'msg-mention',
+				metadata: expect.objectContaining({
+					sourceMessageSelection: {
+						method: 'mention_span',
+					},
+				}),
+			}),
+		);
+	});
 });
 
 // ─── embeddingFirstMatch (per-message) ───────────────────────────────────────
@@ -254,14 +513,11 @@ describe('embeddingFirstMatch (per-message)', () => {
 
 		await extractKnowledgeEntities(messages, CONTACT, WS, testSalt, testEnvelope);
 
-		// Should generate 2 embeddings for the embedding-first pass (one per qualifying message)
-		// plus N for the LLM entity pass (entity names)
-		// The key insight: generateEmbedding is called with individual messages, not a blob
-		const embeddingCalls = mockGenerateEmbedding.mock.calls as unknown[][];
-		const calledWithIndividualMessage = embeddingCalls.some(
-			(call) => typeof call[0] === 'string' && (call[0] as string).includes('Solana'),
-		);
-		expect(calledWithIndividualMessage).toBe(true);
+		const embeddingBatchCalls = mockGenerateEmbeddingsCached.mock.calls as unknown[][];
+		const firstBatch = embeddingBatchCalls[0]?.[0] as string[];
+		expect(firstBatch.some((text) => text.includes('Solana'))).toBe(true);
+		expect(firstBatch.join('\n')).not.toContain(messages.join(' '));
+		expect(embeddingBatchCalls[0]?.[1]).toEqual({ purpose: 'document' });
 	});
 
 	it('deduplicates nodes across messages in the same pass', async () => {
@@ -295,6 +551,9 @@ describe('SEC-122: ELM masking before LLM/embedding calls', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockGenerateEmbedding.mockResolvedValue(fakeEmbedding);
+		mockGenerateEmbeddingsCached.mockImplementation((texts: string[]) =>
+			Promise.resolve(texts.map((_text, index) => ({ embedding: fakeEmbedding, index }))),
+		);
 		mockSearchKnowledgeNodes.mockResolvedValue([]);
 		mockCreateKnowledgeNode.mockResolvedValue({ id: 'node-1', name: 'ethereum' });
 		mockLinkContactToKnowledge.mockResolvedValue({});
@@ -331,7 +590,9 @@ describe('SEC-122: ELM masking before LLM/embedding calls', () => {
 		expect(mockPrefilterEntities).toHaveBeenCalled();
 		expect(mockMaskEntities).toHaveBeenCalled();
 		// Verify generateEmbedding received masked text, not raw
-		expect(mockGenerateEmbedding).toHaveBeenCalledWith(expect.stringContaining('[MASKED]'));
+		expect(mockGenerateEmbedding).toHaveBeenCalledWith(expect.stringContaining('[MASKED]'), {
+			purpose: 'dedup',
+		});
 	});
 
 	it('masks messages before LLM inference (SEC-122)', async () => {

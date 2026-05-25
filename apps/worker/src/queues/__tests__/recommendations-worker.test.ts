@@ -18,13 +18,11 @@ vi.mock('../../ai/recommendations', () => ({
 }));
 
 vi.mock('bullmq', () => ({
-	Worker: vi.fn(function MockWorker(name: string, processor: (job: unknown) => Promise<void>) {
+	Worker: vi.fn((name, processor) => {
 		if (name === 'recommendations') processorStore.fn = processor;
 		return { on: vi.fn() };
 	}),
-	Queue: vi.fn(function MockQueue() {
-		return { add: vi.fn(() => Promise.resolve()), on: vi.fn() };
-	}),
+	Queue: vi.fn(() => ({ add: vi.fn(() => Promise.resolve()), on: vi.fn() })),
 }));
 
 vi.mock('../../redis', () => ({ connection: {} }));

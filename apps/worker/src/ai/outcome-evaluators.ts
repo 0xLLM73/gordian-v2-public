@@ -310,11 +310,11 @@ export async function evaluateGoal(workspaceId: string, goalId: string): Promise
 // ─── evaluateIntroduction ─────────────────────────────────────────────────────
 
 /**
- * Record the outcome of an introduction reaching the 'completed' status.
+ * Record the outcome of an introduction archived with a completed resolution.
  *
- * Reads: context, confidence, status, updatedAt, introducerContactId — all plaintext.
+ * Reads: context, confidence, status, resolution, updatedAt, introducerContactId — all plaintext.
  * context_labels: ['intro_context:{context}', 'confidence:{bucket}']
- * result: 'positive' (introductions reaching completed are considered successful)
+ * result: 'positive' (completed introductions are considered successful)
  * contactId: the introducer (primary actor in the outcome)
  */
 export async function evaluateIntroduction(
@@ -328,6 +328,7 @@ export async function evaluateIntroduction(
 			context: introductions.context,
 			confidence: introductions.confidence,
 			status: introductions.status,
+			resolution: introductions.resolution,
 			updatedAt: introductions.updatedAt,
 			introducerContactId: introductions.introducerContactId,
 		})
@@ -346,6 +347,13 @@ export async function evaluateIntroduction(
 	if (intro.status !== 'archive') {
 		console.log(
 			`[outcome-evaluators] evaluateIntroduction: intro ${introductionId.slice(0, 8)} not archived (${intro.status})`,
+		);
+		return null;
+	}
+
+	if (intro.resolution !== 'completed') {
+		console.log(
+			`[outcome-evaluators] evaluateIntroduction: intro ${introductionId.slice(0, 8)} archived without completed resolution (${intro.resolution ?? 'none'})`,
 		);
 		return null;
 	}

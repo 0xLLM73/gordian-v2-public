@@ -190,6 +190,8 @@ export const draftArmEnum = pgEnum('draft_arm', [
 
 export const introStatusEnum = pgEnum('intro_status', ['triage', 'active', 'archive']);
 
+export const introResolutionEnum = pgEnum('intro_resolution', ['completed', 'dismissed']);
+
 export const introContextEnum = pgEnum('intro_context', [
 	'deal',
 	'hiring',

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockAppendAuditLog = vi.hoisted(() => vi.fn());
 const mockIsFeatureEnabled = vi.hoisted(() => vi.fn());
+const mockGetAccessibleContactTelegramId = vi.hoisted(() => vi.fn());
 
 vi.mock('../../redis', () => ({
 	connection: {
@@ -37,6 +38,7 @@ vi.mock('@repo/crypto', () => ({
 
 vi.mock('@repo/db', () => ({
 	appendAuditLog: mockAppendAuditLog,
+	getAccessibleContactTelegramId: mockGetAccessibleContactTelegramId,
 	isFeatureEnabled: mockIsFeatureEnabled,
 	db: {
 		query: {
@@ -74,6 +76,17 @@ function postSendMessage(body: object) {
 	});
 }
 
+function postNotifySession(body: object) {
+	return telegram.request('/notify-session', {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			'X-Internal-Secret': SECRET,
+		},
+		body: JSON.stringify(body),
+	});
+}
+
 const VALID_BODY = {
 	userId: USER_ID,
 	workspaceId: WORKSPACE_ID,
@@ -101,6 +114,7 @@ describe('POST /send-message — SEC-SEND-300 audit log', () => {
 		});
 		// GramJS: success
 		(sendToUser as ReturnType<typeof vi.fn>).mockResolvedValue({ messageId: 42 });
+		mockGetAccessibleContactTelegramId.mockResolvedValue(TG_ID);
 	});
 
 	it('calls appendAuditLog after successful send', async () => {
@@ -115,7 +129,7 @@ describe('POST /send-message — SEC-SEND-300 audit log', () => {
 			action: 'send',
 			resourceType: 'message',
 			resourceId: CONTACT_ID,
-			metadata: { contactTelegramId: TG_ID, idempotencyKey: IDEMP_KEY },
+			metadata: { idempotencyKey: IDEMP_KEY, telegramRecipient: 'present' },
 		});
 	});
 
@@ -166,5 +180,47 @@ describe('POST /send-message — SEC-SEND-300 audit log', () => {
 
 		expect(res.status).toBe(503);
 		expect(mockAppendAuditLog).not.toHaveBeenCalled();
+	});
+
+	it('rejects sends for inaccessible or mismatched contacts', async () => {
+		mockGetAccessibleContactTelegramId.mockResolvedValue(null);
+
+		const res = await postSendMessage(VALID_BODY);
+
+		expect(res.status).toBe(404);
+		expect(sendToUser).not.toHaveBeenCalled();
+		expect(mockAppendAuditLog).not.toHaveBeenCalled();
+	});
+});
+
+describe('POST /notify-session — outbound Bot API gate', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.stubEnv('TELEGRAM_BOT_ENABLED', 'true');
+		vi.stubEnv('TELEGRAM_SEND_ENABLED', 'true');
+		vi.stubEnv('BOT_TOKEN', 'test-bot-token');
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(() => Promise.resolve({ ok: true, status: 200 } as Response)),
+		);
+	});
+
+	it('rejects session notifications when the deployment send gate is disabled', async () => {
+		vi.stubEnv('TELEGRAM_SEND_ENABLED', 'false');
+
+		const res = await postNotifySession({ telegramUserId: TG_ID });
+
+		expect(res.status).toBe(503);
+		expect(fetch).not.toHaveBeenCalled();
+	});
+
+	it('sends session notifications when Bot API and send gates are both enabled', async () => {
+		const res = await postNotifySession({ telegramUserId: TG_ID });
+
+		expect(res.status).toBe(200);
+		expect(fetch).toHaveBeenCalledWith(
+			'https://api.telegram.org/bottest-bot-token/sendMessage',
+			expect.objectContaining({ method: 'POST' }),
+		);
 	});
 });

@@ -11,7 +11,11 @@ import {
 	saveWhatMatters as saveWhatMattersDAL,
 	upsertCalibration,
 } from '@repo/db';
-import { calibrationInputSchema } from '@repo/shared';
+import {
+	TELEGRAM_CONSENT_VERSION,
+	calibrationInputSchema,
+	isAiAnalysisAvailable,
+} from '@repo/shared';
 import { z } from 'zod';
 
 export const getCalibrationAction = workspaceAction.schema(z.object({})).action(async ({ ctx }) => {
@@ -99,9 +103,17 @@ export const saveConsentAction = workspaceAction
 			consentDataProcessing: z.boolean(),
 			consentAiAnalysis: z.boolean(),
 			consentTelegramAccess: z.boolean(),
+			consentVersion: z
+				.number()
+				.int()
+				.min(TELEGRAM_CONSENT_VERSION)
+				.default(TELEGRAM_CONSENT_VERSION),
 		}),
 	)
 	.action(async ({ parsedInput, ctx }) => {
-		await saveConsentDAL(ctx.session.user.id, ctx.workspaceId, parsedInput);
+		await saveConsentDAL(ctx.session.user.id, ctx.workspaceId, {
+			...parsedInput,
+			consentAiAnalysis: parsedInput.consentAiAnalysis && isAiAnalysisAvailable(process.env),
+		});
 		return { saved: true };
 	});

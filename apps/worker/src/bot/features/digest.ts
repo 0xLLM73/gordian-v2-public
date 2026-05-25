@@ -17,7 +17,9 @@ digestComposer.command('digest', async (ctx) => {
 
 	// Look up userId + workspaceId from accounts table
 	try {
-		const { accounts, db, eq, and, workspaces } = await import('@repo/db');
+		const { accounts, db, eq, and, hasUserAiAnalysisConsent, workspaces } = await import(
+			'@repo/db'
+		);
 
 		const [account] = await db
 			.select({ userId: accounts.userId })
@@ -38,6 +40,11 @@ digestComposer.command('digest', async (ctx) => {
 
 		if (!ws) {
 			await ctx.reply('No workspace found. Please complete setup on the web app.');
+			return;
+		}
+
+		if (!(await hasUserAiAnalysisConsent(account.userId, ws.id))) {
+			await ctx.reply('Enable AI analysis consent in the web app before generating a digest.');
 			return;
 		}
 

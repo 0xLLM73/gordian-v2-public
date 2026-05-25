@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto';
 import { getCurrentKeys, maskEntities, prefilterEntities, withKeys } from '@repo/crypto';
 import type { SealedEnvelope } from '@repo/crypto';
-import { and, eq, sql } from '@repo/db';
+import { and, eq, sql } from 'drizzle-orm';
 import { db } from '../client';
 import { banditLedger, goldenDataset } from '../schema/golden-dataset';
 
@@ -21,6 +22,101 @@ export interface CreateGoldenExampleInput {
 	sourceInteractionId?: string;
 }
 
+const COMMITMENT_EXTRACTION_DOMAINS = new Set([
+	'commitment_extraction',
+	'seed_commitment_extraction',
+]);
+
+const COMMITMENT_TEXT_FIELDS = new Set([
+	'content',
+	'description',
+	'explanation',
+	'extractioncontext',
+	'inputcontext',
+	'message',
+	'messages',
+	'quote',
+	'rationale',
+	'raw',
+	'rawtext',
+	'reasoning',
+	'sourcequote',
+	'sourcetext',
+	'text',
+	'title',
+	'transcript',
+]);
+
+function isCommitmentExtractionDomain(featureDomain: string): boolean {
+	return COMMITMENT_EXTRACTION_DOMAINS.has(featureDomain);
+}
+
+function normalizeJsonKey(key: string): string {
+	return key.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+}
+
+function shouldRedactCommitmentField(key: string): boolean {
+	return COMMITMENT_TEXT_FIELDS.has(normalizeJsonKey(key));
+}
+
+function createScopedCommitmentTextRedactor() {
+	const replacements = new Map<string, string>();
+	return (value: string): string => {
+		if (value.trim().length === 0) return value;
+		const existing = replacements.get(value);
+		if (existing) return existing;
+		const replacement = `[COMMITMENT_TEXT_${replacements.size + 1}]`;
+		replacements.set(value, replacement);
+		return replacement;
+	};
+}
+
+function sanitizeCommitmentJsonValue(
+	value: unknown,
+	redact: (value: string) => string,
+	forceRedactStrings = false,
+): unknown {
+	if (typeof value === 'string') {
+		return forceRedactStrings ? redact(value) : value;
+	}
+
+	if (Array.isArray(value)) {
+		return value.map((item) => sanitizeCommitmentJsonValue(item, redact, forceRedactStrings));
+	}
+
+	if (!value || typeof value !== 'object') {
+		return value;
+	}
+
+	return Object.fromEntries(
+		Object.entries(value as Record<string, unknown>).map(([key, childValue]) => [
+			key,
+			sanitizeCommitmentJsonValue(
+				childValue,
+				redact,
+				forceRedactStrings || shouldRedactCommitmentField(key),
+			),
+		]),
+	);
+}
+
+function sanitizeCommitmentExtractionPayload(
+	modelPrediction: unknown,
+	correctedOutput: unknown,
+): { modelPrediction: unknown; correctedOutput: unknown } {
+	const redact = createScopedCommitmentTextRedactor();
+	return {
+		modelPrediction:
+			typeof modelPrediction === 'string'
+				? redact(modelPrediction)
+				: sanitizeCommitmentJsonValue(modelPrediction, redact),
+		correctedOutput:
+			typeof correctedOutput === 'string'
+				? redact(correctedOutput)
+				: sanitizeCommitmentJsonValue(correctedOutput, redact),
+	};
+}
+
 /**
  * Create a golden dataset example with optional Entity-Linked Masking.
  * SEC-ENC-103: When envelope is provided, inputContext is masked BEFORE storage
@@ -31,6 +127,12 @@ export async function createGoldenExample(
 	envelope?: SealedEnvelope,
 ) {
 	let maskedContext = input.inputContext;
+	const payload = isCommitmentExtractionDomain(input.featureDomain)
+		? sanitizeCommitmentExtractionPayload(input.modelPrediction, input.correctedOutput)
+		: {
+				modelPrediction: input.modelPrediction,
+				correctedOutput: input.correctedOutput,
+			};
 
 	if (envelope && input.inputContext) {
 		maskedContext = await withKeys(envelope, async () => {
@@ -48,9 +150,9 @@ export async function createGoldenExample(
 			featureDomain: input.featureDomain,
 			inputContext: maskedContext,
 			inputEmbedding: input.inputEmbedding,
-			modelPrediction: input.modelPrediction,
+			modelPrediction: payload.modelPrediction,
 			predictionMetadata: input.predictionMetadata,
-			correctedOutput: input.correctedOutput,
+			correctedOutput: payload.correctedOutput,
 			correctionReasoning: input.correctionReasoning,
 			tags: input.tags,
 			difficulty: input.difficulty,
@@ -266,7 +368,6 @@ export async function getBanditStatsBucketed(userId?: string): Promise<BanditBuc
  * SHA-256 hash of input context for contamination guard.
  */
 export function hashInputContext(inputContext: string): string {
-	const { createHash } = require('node:crypto') as typeof import('node:crypto');
 	return createHash('sha256').update(inputContext).digest('hex');
 }
 

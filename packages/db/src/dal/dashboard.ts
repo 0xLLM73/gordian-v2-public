@@ -55,6 +55,45 @@ export async function getDashboardStats(workspaceId: string): Promise<DashboardS
 	};
 }
 
+export interface DashboardAnalyticsStats {
+	contactCount: number;
+	commitmentCount: number;
+	commitmentStatusCounts: Record<string, number>;
+}
+
+export async function getDashboardAnalyticsStats(
+	workspaceId: string,
+): Promise<DashboardAnalyticsStats> {
+	const [contactResult, commitmentResult, statusRows] = await Promise.all([
+		db
+			.select({ count: sql<number>`count(*)::int` })
+			.from(contacts)
+			.where(eq(contacts.workspaceId, workspaceId)),
+
+		db
+			.select({ count: sql<number>`count(*)::int` })
+			.from(commitments)
+			.where(eq(commitments.workspaceId, workspaceId)),
+
+		db
+			.select({
+				status: commitments.status,
+				count: sql<number>`count(*)::int`,
+			})
+			.from(commitments)
+			.where(eq(commitments.workspaceId, workspaceId))
+			.groupBy(commitments.status),
+	]);
+
+	return {
+		contactCount: contactResult[0]?.count ?? 0,
+		commitmentCount: commitmentResult[0]?.count ?? 0,
+		commitmentStatusCounts: Object.fromEntries(
+			statusRows.map((row) => [row.status, Number(row.count) || 0]),
+		),
+	};
+}
+
 export interface UpcomingCommitment {
 	id: string;
 	title: string;

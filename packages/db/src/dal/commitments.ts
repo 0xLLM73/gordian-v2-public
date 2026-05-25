@@ -69,10 +69,12 @@ export interface CreateCommitmentInput {
 	confidence: number;
 	dueDate?: Date;
 	quote?: string;
+	sourceMessageIds?: string[];
 	extractionContext?: string;
 	embedding?: number[];
 	sourceMessageAgeDays?: number;
 	banditTraceId?: string;
+	status?: 'active' | 'draft' | 'dismissed';
 }
 
 export async function createCommitment(
@@ -84,11 +86,21 @@ export async function createCommitment(
 	// > 0.85: Auto-confirm (status: 'active')
 	// 0.4-0.85: Draft mode (status: 'draft', shown in review queue)
 	// < 0.4: Discard (logged for analytics only)
-	let status: 'active' | 'draft' | 'dismissed' = 'draft';
-	if (input.confidence > 0.85) status = 'active';
-	if (input.confidence < 0.4) status = 'dismissed';
+	let status: 'active' | 'draft' | 'dismissed' = input.status ?? 'draft';
+	if (!input.status) {
+		if (input.confidence > 0.85) status = 'active';
+		if (input.confidence < 0.4) status = 'dismissed';
+	}
 
 	return withKeys(envelope, async () => {
+		const ownedContact = await db
+			.select({ id: contacts.id })
+			.from(contacts)
+			.where(and(eq(contacts.id, input.contactId), eq(contacts.workspaceId, workspaceId)))
+			.limit(1);
+
+		if (ownedContact.length === 0) return null;
+
 		const result = await db
 			.insert(commitments)
 			.values({
@@ -101,6 +113,7 @@ export async function createCommitment(
 				confidence: input.confidence,
 				dueDate: input.dueDate,
 				quote: input.quote,
+				sourceMessageIds: input.sourceMessageIds,
 				extractionContext: input.extractionContext,
 				embedding: input.embedding,
 				sourceMessageAgeDays: input.sourceMessageAgeDays,
@@ -244,6 +257,7 @@ export async function getCommitmentsByWorkspace(
 				confidence: commitments.confidence,
 				dueDate: commitments.dueDate,
 				quote: commitments.quote,
+				sourceMessageIds: commitments.sourceMessageIds,
 				extractionContext: commitments.extractionContext,
 				embedding: commitments.embedding,
 				banditTraceId: commitments.banditTraceId,
@@ -260,7 +274,14 @@ export async function getCommitmentsByWorkspace(
 			.leftJoin(contacts, eq(commitments.contactId, contacts.id))
 			.where(and(...conditions))
 			.limit(limit)
-			.orderBy(commitments.createdAt);
+			.orderBy(
+				sql`CASE WHEN ${commitments.dueDate} IS NULL THEN 1 ELSE 0 END`,
+				commitments.dueDate,
+				sql`${commitments.confidence} DESC`,
+				sql`CASE WHEN ${commitments.sourceMessageAgeDays} IS NULL THEN 1 ELSE 0 END`,
+				commitments.sourceMessageAgeDays,
+				sql`${commitments.createdAt} DESC`,
+			);
 	});
 }
 
@@ -333,12 +354,17 @@ export async function getCommitmentsForFirstLook(
 				title: commitments.title,
 				commitmentType: commitments.commitmentType,
 				status: commitments.status,
+				assignee: commitments.assignee,
 				confidence: commitments.confidence,
 				dueDate: commitments.dueDate,
+				quote: commitments.quote,
 				sourceMessageAgeDays: commitments.sourceMessageAgeDays,
 				createdAt: commitments.createdAt,
+				contactFirstName: contacts.firstName,
+				contactLastName: contacts.lastName,
 			})
 			.from(commitments)
+			.leftJoin(contacts, eq(commitments.contactId, contacts.id))
 			.where(
 				and(
 					eq(commitments.workspaceId, workspaceId),

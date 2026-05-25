@@ -12,25 +12,41 @@ import { db, sql } from '@repo/db';
 
 export type DedupResult = 'create' | 'merge' | 'flag' | 'dismiss';
 
+const COMMITMENT_EMBEDDING_DIMENSIONS = 512;
+const DECISION_EMBEDDING_DIMENSIONS = 1536;
+
+function toVectorLiteral(embedding: number[]): string {
+	return `[${embedding.join(',')}]`;
+}
+
 export async function deduplicateCommitment(
 	workspaceId: string,
 	contactId: string,
 	_newTitle: string,
 	newEmbedding: number[],
 ): Promise<DedupResult> {
-	const embeddingStr = `[${newEmbedding.join(',')}]`;
+	if (newEmbedding.length < COMMITMENT_EMBEDDING_DIMENSIONS) {
+		console.warn(
+			`[dedup] Skipping commitment dedup: expected at least ${COMMITMENT_EMBEDDING_DIMENSIONS} dimensions, got ${newEmbedding.length}`,
+		);
+		return 'create';
+	}
+
+	const commitmentEmbeddingStr = toVectorLiteral(
+		newEmbedding.slice(0, COMMITMENT_EMBEDDING_DIMENSIONS),
+	);
 
 	// Stage 1: Semantic — cosine similarity against ALL non-dismissed commitments
 	// (not just 'active' — draft commitments must also be deduped)
 	const semanticMatch = await db.execute(sql`
 		SELECT id,
-			1 - (embedding <=> ${embeddingStr}::halfvec(1536)) as similarity
+			1 - (embedding <=> ${commitmentEmbeddingStr}::halfvec(512)) as similarity
 		FROM commitments
 		WHERE contact_id = ${contactId}::uuid
 			AND workspace_id = ${workspaceId}::uuid
 			AND status != 'dismissed'
 			AND embedding IS NOT NULL
-		ORDER BY embedding <=> ${embeddingStr}::halfvec(1536)
+		ORDER BY embedding <=> ${commitmentEmbeddingStr}::halfvec(512)
 		LIMIT 1
 	`);
 
@@ -41,10 +57,15 @@ export async function deduplicateCommitment(
 		if (sim > 0.82) return 'flag';
 	}
 
-	// Stage 2: Causal — check decision graph for recent dismissals
+	// Stage 2: Causal — check decision graph for recent dismissals.
+	// user_decisions still uses vector(1536); only run this path when the caller
+	// supplies a full graph embedding so 512-dim commitment embeddings do not fail.
+	if (newEmbedding.length !== DECISION_EMBEDDING_DIMENSIONS) return 'create';
+
+	const decisionEmbeddingStr = toVectorLiteral(newEmbedding);
 	const dismissedMatch = await db.execute(sql`
 		SELECT id FROM user_decisions
-		WHERE 1 - (embedding <=> ${embeddingStr}::vector(1536)) > 0.9
+		WHERE 1 - (embedding <=> ${decisionEmbeddingStr}::vector(1536)) > 0.9
 			AND decision_type = 'dismissal'
 			AND created_at > NOW() - INTERVAL '7 DAYS'
 			AND workspace_id = ${workspaceId}::uuid

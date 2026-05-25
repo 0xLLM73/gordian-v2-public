@@ -36,6 +36,7 @@ export async function generateDraft(
 	armType: string,
 	voiceModifier?: string,
 ): Promise<string> {
+	// Callers must pass masked/pseudonymized context; this helper talks to external AI.
 	const modifier = ARM_INSTRUCTIONS[armType] ?? '';
 	const systemKernel = DRAFT_SYSTEM_KERNEL + (voiceModifier || '') + modifier;
 

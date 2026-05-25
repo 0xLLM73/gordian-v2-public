@@ -1,6 +1,19 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { SealedEnvelope } from '@repo/crypto';
 import { deriveKeys, encrypt, unwrapWrk } from '@repo/crypto';
-import { contacts, db, eq, getMessagesByContact, sql, workspaces } from '@repo/db';
+import {
+	appendAuditLog,
+	contacts,
+	db,
+	eq,
+	getMessageCount,
+	getMessagesByContact,
+	hasUserAiAnalysisConsent,
+	isWorkspaceMember,
+	sql,
+	workspaces,
+} from '@repo/db';
+import { getKnowledgeEmbeddingRuntime, isAiProcessingEnabled, redactSensitive } from '@repo/shared';
 import { Hono } from 'hono';
 import { validateInternalSecret } from '../middleware/auth';
 import { scheduleAIPipeline } from '../queues/ai-flow';
@@ -87,6 +100,74 @@ async function getWorkspaceEnvelope(workspaceId: string): Promise<SealedEnvelope
 	};
 }
 
+const ADMIN_REPROCESS_CONFIRM_TTL_MS = 10 * 60 * 1000;
+
+function getAdminReprocessConfirmSecret(): string {
+	const secret =
+		process.env.ADMIN_AI_REPROCESS_CONFIRM_SECRET ??
+		process.env.WORKER_INTERNAL_SECRET ??
+		process.env.INTERNAL_AUTH_SECRET;
+	if (!secret) {
+		throw new Error(
+			'ADMIN_AI_REPROCESS_CONFIRM_SECRET, WORKER_INTERNAL_SECRET, or INTERNAL_AUTH_SECRET is required',
+		);
+	}
+	return secret;
+}
+
+function signAdminReprocessConfirmToken(payload: {
+	batchSize: number;
+	contactLimit: number;
+	exp: number;
+	userId: string;
+	workspaceId: string;
+}): string {
+	const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+	const signature = createHmac('sha256', getAdminReprocessConfirmSecret())
+		.update(encoded)
+		.digest('base64url');
+	return `${encoded}.${signature}`;
+}
+
+function safeEqualString(a: string, b: string): boolean {
+	const aBuf = Buffer.from(a);
+	const bBuf = Buffer.from(b);
+	return aBuf.length === bBuf.length && timingSafeEqual(aBuf, bBuf);
+}
+
+function verifyAdminReprocessConfirmToken(
+	token: unknown,
+	expected: { batchSize: number; contactLimit: number; userId: string; workspaceId: string },
+): boolean {
+	if (typeof token !== 'string') return false;
+	const [encoded, signature] = token.split('.');
+	if (!encoded || !signature) return false;
+	const expectedSignature = createHmac('sha256', getAdminReprocessConfirmSecret())
+		.update(encoded)
+		.digest('base64url');
+	if (!safeEqualString(signature, expectedSignature)) return false;
+
+	try {
+		const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as Partial<{
+			batchSize: number;
+			contactLimit: number;
+			exp: number;
+			userId: string;
+			workspaceId: string;
+		}>;
+		return (
+			payload.workspaceId === expected.workspaceId &&
+			payload.userId === expected.userId &&
+			payload.batchSize === expected.batchSize &&
+			payload.contactLimit === expected.contactLimit &&
+			typeof payload.exp === 'number' &&
+			payload.exp >= Date.now()
+		);
+	} catch {
+		return false;
+	}
+}
+
 admin.post('/reprocess-messages', async (c) => {
 	const internalSecret = c.req.header('X-Internal-Secret');
 	if (!validateInternalSecret(internalSecret)) {
@@ -97,14 +178,93 @@ admin.post('/reprocess-messages', async (c) => {
 		workspaceId: string;
 		userId: string;
 		batchSize?: number;
+		contactLimit?: number;
+		confirm?: boolean;
+		confirmToken?: string;
+		dryRun?: boolean;
 	}>();
 
 	const { workspaceId, userId } = body;
 	if (!workspaceId || !userId) {
 		return c.json({ error: 'workspaceId and userId are required' }, 400);
 	}
+	if (process.env.ADMIN_AI_REPROCESS_ENABLED !== 'true') {
+		return c.json(
+			{ error: 'Admin AI reprocess is disabled. Set ADMIN_AI_REPROCESS_ENABLED=true.' },
+			403,
+		);
+	}
+	if (!isAiProcessingEnabled()) {
+		return c.json(
+			{
+				error: 'AI processing is disabled. Set AI_PROCESSING_ENABLED=true to allow vendor egress.',
+			},
+			403,
+		);
+	}
+	if (!(await isWorkspaceMember(workspaceId, userId))) {
+		return c.json({ error: 'User is not a member of this workspace.' }, 403);
+	}
+	if (!(await hasUserAiAnalysisConsent(userId, workspaceId))) {
+		return c.json({ error: 'AI analysis consent is required for this user/workspace.' }, 403);
+	}
 
-	// Resolve workspace envelope from DB (SEC-028)
+	const batchSize = Math.min(Math.max(Number(body.batchSize ?? 200), 1), 200);
+	const contactLimit = Math.min(Math.max(Number(body.contactLimit ?? 25), 1), 100);
+	const dryRun = body.dryRun === true;
+	if (!dryRun && body.confirm !== true) {
+		return c.json(
+			{ error: 'Run with dryRun=true first, then confirm=true with confirmToken to queue jobs.' },
+			400,
+		);
+	}
+
+	// Query all contacts for the workspace
+	const workspaceContacts = await db
+		.select({ id: contacts.id })
+		.from(contacts)
+		.where(eq(contacts.workspaceId, workspaceId))
+		.limit(contactLimit);
+
+	if (dryRun) {
+		let wouldProcessContacts = 0;
+		let wouldProcessMessages = 0;
+		for (const contact of workspaceContacts) {
+			const count = Math.min(await getMessageCount(workspaceId, contact.id), batchSize);
+			if (count === 0) continue;
+			wouldProcessContacts++;
+			wouldProcessMessages += count;
+		}
+
+		return c.json({
+			status: 'dry_run',
+			workspaceId,
+			contactLimit,
+			batchSize,
+			wouldProcessContacts,
+			wouldProcessMessages,
+			confirmToken: signAdminReprocessConfirmToken({
+				workspaceId,
+				userId,
+				batchSize,
+				contactLimit,
+				exp: Date.now() + ADMIN_REPROCESS_CONFIRM_TTL_MS,
+			}),
+		});
+	}
+
+	if (
+		!verifyAdminReprocessConfirmToken(body.confirmToken, {
+			workspaceId,
+			userId,
+			batchSize,
+			contactLimit,
+		})
+	) {
+		return c.json({ error: 'Valid dry-run confirmToken is required to queue jobs.' }, 400);
+	}
+
+	// Resolve and unwrap only after dry-run/confirmation gates pass.
 	const envelope = await getWorkspaceEnvelope(workspaceId);
 	if (!envelope) {
 		return c.json({ error: 'Workspace envelope not found' }, 404);
@@ -121,19 +281,14 @@ admin.post('/reprocess-messages', async (c) => {
 		wrkVersion: envelope.wrkVersion,
 	};
 
-	// Query all contacts for the workspace
-	const workspaceContacts = await db
-		.select({ id: contacts.id })
-		.from(contacts)
-		.where(eq(contacts.workspaceId, workspaceId));
-
 	let contactsProcessed = 0;
+	let messagesQueued = 0;
 
 	for (const contact of workspaceContacts) {
 		const contactId = contact.id;
 
 		// getMessagesByContact decrypts via withKeys(envelope) internally
-		const msgs = await getMessagesByContact(workspaceId, contactId, envelope, { limit: 200 });
+		const msgs = await getMessagesByContact(workspaceId, contactId, envelope, { limit: batchSize });
 
 		if (msgs.length === 0) continue;
 
@@ -165,19 +320,34 @@ admin.post('/reprocess-messages', async (c) => {
 		);
 
 		contactsProcessed++;
+		messagesQueued += encryptedMessages.length;
 	}
 
 	console.log(
 		`[admin] Reprocess complete: ${contactsProcessed} contacts queued for workspace=${workspaceId.slice(0, 8)}`,
 	);
+	appendAuditLog({
+		workspaceId,
+		actorType: 'system',
+		actorId: userId,
+		action: 'generate',
+		resourceType: 'message',
+		metadata: {
+			operation: 'admin_ai_reprocess',
+			contactsProcessed,
+			messagesQueued,
+			batchSize,
+			contactLimit,
+		},
+	});
 
-	return c.json({ status: 'queued', contactsProcessed });
+	return c.json({ status: 'queued', contactsProcessed, messagesQueued });
 });
 
 /**
  * Trigger nightly knowledge extraction manually (cost-optimized pipeline).
  * Only processes contacts with new messages since last extraction.
- * Uses embedding-first matching + Haiku LLM with a budget cap.
+ * Uses embedding-first matching + the configured KG LLM with a budget cap.
  */
 admin.post('/extract-knowledge', async (c) => {
 	const internalSecret = c.req.header('X-Internal-Secret');
@@ -185,13 +355,206 @@ admin.post('/extract-knowledge', async (c) => {
 		return c.json({ error: 'Unauthorized' }, 401);
 	}
 
-	const { runNightlyExtraction } = await import('../queues/knowledge-cron');
+	const body = (await c.req
+		.json<{
+			workspaceId?: string;
+			mode?: 'incremental' | 'evidence' | 'full';
+			limit?: number;
+			runInference?: boolean;
+			waitForResult?: boolean;
+		}>()
+		.catch(() => ({}))) as {
+		workspaceId?: string;
+		mode?: 'incremental' | 'evidence' | 'full';
+		limit?: number;
+		runInference?: boolean;
+		waitForResult?: boolean;
+	};
+
+	const { runKnowledgeAnalysis } = await import('../queues/knowledge-cron');
+	const mode = body.mode ?? 'incremental';
+	if (body.waitForResult) {
+		if (!body.workspaceId) {
+			return c.json({ error: 'workspaceId is required when waitForResult is true' }, 400);
+		}
+
+		try {
+			const analysis = await runKnowledgeAnalysis({
+				workspaceId: body.workspaceId,
+				mode,
+				limit: body.limit,
+			});
+			let inference: unknown = null;
+			if (body.runInference) {
+				const { runKnowledgeInference } = await import('../ai/knowledge-inference');
+				inference = await runKnowledgeInference(body.workspaceId, { requireFeatureFlag: false });
+			}
+
+			return c.json({
+				status: 'complete',
+				mode,
+				workspaceId: body.workspaceId,
+				analysis,
+				inference,
+			});
+		} catch (err) {
+			console.error('[admin] Knowledge extraction failed:', redactSensitive(err));
+			return c.json({ status: 'error', error: 'Knowledge extraction failed' }, 500);
+		}
+	}
+
 	// Run async — don't block the HTTP response
-	runNightlyExtraction().catch((err) => {
-		console.error('[admin] Knowledge extraction failed:', (err as Error).message);
+	runKnowledgeAnalysis({
+		workspaceId: body.workspaceId,
+		mode,
+		limit: body.limit,
+	})
+		.then(async () => {
+			if (!body.runInference || !body.workspaceId) return;
+			const { runKnowledgeInference } = await import('../ai/knowledge-inference');
+			await runKnowledgeInference(body.workspaceId, { requireFeatureFlag: false });
+		})
+		.catch((err) => {
+			console.error('[admin] Knowledge extraction failed:', redactSensitive(err));
+		});
+
+	return c.json({
+		status: 'started',
+		mode,
+		workspaceId: body.workspaceId,
+	});
+});
+
+admin.post('/build-manual-knowledge-evidence', async (c) => {
+	const internalSecret = c.req.header('X-Internal-Secret');
+	if (!validateInternalSecret(internalSecret)) {
+		return c.json({ error: 'Unauthorized' }, 401);
+	}
+
+	const body = (await c.req
+		.json<{
+			workspaceId?: string;
+			nodeId?: string;
+			limit?: number;
+			maxEvidence?: number;
+			runInference?: boolean;
+			waitForResult?: boolean;
+		}>()
+		.catch(() => ({}))) as {
+		workspaceId?: string;
+		nodeId?: string;
+		limit?: number;
+		maxEvidence?: number;
+		runInference?: boolean;
+		waitForResult?: boolean;
+	};
+
+	if (!body.workspaceId || !body.nodeId) {
+		return c.json({ error: 'workspaceId and nodeId are required' }, 400);
+	}
+
+	const { runManualKnowledgeEvidenceBuild } = await import('../queues/knowledge-cron');
+	if (body.waitForResult) {
+		try {
+			const manualEvidence = await runManualKnowledgeEvidenceBuild({
+				workspaceId: body.workspaceId,
+				nodeId: body.nodeId,
+				limit: body.limit,
+				maxEvidence: body.maxEvidence,
+			});
+			let inference: unknown = null;
+			if (body.runInference && !manualEvidence.skippedReason) {
+				const { runKnowledgeInference } = await import('../ai/knowledge-inference');
+				inference = await runKnowledgeInference(body.workspaceId, { requireFeatureFlag: false });
+			}
+
+			return c.json({
+				status: manualEvidence.skippedReason ? 'skipped' : 'complete',
+				workspaceId: body.workspaceId,
+				nodeId: body.nodeId,
+				manualEvidence,
+				inference,
+			});
+		} catch (err) {
+			console.error('[admin] Manual knowledge evidence build failed:', redactSensitive(err));
+			return c.json({ status: 'error', error: 'Manual knowledge evidence build failed' }, 500);
+		}
+	}
+
+	runManualKnowledgeEvidenceBuild({
+		workspaceId: body.workspaceId,
+		nodeId: body.nodeId,
+		limit: body.limit,
+		maxEvidence: body.maxEvidence,
+	})
+		.then(async (manualEvidence) => {
+			if (!body.runInference || manualEvidence.skippedReason) return;
+			const { runKnowledgeInference } = await import('../ai/knowledge-inference');
+			await runKnowledgeInference(body.workspaceId as string, { requireFeatureFlag: false });
+		})
+		.catch((err) => {
+			console.error('[admin] Manual knowledge evidence build failed:', redactSensitive(err));
+		});
+
+	return c.json({
+		status: 'started',
+		workspaceId: body.workspaceId,
+		nodeId: body.nodeId,
+	});
+});
+
+admin.post('/infer-knowledge', async (c) => {
+	const internalSecret = c.req.header('X-Internal-Secret');
+	if (!validateInternalSecret(internalSecret)) {
+		return c.json({ error: 'Unauthorized' }, 401);
+	}
+
+	const body = (await c.req
+		.json<{
+			workspaceId?: string;
+		}>()
+		.catch(() => ({}))) as {
+		workspaceId?: string;
+	};
+
+	if (!body.workspaceId) {
+		return c.json({ error: 'workspaceId is required' }, 400);
+	}
+
+	const { runKnowledgeInference } = await import('../ai/knowledge-inference');
+	const result = await runKnowledgeInference(body.workspaceId, {
+		requireFeatureFlag: false,
 	});
 
-	return c.json({ status: 'started' });
+	return c.json({
+		status: result.skippedReason ? 'skipped' : 'complete',
+		...result,
+	});
+});
+
+admin.post('/knowledge-analysis/estimate', async (c) => {
+	const internalSecret = c.req.header('X-Internal-Secret');
+	if (!validateInternalSecret(internalSecret)) {
+		return c.json({ error: 'Unauthorized' }, 401);
+	}
+
+	const body = await c.req.json<{
+		workspaceId?: string;
+		mode?: 'incremental' | 'evidence' | 'full';
+		limit?: number;
+	}>();
+
+	if (!body.workspaceId) {
+		return c.json({ error: 'workspaceId is required' }, 400);
+	}
+
+	const { estimateKnowledgeAnalysis } = await import('../queues/knowledge-cron');
+	const estimate = await estimateKnowledgeAnalysis(body.workspaceId, {
+		mode: body.mode ?? 'incremental',
+		limit: body.limit,
+	});
+
+	return c.json(estimate);
 });
 
 admin.post('/embed', async (c) => {
@@ -203,6 +566,15 @@ admin.post('/embed', async (c) => {
 	const { text } = await c.req.json<{ text: string }>();
 	if (!text || text.length > 2000) {
 		return c.json({ error: 'text is required (max 2000 chars)' }, 400);
+	}
+	const embeddingRuntime = getKnowledgeEmbeddingRuntime(process.env);
+	if (!embeddingRuntime.isLocal && !isAiProcessingEnabled()) {
+		return c.json(
+			{
+				error: 'AI processing is disabled. Set AI_PROCESSING_ENABLED=true to allow vendor egress.',
+			},
+			403,
+		);
 	}
 
 	const { generateEmbedding } = await import('../ai/embeddings');
@@ -252,8 +624,8 @@ admin.post('/trigger-health', async (c) => {
  * POST /admin/trigger-sync
  *
  * Triggers a Telegram sync for a specific user/workspace pair.
- * The worker already runs periodic sync every 15 minutes — this endpoint
- * allows on-demand triggering (e.g. after onboarding or debugging).
+ * Periodic sync is disabled by default for personal-account safety. This endpoint
+ * allows explicit on-demand triggering (e.g. after onboarding or debugging).
  */
 admin.post('/trigger-sync', async (c) => {
 	const internalSecret = c.req.header('X-Internal-Secret');
@@ -268,7 +640,7 @@ admin.post('/trigger-sync', async (c) => {
 
 	const job = await syncQueue.add(
 		'sync-contacts',
-		{ userId: body.userId, workspaceId: body.workspaceId },
+		{ userId: body.userId, workspaceId: body.workspaceId, syncScope: 'contacts_only' },
 		{
 			attempts: 3,
 			backoff: { type: 'exponential', delay: 5000 },

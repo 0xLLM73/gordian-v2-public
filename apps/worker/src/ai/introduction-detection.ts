@@ -21,29 +21,49 @@ const DETECT_INTRODUCTIONS_TOOL: Tool = {
 				items: {
 					type: 'object',
 					properties: {
+						introducer_ref: {
+							type: 'string',
+							description: 'Alias/ref of who made the introduction, exactly as shown in input',
+						},
+						introduced_ref_1: {
+							type: 'string',
+							description:
+								'Alias/ref of the first person being introduced, exactly as shown in input',
+						},
+						introduced_ref_2: {
+							type: 'string',
+							description:
+								'Alias/ref of the second person being introduced, exactly as shown in input',
+						},
 						introducer_name: {
 							type: 'string',
-							description: 'Pseudonymized name of who made the introduction',
+							description: 'Legacy alias/name of who made the introduction',
 						},
 						introduced_name_1: {
 							type: 'string',
-							description: 'First person being introduced',
+							description: 'Legacy alias/name of the first person being introduced',
 						},
 						introduced_name_2: {
 							type: 'string',
-							description: 'Second person being introduced',
+							description: 'Legacy alias/name of the second person being introduced',
 						},
 						context: {
 							type: 'string',
 							enum: ['deal', 'hiring', 'knowledge', 'social', 'other'],
 						},
+						source_message_ids: {
+							type: 'array',
+							items: { type: 'string' },
+							description:
+								'Message source IDs from [source:<id>] tags that directly support this introduction',
+						},
 						confidence: { type: 'number', minimum: 0, maximum: 1 },
 						reasoning: { type: 'string' },
 					},
 					required: [
-						'introducer_name',
-						'introduced_name_1',
-						'introduced_name_2',
+						'introducer_ref',
+						'introduced_ref_1',
+						'introduced_ref_2',
 						'context',
 						'confidence',
 						'reasoning',
@@ -56,11 +76,13 @@ const DETECT_INTRODUCTIONS_TOOL: Tool = {
 };
 
 const INTRODUCTION_DETECTION_KERNEL = `You are an introduction detection engine for a professional CRM.
-Analyze conversation summaries to identify when one person introduces two other people.
+Analyze conversation summaries or source-tagged message batches to identify when one person introduces two other people.
 
 Rules:
 - Only detect explicit introductions — "meet X", "let me introduce you to Y", "adding Z who..."
-- Entity names are pseudonymized (e.g., PERSON_a1b2) — preserve them exactly as given
+- People are shown as aliases/refs (e.g., PERSON_a1b2c3d4) — return those exact refs in introducer_ref, introduced_ref_1, and introduced_ref_2
+- Do not invent, expand, or return raw names; use only aliases/refs from the input
+- If messages include [source:<id>] tags, include only the source_message_ids that directly support each introduction
 - confidence: 0.9 = explicit "let me introduce", 0.5 = implied connection, 0.3 = weak/uncertain
 - Context types: deal (business intro), hiring (job-related), knowledge (expertise sharing), social (personal), other
 - Call detect_introductions with ALL detected introductions, or an empty array if none
@@ -81,12 +103,16 @@ const INTRO_KEYWORDS = [
 ];
 
 export interface DetectedIntroduction {
-	introducer_name: string;
-	introduced_name_1: string;
-	introduced_name_2: string;
+	introducer_ref?: string;
+	introduced_ref_1?: string;
+	introduced_ref_2?: string;
+	introducer_name?: string;
+	introduced_name_1?: string;
+	introduced_name_2?: string;
 	context: string;
 	confidence: number;
 	reasoning: string;
+	source_message_ids?: string[];
 }
 
 /**

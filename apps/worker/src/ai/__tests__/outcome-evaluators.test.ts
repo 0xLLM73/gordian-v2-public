@@ -79,6 +79,7 @@ vi.mock('@repo/db', () => ({
 		context: 'context',
 		confidence: 'confidence',
 		status: 'status',
+		resolution: 'resolution',
 		updatedAt: 'updatedAt',
 		introducerContactId: 'introducerContactId',
 		id: 'id',
@@ -490,6 +491,7 @@ describe('evaluateIntroduction', () => {
 				context: 'investor',
 				confidence: 0.8,
 				status: 'active',
+				resolution: null,
 				updatedAt: new Date(),
 				introducerContactId: CONTACT_ID,
 			},
@@ -501,12 +503,49 @@ describe('evaluateIntroduction', () => {
 		expect(mockCreateOutcome).not.toHaveBeenCalled();
 	});
 
-	it('records positive intro_connected outcome for archived introduction', async () => {
+	it('returns null when archived introduction is dismissed', async () => {
 		mockDbLimit.mockResolvedValue([
 			{
 				context: 'investor',
 				confidence: 0.9,
 				status: 'archive',
+				resolution: 'dismissed',
+				updatedAt: new Date('2026-01-10'),
+				introducerContactId: CONTACT_ID,
+			},
+		]);
+
+		const result = await evaluateIntroduction(WS, INTRO_ID);
+
+		expect(result).toBeNull();
+		expect(mockCreateOutcome).not.toHaveBeenCalled();
+	});
+
+	it('returns null when archived introduction has no completed resolution', async () => {
+		mockDbLimit.mockResolvedValue([
+			{
+				context: 'investor',
+				confidence: 0.9,
+				status: 'archive',
+				resolution: null,
+				updatedAt: new Date('2026-01-10'),
+				introducerContactId: CONTACT_ID,
+			},
+		]);
+
+		const result = await evaluateIntroduction(WS, INTRO_ID);
+
+		expect(result).toBeNull();
+		expect(mockCreateOutcome).not.toHaveBeenCalled();
+	});
+
+	it('records positive intro_connected outcome for archived completed introduction', async () => {
+		mockDbLimit.mockResolvedValue([
+			{
+				context: 'investor',
+				confidence: 0.9,
+				status: 'archive',
+				resolution: 'completed',
 				updatedAt: new Date('2026-01-10'),
 				introducerContactId: CONTACT_ID,
 			},
@@ -530,6 +569,7 @@ describe('evaluateIntroduction', () => {
 				context: 'partner',
 				confidence: 0.6, // medium
 				status: 'archive',
+				resolution: 'completed',
 				updatedAt: new Date(),
 				introducerContactId: CONTACT_ID,
 			},

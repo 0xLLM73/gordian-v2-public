@@ -21,15 +21,6 @@ vi.mock('@repo/db', () => ({
 	},
 }));
 
-vi.mock('grammy', () => ({
-	Composer: vi.fn(function MockComposer() {
-		return {
-			command: vi.fn(),
-			on: vi.fn(() => ({ filter: vi.fn() })),
-		};
-	}),
-}));
-
 const MOCK_ENVELOPE = { encryptedWrk: Buffer.from('test'), kmsContext: {}, wrkVersion: 1 };
 
 describe('goals bot feature', () => {
@@ -38,6 +29,13 @@ describe('goals bot feature', () => {
 	});
 
 	it('goalsComposer is defined and exports a Composer', async () => {
+		vi.mock('grammy', () => ({
+			Composer: vi.fn(() => ({
+				command: vi.fn(),
+				on: vi.fn(() => ({ filter: vi.fn() })),
+			})),
+		}));
+
 		const { goalsComposer } = await import('../features/goals');
 		expect(goalsComposer).toBeDefined();
 	});

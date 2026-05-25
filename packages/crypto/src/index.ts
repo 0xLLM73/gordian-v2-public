@@ -9,10 +9,25 @@ export {
 	clearKeyCache,
 	generateSessionKek,
 	decryptSessionKek,
+	deleteSessionKek,
+	rehardenSessionKek,
+	getTelegramSessionKeyProvider,
+	assertSafeTelegramSessionKeyProviderForMtProto,
 	generateWorkspaceWrk,
+	getWorkspaceKeyProvider,
+	isWorkspaceKeychainMarker,
+	storeWorkspaceWrkInKeychain,
+	deleteWorkspaceWrk,
 } from './kms';
+export type { TelegramSessionKeyProvider, WorkspaceKeyProvider } from './kms';
 export type {
 	DerivedKeys,
+	ContactAliasInput,
+	ContactAliasKind,
+	ContactAliasMapEntry,
+	ContactAliasMaskOptions,
+	ContactMaskEntity,
+	ContactMaskResult,
 	DetectedEntity,
 	EncryptedField,
 	EntityMap,
@@ -21,7 +36,12 @@ export type {
 	MaskResult,
 	SealedEnvelope,
 } from './types';
-export { maskEntities, prefilterEntities } from './entity-masking';
+export {
+	generatePersonPseudonym,
+	maskContactAliases,
+	maskEntities,
+	prefilterEntities,
+} from './entity-masking';
 export {
 	computeNextVirtualVersion,
 	deriveRotationKeys,

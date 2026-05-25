@@ -75,13 +75,11 @@ vi.mock('@repo/crypto', () => ({
 }));
 
 vi.mock('bullmq', () => ({
-	Worker: vi.fn(function MockWorker(_name: string, processor: unknown) {
+	Worker: vi.fn((_name: string, processor: unknown) => {
 		if (_name === 'briefs') processorStore.fn = processor as (job: unknown) => Promise<unknown>;
 		return { on: vi.fn() };
 	}),
-	Queue: vi.fn(function MockQueue() {
-		return { add: vi.fn(() => Promise.resolve()), on: vi.fn() };
-	}),
+	Queue: vi.fn(() => ({ add: vi.fn(() => Promise.resolve()), on: vi.fn() })),
 }));
 
 vi.mock('../embeddings', () => ({ generateEmbedding: mockGenerateEmbedding }));

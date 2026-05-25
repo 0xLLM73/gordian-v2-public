@@ -13,9 +13,7 @@ vi.mock('../../redis', () => ({ connection: {} }));
 
 vi.mock('bullmq', () => ({
 	Queue: vi.fn(),
-	Worker: vi.fn(function MockWorker() {
-		return { on: vi.fn() };
-	}),
+	Worker: vi.fn().mockImplementation(() => ({ on: vi.fn() })),
 }));
 
 process.env.WORKER_INTERNAL_SECRET = 'test-secret';

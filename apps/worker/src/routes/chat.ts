@@ -1,3 +1,5 @@
+import { hasUserAiAnalysisConsent, isWorkspaceMember } from '@repo/db';
+import { redactSensitive } from '@repo/shared';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { type ChatMessage, chat } from '../ai/chat';
@@ -7,6 +9,7 @@ import { validateInternalSecret } from '../middleware/auth';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface ChatRequestBody {
+	userId: string;
 	workspaceId: string;
 	messages: ChatMessage[];
 	envelope: {
@@ -27,11 +30,17 @@ chatRoutes.post('/', async (c) => {
 
 	const body = await c.req.json<ChatRequestBody>();
 
-	if (!body.workspaceId || !body.messages || !body.envelope) {
-		return c.json({ error: 'workspaceId, messages, and envelope are required' }, 400);
+	if (!body.userId || !body.workspaceId || !body.messages || !body.envelope) {
+		return c.json({ error: 'userId, workspaceId, messages, and envelope are required' }, 400);
 	}
-	if (!UUID_RE.test(body.workspaceId)) {
-		return c.json({ error: 'Invalid workspaceId format' }, 400);
+	if (!UUID_RE.test(body.userId) || !UUID_RE.test(body.workspaceId)) {
+		return c.json({ error: 'Invalid userId or workspaceId format' }, 400);
+	}
+	if (!(await isWorkspaceMember(body.workspaceId, body.userId))) {
+		return c.json({ error: 'User is not a member of this workspace.' }, 403);
+	}
+	if (!(await hasUserAiAnalysisConsent(body.userId, body.workspaceId))) {
+		return c.json({ error: 'AI analysis consent is required.' }, 403);
 	}
 
 	// Reconstruct SealedEnvelope from base64
@@ -45,7 +54,7 @@ chatRoutes.post('/', async (c) => {
 		const result = await chat(body.workspaceId, envelope, body.messages);
 		return c.json(result);
 	} catch (err) {
-		console.error('[chat] Error:', err instanceof Error ? err.message : err);
+		console.error('[chat] Error:', redactSensitive(err));
 		return c.json({ error: 'Chat service unavailable' }, 500);
 	}
 });
@@ -58,11 +67,17 @@ chatRoutes.post('/stream', async (c) => {
 
 	const body = await c.req.json<ChatRequestBody>();
 
-	if (!body.workspaceId || !body.messages || !body.envelope) {
-		return c.json({ error: 'workspaceId, messages, and envelope are required' }, 400);
+	if (!body.userId || !body.workspaceId || !body.messages || !body.envelope) {
+		return c.json({ error: 'userId, workspaceId, messages, and envelope are required' }, 400);
 	}
-	if (!UUID_RE.test(body.workspaceId)) {
-		return c.json({ error: 'Invalid workspaceId format' }, 400);
+	if (!UUID_RE.test(body.userId) || !UUID_RE.test(body.workspaceId)) {
+		return c.json({ error: 'Invalid userId or workspaceId format' }, 400);
+	}
+	if (!(await isWorkspaceMember(body.workspaceId, body.userId))) {
+		return c.json({ error: 'User is not a member of this workspace.' }, 403);
+	}
+	if (!(await hasUserAiAnalysisConsent(body.userId, body.workspaceId))) {
+		return c.json({ error: 'AI analysis consent is required.' }, 403);
 	}
 
 	const envelope = {
@@ -111,7 +126,7 @@ chatRoutes.post('/stream', async (c) => {
 				async onError(message: string) {
 					await stream.writeSSE({
 						event: 'error',
-						data: JSON.stringify({ message }),
+						data: JSON.stringify({ message: redactSensitive(message) }),
 						id: String(++eventId),
 					});
 				},

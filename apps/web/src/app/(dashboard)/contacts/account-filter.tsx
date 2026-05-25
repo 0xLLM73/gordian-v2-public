@@ -5,11 +5,11 @@
 import { useRouter } from 'next/navigation';
 
 interface AccountFilterProps {
-	accounts: string[];
-	selectedAccount?: string;
+	accounts: Array<{ key: string; label: string }>;
+	selectedAccountKey?: string;
 }
 
-export function AccountFilter({ accounts, selectedAccount }: AccountFilterProps) {
+export function AccountFilter({ accounts, selectedAccountKey }: AccountFilterProps) {
 	const router = useRouter();
 
 	function handleChange(value: string) {
@@ -29,14 +29,14 @@ export function AccountFilter({ accounts, selectedAccount }: AccountFilterProps)
 			</label>
 			<select
 				id="account-filter"
-				value={selectedAccount ?? ''}
+				value={selectedAccountKey ?? ''}
 				onChange={(e) => handleChange(e.target.value)}
 				className="rounded-md border border-border px-3 py-1.5 text-sm text-foreground focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
 			>
 				<option value="">All Accounts</option>
 				{accounts.map((account) => (
-					<option key={account} value={account}>
-						{account}
+					<option key={account.key} value={account.key}>
+						{account.label}
 					</option>
 				))}
 			</select>

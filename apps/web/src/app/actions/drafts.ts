@@ -3,6 +3,13 @@
 import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
 import { track } from '@/lib/track';
 import {
+	deriveKeys,
+	generatePersonPseudonym,
+	maskEntities,
+	prefilterEntities,
+	unwrapWrk,
+} from '@repo/crypto';
+import {
 	createDraftLog,
 	getContact,
 	getContactsByIds,
@@ -30,17 +37,33 @@ export const generateDraftAction = workspaceAction
 
 		if (!contact) throw new Error('Contact not found');
 
-		const contactName =
-			[contact.firstName, contact.lastName].filter(Boolean).join(' ') || 'Unknown';
+		const wrk = await unwrapWrk(ctx.envelope);
+		const keys = await deriveKeys(wrk, ctx.workspaceId, ctx.envelope.wrkVersion);
+		const contactName = [contact.firstName, contact.lastName].filter(Boolean).join(' ');
+		const contactPseudonym = generatePersonPseudonym(parsedInput.contactId, keys.bik);
+		const contactAliases = [
+			contactName,
+			contact.firstName,
+			contact.lastName,
+			(contact as Record<string, unknown>).username,
+		].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+		const maskDraftContext = (value: string) =>
+			replaceKnownContactAliases(
+				maskEntities(value, keys.bik, prefilterEntities(value)).maskedText,
+				contactAliases,
+				contactPseudonym,
+			);
+
 		const summaryText = summary
 			? ((summary as Record<string, unknown>).summary as string) || ''
 			: '';
-		const contactSummary = `Name: ${contactName}\n${summaryText}`;
+		const contactSummary = `Contact: ${contactPseudonym}\n${maskDraftContext(summaryText)}`;
 		const recentText = messages
 			.map((m: Record<string, unknown>) => m.content as string)
 			.filter(Boolean)
 			.join('\n')
 			.slice(0, 2000);
+		const maskedRecentText = maskDraftContext(recentText);
 
 		// Call worker to generate draft
 		const workerUrl = process.env.WORKER_URL;
@@ -53,10 +76,11 @@ export const generateDraftAction = workspaceAction
 			},
 			body: JSON.stringify({
 				contactSummary,
-				recentMessages: recentText,
+				recentMessages: maskedRecentText,
 				userId: ctx.session.user.id,
 				workspaceId: ctx.workspaceId,
 				contactId: parsedInput.contactId,
+				contextMasked: true,
 			}),
 		});
 
@@ -194,6 +218,14 @@ export const getPendingDraftsAction = workspaceAction
 			};
 		});
 	});
+
+function replaceKnownContactAliases(text: string, aliases: string[], replacement: string): string {
+	return aliases.reduce((current, alias) => {
+		const escaped = alias.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+		if (!escaped) return current;
+		return current.replace(new RegExp(`\\b${escaped}\\b`, 'gi'), replacement);
+	}, text);
+}
 
 // Simple Levenshtein distance
 function levenshtein(a: string, b: string): number {

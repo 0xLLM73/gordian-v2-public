@@ -36,10 +36,12 @@ vi.mock('@/lib/workspace', () => ({
 // Mock DAL functions
 const mockGetLatestDigest = vi.fn();
 const mockListDigests = vi.fn();
+const mockGetCalibration = vi.fn();
 vi.mock('@repo/db', () => ({
 	withWorkspaceRLS: vi.fn((_wsId: string, fn: (tx: unknown) => unknown) => fn({})),
 	getLatestDigest: mockGetLatestDigest,
 	listDigests: mockListDigests,
+	getCalibration: mockGetCalibration,
 }));
 
 // Mock global fetch for worker endpoint calls
@@ -52,6 +54,7 @@ describe('digest actions', () => {
 		vi.stubEnv('WORKER_URL', 'http://localhost:3001');
 		vi.stubEnv('WORKER_INTERNAL_SECRET', 'test-secret');
 		mockGetWorkspaceEnvelope.mockResolvedValue(MOCK_ENVELOPE);
+		mockGetCalibration.mockResolvedValue({ consentAiAnalysis: true });
 	});
 
 	describe('getLatestDigestAction', () => {
@@ -159,6 +162,19 @@ describe('digest actions', () => {
 					}),
 				}),
 			);
+		});
+
+		it('requires AI analysis consent before queuing digest generation', async () => {
+			const { generateDigestAction } = await import('@/app/actions/digest');
+
+			mockGetCalibration.mockResolvedValue({ consentAiAnalysis: false });
+
+			const result = await generateDigestAction({
+				period: 'today',
+			});
+
+			expect(result?.serverError).toBeDefined();
+			expect(mockFetch).not.toHaveBeenCalled();
 		});
 
 		it('handles worker failure gracefully', async () => {

@@ -40,9 +40,11 @@ const mockGetShares = vi.fn(() =>
 	Promise.resolve([{ id: 'share-1', sharedWithUserId: TARGET_USER }]),
 );
 const mockGetAccounts = vi.fn(() => Promise.resolve(['tg123456', 'tg654321']));
+const mockCanManageContact = vi.fn(() => Promise.resolve(true));
 
 vi.mock('@repo/db', () => ({
 	withWorkspaceRLS: vi.fn((_wsId: string, fn: (tx: unknown) => unknown) => fn({})),
+	canManageContact: mockCanManageContact,
 	shareContact: mockShare,
 	unshareContact: mockUnshare,
 	getContactShares: mockGetShares,
@@ -64,6 +66,7 @@ describe('contact-shares actions', () => {
 			});
 
 			expect(result?.data).toBeDefined();
+			expect(mockCanManageContact).toHaveBeenCalledWith(WORKSPACE_ID, 'user-1', CONTACT_ID);
 			expect(mockShare).toHaveBeenCalledWith(
 				WORKSPACE_ID,
 				CONTACT_ID,
@@ -82,6 +85,19 @@ describe('contact-shares actions', () => {
 
 			expect(result?.validationErrors).toBeDefined();
 		});
+
+		it('denies sharing contacts the user cannot manage', async () => {
+			mockCanManageContact.mockResolvedValueOnce(false);
+			const { shareContactAction } = await import('@/app/actions/contact-shares');
+
+			const result = await shareContactAction({
+				contactId: CONTACT_ID,
+				targetUserId: TARGET_USER,
+			});
+
+			expect(result?.serverError).toBe('Not found');
+			expect(mockShare).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('unshareContactAction', () => {
@@ -94,7 +110,21 @@ describe('contact-shares actions', () => {
 			});
 
 			expect(result?.data).toEqual({ success: true });
+			expect(mockCanManageContact).toHaveBeenCalledWith(WORKSPACE_ID, 'user-1', CONTACT_ID);
 			expect(mockUnshare).toHaveBeenCalledWith(WORKSPACE_ID, CONTACT_ID, TARGET_USER);
+		});
+
+		it('denies unsharing contacts the user cannot manage', async () => {
+			mockCanManageContact.mockResolvedValueOnce(false);
+			const { unshareContactAction } = await import('@/app/actions/contact-shares');
+
+			const result = await unshareContactAction({
+				contactId: CONTACT_ID,
+				targetUserId: TARGET_USER,
+			});
+
+			expect(result?.serverError).toBe('Not found');
+			expect(mockUnshare).not.toHaveBeenCalled();
 		});
 	});
 
@@ -105,7 +135,18 @@ describe('contact-shares actions', () => {
 			const result = await getContactSharesAction({ contactId: CONTACT_ID });
 
 			expect(result?.data).toBeDefined();
+			expect(mockCanManageContact).toHaveBeenCalledWith(WORKSPACE_ID, 'user-1', CONTACT_ID);
 			expect(mockGetShares).toHaveBeenCalledWith(WORKSPACE_ID, CONTACT_ID);
+		});
+
+		it('denies share-list reads for contacts the user cannot manage', async () => {
+			mockCanManageContact.mockResolvedValueOnce(false);
+			const { getContactSharesAction } = await import('@/app/actions/contact-shares');
+
+			const result = await getContactSharesAction({ contactId: CONTACT_ID });
+
+			expect(result?.serverError).toBe('Not found');
+			expect(mockGetShares).not.toHaveBeenCalled();
 		});
 	});
 

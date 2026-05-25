@@ -540,6 +540,33 @@ describe('runtime execute guard', () => {
 		).not.toThrow();
 	});
 
+	it('should allow only tagged pre-encrypted Telegram session writes', async () => {
+		const { guardExecute } = await import('../execute-guard');
+
+		expect(() =>
+			guardExecute(`
+				/* gordian:pre-encrypted-telegram-session:v1 */
+				update accounts
+				set access_token = $1,
+					session_kek_encrypted = $2,
+					updated_at = now()
+				where id = $3
+					and provider_id = 'telegram'
+					and account_id = $4
+			`),
+		).not.toThrow();
+
+		expect(() =>
+			guardExecute(`
+				/* gordian:pre-encrypted-telegram-session:v1 */
+				update accounts
+				set access_token = $1,
+					updated_at = now()
+				where id = $3
+			`),
+		).toThrow(/CRITICAL/);
+	});
+
 	it('should extract SQL text from Drizzle SQL objects', async () => {
 		const { sql } = await import('drizzle-orm');
 		const { extractSqlText } = await import('../execute-guard');

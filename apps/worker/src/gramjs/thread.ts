@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Worker as NodeWorker } from 'node:worker_threads';
+import { redactSensitive } from '@repo/shared';
 import { withTelegramLock } from '../locks/telegram-session';
 import { requireTelegramMtProtoConfig } from '../telegram-config';
 
@@ -12,7 +13,7 @@ import { requireTelegramMtProtoConfig } from '../telegram-config';
  *
  * Pool lifecycle:
  * - Threads spawn on first sendToUser() for that userId
- * - Idle threads (no calls for 5 min) are automatically terminated
+ * - Idle threads are automatically terminated after TELEGRAM_MTPROTO_SESSION_IDLE_MINUTES
  * - Pool capped at MAX_POOL_SIZE; oldest idle thread evicted if full
  * - terminateAll() called on graceful shutdown
  */
@@ -30,11 +31,28 @@ interface PoolEntry {
 }
 
 const pool = new Map<string, PoolEntry>();
-const MAX_IDLE_MS = 5 * 60 * 1000; // 5 minutes
+const DEFAULT_MTPROTO_SESSION_IDLE_MINUTES = 30;
 const MAX_POOL_SIZE = 10;
 const RPC_TIMEOUT_MS = 30_000;
 
 const short = (id: string) => id.slice(0, 8);
+
+export function getMtProtoSessionIdleMs(): number {
+	const raw = process.env.TELEGRAM_MTPROTO_SESSION_IDLE_MINUTES?.trim();
+	if (!raw) return DEFAULT_MTPROTO_SESSION_IDLE_MINUTES * 60 * 1000;
+	if (!/^\d+$/.test(raw)) {
+		throw new Error(
+			`Invalid TELEGRAM_MTPROTO_SESSION_IDLE_MINUTES="${raw}". Expected an integer from 1 to 1440.`,
+		);
+	}
+	const minutes = Number.parseInt(raw, 10);
+	if (!Number.isFinite(minutes) || minutes < 1 || minutes > 24 * 60) {
+		throw new Error(
+			`Invalid TELEGRAM_MTPROTO_SESSION_IDLE_MINUTES="${raw}". Expected an integer from 1 to 1440.`,
+		);
+	}
+	return minutes * 60 * 1000;
+}
 
 function spawnEntry(userId: string): PoolEntry {
 	const { apiId, apiHash } = requireTelegramMtProtoConfig();
@@ -44,6 +62,7 @@ function spawnEntry(userId: string): PoolEntry {
 		let oldestId: string | null = null;
 		let oldestTime = Number.POSITIVE_INFINITY;
 		for (const [uid, entry] of pool) {
+			if (entry.isAuthPending) continue;
 			if (entry.pendingCalls.size === 0 && entry.lastUsed < oldestTime) {
 				oldestTime = entry.lastUsed;
 				oldestId = uid;
@@ -88,7 +107,7 @@ function spawnEntry(userId: string): PoolEntry {
 		(msg: { type: string; id?: string; error?: string; [key: string]: unknown }) => {
 			// Capture fatal errors before exit event fires
 			if (msg.type === 'fatal-error') {
-				lastFatalError = msg.error ?? 'Unknown fatal error';
+				lastFatalError = redactSensitive(msg.error ?? 'Unknown fatal error');
 				console.error(
 					`[thread-pool] Fatal error from worker user=${short(userId)}: ${lastFatalError}`,
 				);
@@ -111,7 +130,7 @@ function spawnEntry(userId: string): PoolEntry {
 	);
 
 	worker.on('error', (err) => {
-		console.error(`[thread-pool] Worker error for user=${short(userId)}:`, err.message);
+		console.error(`[thread-pool] Worker error for user=${short(userId)}:`, redactSensitive(err));
 	});
 
 	worker.on('exit', (code) => {
@@ -198,9 +217,10 @@ export async function terminateAll(): Promise<void> {
 /** Idle cleanup: terminate threads idle longer than MAX_IDLE_MS */
 setInterval(() => {
 	const now = Date.now();
+	const maxIdleMs = getMtProtoSessionIdleMs();
 	for (const [userId, entry] of pool) {
 		if (entry.isAuthPending) continue; // ASA-006: never evict mid-auth
-		if (entry.pendingCalls.size === 0 && now - entry.lastUsed > MAX_IDLE_MS) {
+		if (entry.pendingCalls.size === 0 && now - entry.lastUsed > maxIdleMs) {
 			console.log(`[thread-pool] Evicting idle worker for user=${short(userId)}`);
 			terminateUser(userId);
 		}
@@ -247,5 +267,8 @@ export function setAuthPending(poolKey: string, pending: boolean): void {
  * Kept so index.ts startup sequence doesn't need changing.
  */
 export async function initGramJS(): Promise<void> {
-	console.log('[thread-pool] Per-user GramJS thread pool ready (threads spawn on demand).');
+	const idleMinutes = getMtProtoSessionIdleMs() / 60_000;
+	console.log(
+		`[thread-pool] Per-user GramJS thread pool ready (threads spawn on demand, idle timeout=${idleMinutes}m).`,
+	);
 }

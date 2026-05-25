@@ -10,13 +10,190 @@ import {
 	searchKnowledgeNodes,
 	upsertExtractionLog,
 } from '@repo/db';
-import { generateEmbedding } from './embeddings';
-import { inferWithGemini } from './gemini-inference';
+import {
+	getKnowledgeEmbeddingFingerprint,
+	isKnowledgeLlmEnabled,
+	knowledgeEmbeddingFingerprintKey,
+} from '@repo/shared';
+import { generateEmbeddingCached, generateEmbeddingsCached } from './embeddings';
+import { inferKnowledgeEntitiesJson } from './knowledge-llm';
 import { prefilterEntities } from './prefilter';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const EMBEDDING_MATCH_THRESHOLD = 0.8;
 const COSINE_DEDUP_THRESHOLD = 0.75;
+const fingerprintWarnings = new Set<string>();
+
+export interface KnowledgeExtractionMessage {
+	id?: string;
+	text: string;
+	timestamp?: string | Date;
+}
+
+type KnowledgeExtractionInput = string | KnowledgeExtractionMessage;
+
+function currentEmbeddingMetadata(): Record<string, unknown> {
+	const embeddingFingerprint = getKnowledgeEmbeddingFingerprint(process.env);
+	return {
+		embeddingFingerprint,
+		embeddingFingerprintKey: knowledgeEmbeddingFingerprintKey(embeddingFingerprint),
+	};
+}
+
+function warnIfEmbeddingFingerprintChanged(
+	source: string,
+	node: { id: string; metadata?: Record<string, unknown> | null },
+): void {
+	const previous = node.metadata?.embeddingFingerprintKey;
+	if (typeof previous !== 'string') return;
+
+	const current = knowledgeEmbeddingFingerprintKey(getKnowledgeEmbeddingFingerprint(process.env));
+	if (previous === current) return;
+
+	const warningKey = `${source}:${previous}:${current}`;
+	if (fingerprintWarnings.has(warningKey)) return;
+	fingerprintWarnings.add(warningKey);
+	console.warn(
+		`[knowledge-extraction] Embedding fingerprint mismatch in ${source}: existing node ${node.id.slice(0, 8)} was embedded with "${previous}", active runtime is "${current}". Re-embed the knowledge graph before trusting semantic match quality.`,
+	);
+}
+
+export interface NormalizedKnowledgeMessage {
+	id?: string;
+	text: string;
+	occurredAt?: Date;
+}
+
+function normalizeKnowledgeMessages(
+	messages: KnowledgeExtractionInput[],
+): NormalizedKnowledgeMessage[] {
+	return messages
+		.map((message) => {
+			if (typeof message === 'string') {
+				return { text: message };
+			}
+			const occurredAt =
+				message.timestamp instanceof Date
+					? message.timestamp
+					: message.timestamp
+						? new Date(message.timestamp)
+						: undefined;
+			return {
+				id: message.id,
+				text: message.text,
+				occurredAt: occurredAt && !Number.isNaN(occurredAt.getTime()) ? occurredAt : undefined,
+			};
+		})
+		.filter((message) => message.text.length > 0);
+}
+
+function latestMessageHorizon(messages: NormalizedKnowledgeMessage[]): Date | undefined {
+	let latest: Date | undefined;
+	for (const message of messages) {
+		if (!message.occurredAt) continue;
+		if (!latest || message.occurredAt > latest) latest = message.occurredAt;
+	}
+	return latest;
+}
+
+export interface EvidenceSelectableEntity {
+	name: string;
+	displayName: string;
+	aliases?: string[];
+	sourceMention?: string;
+	mentionSpan?: string;
+	evidenceQuote?: string;
+}
+
+export interface EvidenceSourceSelection {
+	message?: NormalizedKnowledgeMessage;
+	method:
+		| 'exact_normalized_name'
+		| 'exact_display_name'
+		| 'alias_match'
+		| 'mention_span'
+		| 'heuristic_latest_mention'
+		| 'fallback_latest';
+	matchedTerm?: string;
+}
+
+export function evidenceSourceSelectionMetadata(selection: EvidenceSourceSelection): {
+	method: EvidenceSourceSelection['method'];
+} {
+	return { method: selection.method };
+}
+
+function normalizeForEvidenceMatch(value: string): string {
+	return value
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, ' ')
+		.trim();
+}
+
+function findLatestMessageContaining(
+	messages: NormalizedKnowledgeMessage[],
+	term: string,
+): NormalizedKnowledgeMessage | undefined {
+	const normalizedTerm = normalizeForEvidenceMatch(term);
+	if (!normalizedTerm) return undefined;
+	return messages
+		.slice()
+		.reverse()
+		.find((message) => normalizeForEvidenceMatch(message.text).includes(normalizedTerm));
+}
+
+export function selectEvidenceMessage(
+	entity: EvidenceSelectableEntity,
+	messages: NormalizedKnowledgeMessage[],
+): EvidenceSourceSelection {
+	const normalizedName = entity.name.toLowerCase().trim();
+	const nameMatch = findLatestMessageContaining(messages, normalizedName);
+	if (nameMatch) {
+		return { message: nameMatch, method: 'exact_normalized_name', matchedTerm: normalizedName };
+	}
+
+	const displayName = entity.displayName.trim();
+	if (displayName && displayName.toLowerCase() !== normalizedName) {
+		const displayMatch = findLatestMessageContaining(messages, displayName);
+		if (displayMatch) {
+			return { message: displayMatch, method: 'exact_display_name', matchedTerm: displayName };
+		}
+	}
+
+	for (const alias of entity.aliases ?? []) {
+		const aliasMatch = findLatestMessageContaining(messages, alias);
+		if (aliasMatch) {
+			return { message: aliasMatch, method: 'alias_match', matchedTerm: alias };
+		}
+	}
+
+	for (const mention of [entity.sourceMention, entity.mentionSpan, entity.evidenceQuote]) {
+		if (!mention) continue;
+		const mentionMatch = findLatestMessageContaining(messages, mention);
+		if (mentionMatch) {
+			return { message: mentionMatch, method: 'mention_span', matchedTerm: mention };
+		}
+	}
+
+	const heuristicTerms = [normalizedName, displayName, ...(entity.aliases ?? [])].filter(Boolean);
+	const heuristicMatch =
+		messages
+			.slice()
+			.reverse()
+			.find((message) => {
+				const text = normalizeForEvidenceMatch(message.text);
+				return heuristicTerms.some((term) => {
+					const normalizedTerm = normalizeForEvidenceMatch(term);
+					return normalizedTerm.length >= 3 && text.includes(normalizedTerm);
+				});
+			}) ?? undefined;
+
+	if (heuristicMatch) {
+		return { message: heuristicMatch, method: 'heuristic_latest_mention' };
+	}
+
+	return { message: messages[messages.length - 1], method: 'fallback_latest' };
+}
 
 // ─── Keyword pre-filter ───────────────────────────────────────────────────────
 
@@ -97,7 +274,7 @@ export function keywordPreFilter(messages: string[]): boolean {
  * @returns Number of unique nodes linked.
  */
 async function embeddingFirstMatch(
-	messages: string[],
+	messages: NormalizedKnowledgeMessage[],
 	contactId: string,
 	workspaceId: string,
 	workspaceSalt: Buffer,
@@ -106,7 +283,7 @@ async function embeddingFirstMatch(
 	// Take the last 10 messages that are long enough to be meaningful
 	const candidates = messages
 		.slice(-20)
-		.filter((m) => m.length >= 30)
+		.filter((m) => m.text.length >= 30)
 		.slice(-10);
 
 	if (candidates.length === 0) return 0;
@@ -114,24 +291,54 @@ async function embeddingFirstMatch(
 	// Track which nodes we've already linked in this pass
 	const linkedNodeIds = new Set<string>();
 
-	for (const message of candidates) {
-		try {
-			// Truncate individual message to 500 chars (focused embedding)
-			const chunk = message.slice(0, 500);
-			const detected = prefilterEntities(chunk);
-			const { maskedText } = maskEntities(chunk, workspaceSalt, detected);
-			const embedding = await generateEmbedding(maskedText);
-			const matches = await searchKnowledgeNodes(workspaceId, '', embedding, envelope);
+	const maskedCandidates = candidates.map((message) => {
+		const chunk = message.text.slice(0, 500);
+		const detected = prefilterEntities(chunk);
+		const { maskedText } = maskEntities(chunk, workspaceSalt, detected);
+		return { message, chunk, maskedText };
+	});
 
-			for (const candidate of matches) {
-				if (linkedNodeIds.has(candidate.id)) continue;
-				const sim = candidate.similarity ?? 0;
+	const embeddings = await generateEmbeddingsCached(
+		maskedCandidates.map((item) => item.maskedText),
+		{ purpose: 'document' },
+	);
+
+	for (const embeddingResult of embeddings) {
+		try {
+			const candidate = maskedCandidates[embeddingResult.index];
+			if (!candidate) continue;
+			const matches = await searchKnowledgeNodes(
+				workspaceId,
+				'',
+				embeddingResult.embedding,
+				envelope,
+			);
+
+			for (const match of matches) {
+				warnIfEmbeddingFingerprintChanged('embedding_first_match', match);
+				if (linkedNodeIds.has(match.id)) continue;
+				const sim = match.similarity ?? 0;
 				if (sim >= EMBEDDING_MATCH_THRESHOLD) {
-					await linkContactToKnowledge(workspaceId, candidate.id, contactId, 'knows_about', sim);
-					await incrementNodeMentionCount(workspaceId, candidate.id);
-					linkedNodeIds.add(candidate.id);
+					await linkContactToKnowledge(workspaceId, match.id, contactId, 'knows_about', sim, {
+						messageId: candidate.message.id,
+						snippet: candidate.chunk,
+						occurredAt: candidate.message.occurredAt,
+						evidenceKind: 'embedding_match',
+						confidence: sim,
+						metadata: {
+							source: 'embedding_first_match',
+							similarity: sim,
+							threshold: EMBEDDING_MATCH_THRESHOLD,
+							sourceMessageSelection: {
+								method: 'per_message_embedding_candidate',
+							},
+						},
+						envelope,
+					});
+					await incrementNodeMentionCount(workspaceId, match.id);
+					linkedNodeIds.add(match.id);
 					console.log(
-						`[knowledge-extraction] Embedding match: "${candidate.name}" (sim=${sim.toFixed(3)}) for contact=${contactId.slice(0, 8)}`,
+						`[knowledge-extraction] Embedding match: "${match.name}" (sim=${sim.toFixed(3)}) for contact=${contactId.slice(0, 8)}`,
 					);
 				}
 			}
@@ -144,7 +351,7 @@ async function embeddingFirstMatch(
 	return linkedNodeIds.size;
 }
 
-// ─── LLM extraction (Gemini Flash — KG-3) ───────────────────────────────────
+// ─── LLM extraction (configured KG provider) ─────────────────────────────────
 
 const KNOWLEDGE_SYSTEM_PROMPT = `You are extracting structured knowledge entities from Telegram messages.
 Identify topics, projects, organizations, technologies, market sectors, and concepts
@@ -159,26 +366,7 @@ IMPORTANT naming rules:
 Only extract entities with clear evidence in the messages.
 Do not include personal names, phone numbers, Telegram usernames, or any contact-identifying information in entity names or descriptions.`;
 
-type KnowledgeNodeType = 'topic' | 'project' | 'organization' | 'technology' | 'sector' | 'concept';
-type KnowledgeRelType =
-	| 'knows_about'
-	| 'works_on'
-	| 'member_of'
-	| 'expert_in'
-	| 'uses'
-	| 'invested_in'
-	| 'interested_in';
-
-interface ExtractedEntity {
-	type: KnowledgeNodeType;
-	name: string;
-	displayName: string;
-	description: string;
-	relationshipType: KnowledgeRelType;
-	confidence: number;
-}
-
-/** Gemini JSON extraction prompt — instructs model to output structured JSON instead of tool_use */
+/** JSON extraction prompt — instructs the selected KG model to output structured JSON. */
 const GEMINI_EXTRACTION_PROMPT = `${KNOWLEDGE_SYSTEM_PROMPT}
 
 Respond with ONLY a JSON object containing an "entities" array. Each entity must have:
@@ -188,54 +376,54 @@ Respond with ONLY a JSON object containing an "entities" array. Each entity must
 - description: 1-sentence description
 - relationshipType: one of "knows_about", "works_on", "member_of", "expert_in", "uses", "invested_in", "interested_in"
 - confidence: number 0.0-1.0 based on evidence strength
+- sourceMention: optional exact short phrase from the source message that supports the entity
 
 Example: {"entities": [{"type": "technology", "name": "solana", "displayName": "Solana", "description": "Layer 1 blockchain", "relationshipType": "works_on", "confidence": 0.9}]}`;
 
 /**
- * LLM-based entity extraction using Gemini Flash for cost efficiency (KG-3).
+ * LLM-based entity extraction using the configured KG provider.
  * Returns the number of entities extracted and linked.
  */
 async function llmExtractEntities(
-	messages: string[],
+	messages: NormalizedKnowledgeMessage[],
 	contactId: string,
 	workspaceId: string,
 	workspaceSalt: Buffer,
 	envelope: SealedEnvelope,
 ): Promise<number> {
 	const maskedMessages = messages.slice(-50).map((m) => {
-		const detected = prefilterEntities(m);
-		return maskEntities(m, workspaceSalt, detected).maskedText;
+		const detected = prefilterEntities(m.text);
+		return maskEntities(m.text, workspaceSalt, detected).maskedText;
 	});
 	const userPrompt = `Extract knowledge entities from these messages:\n\n${maskedMessages.join('\n')}`;
 
-	const responseText = await inferWithGemini({
+	const inference = await inferKnowledgeEntitiesJson({
 		systemPrompt: GEMINI_EXTRACTION_PROMPT,
 		userPrompt,
 	});
 
-	let input: { entities?: unknown };
-	try {
-		const cleaned = responseText.replace(/```json\n?|\n?```/g, '').trim();
-		input = JSON.parse(cleaned);
-	} catch {
-		console.log('[knowledge-extraction] Failed to parse Gemini JSON response');
-		return 0;
-	}
-
-	if (!Array.isArray(input.entities)) {
-		console.log('[knowledge-extraction] entities field missing or not an array');
-		return 0;
-	}
-
-	const entities = (input.entities as ExtractedEntity[])
-		.filter((e) => typeof e.confidence === 'number' && e.confidence >= 0.7)
-		.slice(0, 10);
+	const entities = inference.entities;
 
 	let linked = 0;
 
 	for (const entity of entities) {
 		try {
 			const normalizedName = entity.name.toLowerCase();
+			const evidenceSelection = selectEvidenceMessage(entity, messages);
+			const evidenceMessage = evidenceSelection.message;
+			const evidence = {
+				messageId: evidenceMessage?.id,
+				snippet: evidenceMessage?.text.slice(0, 1000),
+				occurredAt: evidenceMessage?.occurredAt,
+				evidenceKind: 'llm_extracted' as const,
+				confidence: entity.confidence,
+				metadata: {
+					source: inference.source,
+					entityType: entity.type,
+					sourceMessageSelection: evidenceSourceSelectionMetadata(evidenceSelection),
+				},
+				envelope,
+			};
 
 			// Cross-type dedup: check if this name exists under ANY type
 			const existingAnyType = await findNodeByNameAnyType(workspaceId, normalizedName, envelope);
@@ -249,6 +437,7 @@ async function llmExtractEntities(
 					contactId,
 					entity.relationshipType,
 					entity.confidence,
+					evidence,
 				);
 				linked++;
 				console.log(
@@ -267,6 +456,7 @@ async function llmExtractEntities(
 					contactId,
 					entity.relationshipType,
 					entity.confidence,
+					evidence,
 				);
 				linked++;
 				console.log(
@@ -285,7 +475,7 @@ async function llmExtractEntities(
 				workspaceSalt,
 				embDetected,
 			);
-			const embedding = await generateEmbedding(embeddingInput);
+			const embedding = await generateEmbeddingCached(embeddingInput, { purpose: 'dedup' });
 			const candidates = await searchKnowledgeNodes(
 				workspaceId,
 				normalizedName,
@@ -297,6 +487,7 @@ async function llmExtractEntities(
 			const closest = candidates[0];
 
 			if (closest?.similarity !== undefined) {
+				warnIfEmbeddingFingerprintChanged('llm_dedup', closest);
 				const sim = closest.similarity;
 				if (sim > COSINE_DEDUP_THRESHOLD) {
 					nodeId = closest.id;
@@ -313,6 +504,7 @@ async function llmExtractEntities(
 							displayName: entity.displayName,
 							description: entity.description,
 							embedding,
+							metadata: currentEmbeddingMetadata(),
 						},
 						envelope,
 					);
@@ -327,6 +519,7 @@ async function llmExtractEntities(
 						displayName: entity.displayName,
 						description: entity.description,
 						embedding,
+						metadata: currentEmbeddingMetadata(),
 					},
 					envelope,
 				);
@@ -339,6 +532,7 @@ async function llmExtractEntities(
 				contactId,
 				entity.relationshipType,
 				entity.confidence,
+				evidence,
 			);
 			linked++;
 		} catch (err) {
@@ -360,33 +554,34 @@ async function llmExtractEntities(
  * 1. Staleness check — skip if no new messages since last extraction
  * 2. Keyword pre-filter — skip if no domain signal
  * 3. Embedding-first match — link to existing nodes without LLM (free)
- * 4. LLM extraction via Haiku — discover new entities (cheap)
+ * 4. LLM extraction via the configured KG model — discover new entities
  * 5. Record extraction in log for future staleness checks
  *
- * Cost hierarchy: skip (free) > embedding match (~$0.0001) > Haiku (~$0.002)
+ * Cost hierarchy: skip (free) > embedding match > configured KG model
  */
 export async function extractKnowledgeEntities(
-	messages: string[],
+	messages: KnowledgeExtractionInput[],
 	contactId: string,
 	workspaceId: string,
 	workspaceSalt: Buffer,
 	envelope: SealedEnvelope,
 ): Promise<void> {
+	const normalizedMessages = normalizeKnowledgeMessages(messages);
+	const messageTexts = normalizedMessages.map((message) => message.text);
+	const messageHorizon = latestMessageHorizon(normalizedMessages);
+
 	// 1. Staleness check — skip if already extracted with no new messages
 	const log = await getExtractionLog(workspaceId, contactId);
-	if (log?.messageHorizon) {
-		// If all messages are older than what we already processed, skip
-		const latestMessage = messages[messages.length - 1];
-		if (latestMessage && log.messageHorizon >= new Date()) {
-			// Can't reliably compare message timestamps from plain text.
-			// Fall through — the nightly cron uses DB timestamps for accurate staleness.
-		}
+	if (log?.messageHorizon && messageHorizon && log.messageHorizon >= messageHorizon) {
+		console.log('[knowledge-extraction] Already processed this message horizon — skipping');
+		return;
 	}
 
 	// 2. Keyword pre-filter
-	if (!keywordPreFilter(messages)) {
+	if (!keywordPreFilter(messageTexts)) {
 		console.log('[knowledge-extraction] Pre-filter rejected — skipping');
 		await upsertExtractionLog(workspaceId, contactId, {
+			messageHorizon,
 			entitiesExtracted: 0,
 			llmCalled: false,
 		});
@@ -397,7 +592,7 @@ export async function extractKnowledgeEntities(
 	let totalLinked = 0;
 	try {
 		const embeddingMatches = await embeddingFirstMatch(
-			messages,
+			normalizedMessages,
 			contactId,
 			workspaceId,
 			workspaceSalt,
@@ -413,32 +608,36 @@ export async function extractKnowledgeEntities(
 		console.error('[knowledge-extraction] Embedding match failed:', (err as Error).message);
 	}
 
-	// 4. LLM extraction via Haiku — discover new entities
-	try {
-		const llmEntities = await llmExtractEntities(
-			messages,
-			contactId,
-			workspaceId,
-			workspaceSalt,
-			envelope,
-		);
-		totalLinked += llmEntities;
-		console.log(
-			`[knowledge-extraction] Haiku: ${llmEntities} entities for contact=${contactId.slice(0, 8)}`,
-		);
+	const llmEnabled = isKnowledgeLlmEnabled(process.env);
+	if (llmEnabled) {
+		try {
+			const llmEntities = await llmExtractEntities(
+				normalizedMessages,
+				contactId,
+				workspaceId,
+				workspaceSalt,
+				envelope,
+			);
+			totalLinked += llmEntities;
+			console.log(
+				`[knowledge-extraction] LLM: ${llmEntities} entities for contact=${contactId.slice(0, 8)}`,
+			);
+		} catch (err) {
+			console.error('[knowledge-extraction] LLM extraction failed:', (err as Error).message);
+		}
+	}
 
-		// 5. Record extraction
+	try {
 		await upsertExtractionLog(workspaceId, contactId, {
+			messageHorizon,
 			entitiesExtracted: totalLinked,
-			llmCalled: true,
+			llmCalled: llmEnabled,
 		});
 	} catch (err) {
-		console.error('[knowledge-extraction] LLM extraction failed:', (err as Error).message);
-		// Still record partial results
-		await upsertExtractionLog(workspaceId, contactId, {
-			entitiesExtracted: totalLinked,
-			llmCalled: false,
-		});
+		console.error(
+			'[knowledge-extraction] Failed to record extraction log:',
+			(err as Error).message,
+		);
 	}
 }
 
@@ -448,16 +647,20 @@ export async function extractKnowledgeEntities(
  * Embedding-first matching is always attempted; LLM is gated by budget.
  */
 export async function extractKnowledgeForContact(
-	messages: string[],
+	messages: KnowledgeExtractionInput[],
 	contactId: string,
 	workspaceId: string,
 	opts: { skipLLM?: boolean; workspaceSalt: Buffer; envelope: SealedEnvelope },
 ): Promise<{ embeddingMatches: number; llmEntities: number }> {
 	let embeddingMatches = 0;
 	let llmEntities = 0;
+	const normalizedMessages = normalizeKnowledgeMessages(messages);
+	const messageTexts = normalizedMessages.map((message) => message.text);
+	const messageHorizon = latestMessageHorizon(normalizedMessages);
 
-	if (!keywordPreFilter(messages)) {
+	if (!keywordPreFilter(messageTexts)) {
 		await upsertExtractionLog(workspaceId, contactId, {
+			messageHorizon,
 			entitiesExtracted: 0,
 			llmCalled: false,
 		});
@@ -467,7 +670,7 @@ export async function extractKnowledgeForContact(
 	// Embedding-first match (always)
 	try {
 		embeddingMatches = await embeddingFirstMatch(
-			messages,
+			normalizedMessages,
 			contactId,
 			workspaceId,
 			opts.workspaceSalt,
@@ -478,10 +681,11 @@ export async function extractKnowledgeForContact(
 	}
 
 	// LLM extraction (budget-gated)
-	if (!opts.skipLLM) {
+	const llmEnabled = isKnowledgeLlmEnabled(process.env);
+	if (!opts.skipLLM && llmEnabled) {
 		try {
 			llmEntities = await llmExtractEntities(
-				messages,
+				normalizedMessages,
 				contactId,
 				workspaceId,
 				opts.workspaceSalt,
@@ -493,8 +697,9 @@ export async function extractKnowledgeForContact(
 	}
 
 	await upsertExtractionLog(workspaceId, contactId, {
+		messageHorizon,
 		entitiesExtracted: embeddingMatches + llmEntities,
-		llmCalled: !opts.skipLLM && llmEntities > 0,
+		llmCalled: !opts.skipLLM && llmEnabled,
 	});
 
 	return { embeddingMatches, llmEntities };

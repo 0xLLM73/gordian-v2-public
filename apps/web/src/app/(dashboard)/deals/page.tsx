@@ -5,6 +5,10 @@ import { DealsKanban } from '@/components/deals/deals-kanban';
 import { DealsLoadMore } from '@/components/deals/deals-load-more';
 import { DealsSort } from '@/components/deals/deals-sort';
 import { DealsViewToggle } from '@/components/deals/deals-view-toggle';
+import {
+	normalizeDealSortFilter,
+	normalizeDealStageFilter,
+} from '@/components/deals/filter-options';
 import { DEAL_STAGE_BG_COLORS, DEAL_STAGE_COLORS } from '@/lib/colors';
 import { formatCurrency } from '@/lib/format';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
@@ -27,6 +31,8 @@ export default async function DealsPage({
 	const session = await requireSession();
 	const workspaceId = await getUserWorkspaceId(session.user.id);
 	const { stage, sort } = await searchParams;
+	const stageFilter = normalizeDealStageFilter(stage);
+	const sortFilter = normalizeDealSortFilter(sort);
 
 	return (
 		<div>
@@ -50,7 +56,11 @@ export default async function DealsPage({
 
 			<Suspense fallback={<DealsListSkeleton />}>
 				{workspaceId ? (
-					<DealsList workspaceId={workspaceId} stage={stage} sort={sort as DealSortOption} />
+					<DealsList
+						workspaceId={workspaceId}
+						stage={stageFilter === 'all' ? undefined : stageFilter}
+						sort={sortFilter as DealSortOption}
+					/>
 				) : (
 					<div className="mt-4 rounded-lg border border-border bg-muted p-8 text-center text-sm text-muted-foreground">
 						Create a deal to start tracking — Gordian will build its decision context over time.

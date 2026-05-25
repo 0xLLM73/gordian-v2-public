@@ -16,8 +16,8 @@ import {
 import { formatCurrency, formatRelativeDate } from '@/lib/format';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
 import {
+	getAccessibleContact,
 	getCommitmentsByContact,
-	getContact,
 	getContactTag,
 	getHealthScore,
 	getInvestorProfile,
@@ -43,7 +43,7 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
 	const envelope = await getWorkspaceEnvelope(workspaceId);
 	if (!envelope) notFound();
 
-	const contact = await getContact(workspaceId, id, envelope);
+	const contact = await getAccessibleContact(workspaceId, session.user.id, id, envelope);
 	if (!contact) notFound();
 
 	const [

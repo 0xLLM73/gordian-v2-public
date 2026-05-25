@@ -15,6 +15,7 @@ const mockProvenanceSearch = vi.hoisted(() => vi.fn());
 const mockFindRelevantPrecedents = vi.hoisted(() => vi.fn());
 const mockFormatPrecedents = vi.hoisted(() => vi.fn());
 const mockPrefilterEntities = vi.hoisted(() => vi.fn());
+const fetchMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../cached-inference', () => ({
 	inferWithCache: mockInferWithCache,
@@ -109,6 +110,23 @@ const multiToolResponse = (
 	content: tools.map((t) => ({ type: 'tool_use', id: t.id, name: t.name, input: t.input })),
 });
 
+const localModelResponse = (payload: Record<string, unknown>) => ({
+	ok: true,
+	json: () =>
+		Promise.resolve({
+			message: {
+				content: JSON.stringify(payload),
+			},
+		}),
+	text: () => Promise.resolve(''),
+});
+
+function enableLocalQwenChat() {
+	vi.stubEnv('CHAT_LLM_PROVIDER', 'local');
+	vi.stubEnv('CHAT_LLM_BASE_URL', 'http://localhost:11434/v1');
+	vi.stubEnv('CHAT_LLM_MODEL', 'qwen3:4b-instruct');
+}
+
 function makeMockStream(textChunks: string[]) {
 	const listeners: Record<string, ((...args: unknown[]) => void)[]> = {};
 	return {
@@ -131,6 +149,9 @@ function makeMockStream(textChunks: string[]) {
 
 describe('chatStream', () => {
 	beforeEach(() => {
+		vi.unstubAllEnvs();
+		vi.stubEnv('COMMITMENT_LLM_PROVIDER', 'cloud');
+		vi.stubGlobal('fetch', fetchMock);
 		vi.clearAllMocks();
 		mockPrefilterEntities.mockReturnValue([]);
 		mockRouteQuery.mockReturnValue('sonnet');
@@ -146,6 +167,44 @@ describe('chatStream', () => {
 		expect(cb.onTextDelta).toHaveBeenCalledWith('Hello');
 		expect(cb.onTextDelta).toHaveBeenCalledWith(' world');
 		expect(cb.onDone).toHaveBeenCalledWith([]);
+	});
+
+	it('streams a local Qwen answer through Ollama without cloud inference', async () => {
+		enableLocalQwenChat();
+		fetchMock.mockResolvedValue(
+			localModelResponse({
+				type: 'answer',
+				response: 'Local chat is working.',
+			}),
+		);
+
+		const cb = makeCallbacks();
+		await chatStream('ws-1', fakeEnvelope, [{ role: 'user', content: 'Hi' }], '', cb);
+
+		expect(cb.onTextDelta).toHaveBeenCalledWith('Local chat is working.');
+		expect(cb.onDone).toHaveBeenCalledWith([]);
+		expect(mockInferWithCache).not.toHaveBeenCalled();
+		expect(mockStreamInfer).not.toHaveBeenCalled();
+		expect(mockRouteQuery).not.toHaveBeenCalled();
+		expect(fetchMock).toHaveBeenCalledWith(
+			'http://localhost:11434/api/chat',
+			expect.objectContaining({
+				headers: expect.not.objectContaining({
+					Authorization: expect.any(String),
+				}),
+			}),
+		);
+
+		const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as {
+			model: string;
+			stream: boolean;
+			think: boolean;
+			format: { properties: Record<string, unknown> };
+		};
+		expect(body.model).toBe('qwen3:4b-instruct');
+		expect(body.stream).toBe(false);
+		expect(body.think).toBe(false);
+		expect(body.format.properties).toHaveProperty('response');
 	});
 
 	it('emits onToolStart/onToolEnd around tool execution', async () => {

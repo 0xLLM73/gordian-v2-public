@@ -1,4 +1,5 @@
 import { PreferencesForm } from '@/components/preferences-form';
+import { AiAnalysisConsent } from '@/components/settings/ai-analysis-consent';
 import { BriefScheduleEditor } from '@/components/settings/brief-schedule-editor';
 import { DeleteAccount } from '@/components/settings/delete-account';
 import { FeatureFlagsSection } from '@/components/settings/feature-flags';
@@ -6,13 +7,62 @@ import { GhostingPreferences } from '@/components/settings/ghosting-preferences'
 import { IntroKeywordsEditor } from '@/components/settings/intro-keywords-editor';
 import { InviteManager } from '@/components/settings/invite-manager';
 import { NotificationPreferences } from '@/components/settings/notification-preferences';
-import { TelegramConnection } from '@/components/settings/telegram-connection';
+import {
+	TelegramConnection,
+	type TelegramSafetyItem,
+} from '@/components/settings/telegram-connection';
 import { isRuntimeEnvEnabled } from '@/lib/runtime-env';
+import { isStoredSessionUnwrapOutsideImportsAllowed } from '@/lib/telegram-session-policy';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
 import { isWorkspaceOwner } from '@/lib/workspace-authz';
 import { accounts, and, db, eq, getCalibration, getPreferences } from '@repo/db';
+import { isAiAnalysisAvailable } from '@repo/shared';
 import Link from 'next/link';
 import { Suspense } from 'react';
+
+function telegramSessionUnlockScopeStatus(): TelegramSafetyItem {
+	const legacyUnwrapAllowed = isStoredSessionUnwrapOutsideImportsAllowed();
+
+	return {
+		label: 'Session unlock scope',
+		status: legacyUnwrapAllowed ? 'Legacy jobs allowed' : 'History import only',
+		tone: legacyUnwrapAllowed ? 'warn' : 'ok',
+	};
+}
+
+function telegramMtprotoMemoryWindowStatus(): TelegramSafetyItem {
+	const raw = process.env.TELEGRAM_MTPROTO_SESSION_IDLE_MINUTES?.trim() || '30';
+	const idleMinutes = Number.parseInt(raw, 10);
+
+	if (!Number.isInteger(idleMinutes) || idleMinutes < 1 || idleMinutes > 1440) {
+		return { label: 'MTProto memory window', status: 'Invalid', tone: 'warn' };
+	}
+
+	return {
+		label: 'MTProto memory window',
+		status: `${idleMinutes} min`,
+		tone: idleMinutes <= 5 ? 'ok' : idleMinutes <= 30 ? 'neutral' : 'warn',
+	};
+}
+
+function telegramKeychainAccessStatus(provider: string): TelegramSafetyItem {
+	if (provider === 'os-keychain') {
+		const requiresUserPresence =
+			process.env.TELEGRAM_KEYCHAIN_REQUIRE_USER_PRESENCE?.trim() === 'true';
+
+		return {
+			label: 'Keychain access',
+			status: requiresUserPresence ? 'User presence requested' : 'When Mac unlocked',
+			tone: 'ok',
+		};
+	}
+
+	if (provider === 'aws-kms') {
+		return { label: 'Keychain access', status: 'AWS KMS', tone: 'neutral' };
+	}
+
+	return { label: 'Keychain access', status: 'Not protected', tone: 'warn' };
+}
 
 export default async function SettingsPage() {
 	const session = await requireSession();
@@ -28,7 +78,53 @@ export default async function SettingsPage() {
 		isRuntimeEnvEnabled('TELEGRAM_MTPROTO_ENABLED') &&
 		isRuntimeEnvEnabled('NEXT_PUBLIC_TELEGRAM_LINKING_ENABLED');
 	const telegramBotEnabled = isRuntimeEnvEnabled('TELEGRAM_BOT_ENABLED');
+	const telegramSendEnabled = isRuntimeEnvEnabled('TELEGRAM_SEND_ENABLED');
+	const telegramFullBackfillEnabled = isRuntimeEnvEnabled('TELEGRAM_FULL_BACKFILL_ENABLED');
+	const telegramPeriodicSyncEnabled = isRuntimeEnvEnabled('TELEGRAM_PERIODIC_SYNC_ENABLED');
+	const telegramSessionKeyProvider =
+		process.env.TELEGRAM_SESSION_KEY_PROVIDER?.trim() || 'dev-insecure';
+	const workspaceKeyProvider = process.env.WORKSPACE_KEY_PROVIDER?.trim() || 'dev-insecure';
+	const keyProviderStatus = (provider: string): TelegramSafetyItem =>
+		provider === 'os-keychain' || provider === 'aws-kms'
+			? { label: 'Session key custody', status: provider, tone: 'ok' }
+			: { label: 'Session key custody', status: provider, tone: 'warn' };
+	const workspaceProviderStatus = (provider: string): TelegramSafetyItem =>
+		provider === 'os-keychain' || provider === 'aws-kms'
+			? { label: 'Workspace keys', status: provider, tone: 'ok' }
+			: { label: 'Workspace keys', status: provider, tone: 'warn' };
+	const telegramSafetyItems: TelegramSafetyItem[] = [
+		{
+			label: 'Linking UI',
+			status: telegramLinkingEnabled ? 'Available' : 'Disabled',
+			tone: telegramLinkingEnabled ? 'neutral' : 'ok',
+		},
+		{
+			label: 'Message sending',
+			status: telegramSendEnabled ? 'Enabled' : 'Disabled',
+			tone: telegramSendEnabled ? 'warn' : 'ok',
+		},
+		{
+			label: 'Full backfill',
+			status: telegramFullBackfillEnabled ? 'Enabled' : 'Disabled',
+			tone: telegramFullBackfillEnabled ? 'warn' : 'ok',
+		},
+		{
+			label: 'Periodic sync',
+			status: telegramPeriodicSyncEnabled ? 'Enabled' : 'Disabled',
+			tone: telegramPeriodicSyncEnabled ? 'warn' : 'ok',
+		},
+		keyProviderStatus(telegramSessionKeyProvider),
+		telegramKeychainAccessStatus(telegramSessionKeyProvider),
+		telegramSessionUnlockScopeStatus(),
+		telegramMtprotoMemoryWindowStatus(),
+		workspaceProviderStatus(workspaceKeyProvider),
+	];
 	const calendarEnabled = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+	const openAIProvider = process.env.OPENAI_API_KEY_PROVIDER?.trim() || 'env';
+	const openAIConfigured =
+		openAIProvider === 'os-keychain'
+			? Boolean(process.env.OPENAI_API_KEYCHAIN_ACCOUNT?.trim() || 'openai-api-key')
+			: Boolean(process.env.OPENAI_API_KEY?.trim());
 
 	const isOwner = workspaceId ? await isWorkspaceOwner(workspaceId, session.user.id) : false;
 
@@ -86,10 +182,24 @@ export default async function SettingsPage() {
 					<h2 className="mb-4 text-lg font-semibold text-foreground">Telegram Connection</h2>
 					<TelegramConnection
 						isConnected={isConnected}
-						accountId={telegramAccount[0]?.accountId}
 						linkingEnabled={telegramLinkingEnabled}
+						sendEnabled={telegramSendEnabled}
+						safetyItems={telegramSafetyItems}
 					/>
 				</section>
+
+				{workspaceId ? (
+					<section className="rounded-lg border border-border bg-card p-6">
+						<h2 className="mb-4 text-lg font-semibold text-foreground">AI Analysis Consent</h2>
+						<Suspense fallback={<p className="text-sm text-muted-foreground">Loading...</p>}>
+							<AiAnalysisConsentSection
+								workspaceId={workspaceId}
+								userId={session.user.id}
+								aiAvailable={isAiAnalysisAvailable(process.env)}
+							/>
+						</Suspense>
+					</section>
+				) : null}
 
 				{workspaceId ? (
 					<section className="rounded-lg border border-border bg-card p-6">
@@ -171,6 +281,29 @@ export default async function SettingsPage() {
 
 				{workspaceId ? (
 					<section className="rounded-lg border border-border bg-card p-6">
+						<h2 className="mb-4 text-lg font-semibold text-foreground">AI Provider</h2>
+						<div className="flex items-center gap-2">
+							<span
+								className={`inline-block h-2 w-2 rounded-full ${openAIConfigured ? 'bg-green-500' : 'bg-muted-foreground'}`}
+							/>
+							<span className="text-sm text-foreground">
+								OpenAI embeddings:{' '}
+								{openAIConfigured
+									? openAIProvider === 'os-keychain'
+										? 'macOS Keychain selected'
+										: 'environment key configured'
+									: 'not configured'}
+							</span>
+						</div>
+						<p className="mt-3 text-sm text-muted-foreground">
+							Run <code className="rounded bg-muted px-1 py-0.5">pnpm openai:setup</code> for local
+							Keychain storage. ChatGPT OAuth is not a supported API credential path for this app.
+						</p>
+					</section>
+				) : null}
+
+				{workspaceId ? (
+					<section className="rounded-lg border border-border bg-card p-6">
 						<h2 className="mb-4 text-lg font-semibold text-foreground">AI Calibration</h2>
 						<p className="mb-4 text-sm text-muted-foreground">
 							Personalise AI summaries, message drafts, and briefs to your communication style and
@@ -186,7 +319,7 @@ export default async function SettingsPage() {
 					<section className="rounded-lg border border-border bg-card p-6">
 						<h2 className="mb-4 text-lg font-semibold text-foreground">Data Export</h2>
 						<p className="mb-4 text-sm text-muted-foreground">
-							Export your contacts, commitments, and deals as JSON.
+							Export a basic CRM JSON file with contacts, active commitments, and deals.
 						</p>
 						<a
 							href="/api/export"
@@ -297,6 +430,23 @@ async function CalendarSection({
 		>
 			Connect Google Calendar
 		</a>
+	);
+}
+
+async function AiAnalysisConsentSection({
+	workspaceId,
+	userId,
+	aiAvailable,
+}: { workspaceId: string; userId: string; aiAvailable: boolean }) {
+	const envelope = await getWorkspaceEnvelope(workspaceId);
+	const calibration = envelope ? await getCalibration(userId, workspaceId, envelope) : null;
+	return (
+		<AiAnalysisConsent
+			aiAvailable={aiAvailable}
+			consentAiAnalysis={calibration?.consentAiAnalysis === true}
+			consentDataProcessing={calibration?.consentDataProcessing === true}
+			consentTelegramAccess={calibration?.consentTelegramAccess === true}
+		/>
 	);
 }
 

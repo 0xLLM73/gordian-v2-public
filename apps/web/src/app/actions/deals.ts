@@ -47,10 +47,10 @@ export const createDealAction = workspaceAction
 	.schema(
 		z.object({
 			contactId: z.string().uuid(),
-			title: z.string().min(1).max(200),
+			title: z.string().trim().min(1).max(200),
 			dealType: dealTypeSchema.optional(),
 			value: z.number().int().nonnegative(),
-			notes: z.string().max(5000).optional(),
+			notes: z.string().trim().max(5000).optional(),
 			terms: dealTermsSchema.optional(),
 		}),
 	)
@@ -63,7 +63,7 @@ export const createDealAction = workspaceAction
 				title: parsedInput.title,
 				dealType: parsedInput.dealType,
 				value: parsedInput.value,
-				notes: parsedInput.notes,
+				notes: parsedInput.notes || undefined,
 				terms: parsedInput.terms,
 			},
 			ctx.envelope,
@@ -91,12 +91,12 @@ export const updateDealAction = workspaceAction
 	.schema(
 		z.object({
 			dealId: z.string().uuid(),
-			title: z.string().min(1).max(200).optional(),
+			title: z.string().trim().min(1).max(200).optional(),
 			stage: dealStageSchema.optional(),
 			stageNote: z.string().max(500).optional(),
 			dealType: dealTypeSchema.optional(),
 			value: z.number().int().nonnegative().optional(),
-			notes: z.string().max(5000).nullable().optional(),
+			notes: z.string().trim().max(5000).nullable().optional(),
 			terms: dealTermsSchema.optional(),
 		}),
 	)
@@ -111,7 +111,7 @@ export const updateDealAction = workspaceAction
 				stageNote: parsedInput.stageNote,
 				dealType: parsedInput.dealType,
 				value: parsedInput.value,
-				notes: parsedInput.notes,
+				notes: parsedInput.notes || parsedInput.notes === null ? parsedInput.notes : undefined,
 				terms: parsedInput.terms,
 			},
 			ctx.envelope,

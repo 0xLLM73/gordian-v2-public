@@ -1,7 +1,7 @@
 import { boolean, index, jsonb, pgTable, real, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { contacts } from './contacts';
 import { encryptedText } from './custom-types';
-import { introContextEnum, introStatusEnum } from './enums';
+import { introContextEnum, introResolutionEnum, introStatusEnum } from './enums';
 import { workspaces } from './workspaces';
 
 export const introductions = pgTable(
@@ -23,6 +23,7 @@ export const introductions = pgTable(
 		context: introContextEnum('context').default('other').notNull(),
 		confidence: real('confidence').notNull(),
 		status: introStatusEnum('status').default('triage').notNull(),
+		resolution: introResolutionEnum('resolution'),
 		statusHistory: jsonb('status_history').default([]).notNull(),
 		note: encryptedText('note'),
 		reasoning: encryptedText('reasoning'),
@@ -38,5 +39,10 @@ export const introductions = pgTable(
 			table.introducerContactId,
 		),
 		index('introductions_workspace_status_idx').on(table.workspaceId, table.status),
+		index('introductions_workspace_resolution_idx').on(
+			table.workspaceId,
+			table.resolution,
+			table.updatedAt,
+		),
 	],
 );

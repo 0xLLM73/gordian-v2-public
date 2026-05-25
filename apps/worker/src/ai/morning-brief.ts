@@ -13,11 +13,13 @@ import {
 	sql,
 	workspaces,
 } from '@repo/db';
+import { redactSensitive } from '@repo/shared';
 import { Queue, Worker } from 'bullmq';
 import { getBotApi } from '../bot/api';
 import { scheduleRecommendations } from '../queues/recommendations';
 import { broadcastUpdate } from '../realtime/broadcast';
 import { connection } from '../redis';
+import { isTelegramSendEnabled } from '../telegram-config';
 import { selectPromptVariant } from './bandit';
 import { inferWithCache } from './cached-inference';
 import { buildCalibrationKernelModifier } from './calibration-context';
@@ -182,7 +184,7 @@ export function msUntilHour(targetHour: number, timezone: string): number {
 
 	// Hours until target (wrap around midnight)
 	let hoursUntil = targetHour - currentHour;
-	if (hoursUntil < 0 || (hoursUntil === 0 && currentMinute > 0)) {
+	if (hoursUntil <= 0) {
 		hoursUntil += 24;
 	}
 
@@ -773,6 +775,13 @@ function formatBriefAsHtml(text: string): string {
  * Silently skips if user has no Telegram account or bot can't reach them.
  */
 async function pushBriefToTelegram(userId: string, briefText: string): Promise<void> {
+	if (!isTelegramSendEnabled()) {
+		console.log(
+			`[brief] Telegram brief push disabled by TELEGRAM_SEND_ENABLED=false for user=${userId.slice(0, 8)}`,
+		);
+		return;
+	}
+
 	const rows = await db
 		.select({ accountId: accounts.accountId })
 		.from(accounts)
@@ -849,7 +858,10 @@ export const briefWorker = new Worker(
 
 		// Push brief to Telegram (non-fatal — don't break the pipeline)
 		await pushBriefToTelegram(userId, briefResult.text).catch((err) => {
-			console.error(`[brief] Telegram push error for user=${userId.slice(0, 8)}:`, err);
+			console.error(
+				`[brief] Telegram push error for user=${userId.slice(0, 8)}:`,
+				redactSensitive(err),
+			);
 		});
 
 		// Notify only — client fetches brief content via authenticated API (SEC-028)
@@ -866,13 +878,13 @@ export const briefWorker = new Worker(
 
 		// Schedule daily recommendations refresh (fires after brief — envelope resolved by worker)
 		await scheduleRecommendations(workspaceId).catch((err) => {
-			console.error('[brief] Failed to schedule recommendations:', err);
+			console.error('[brief] Failed to schedule recommendations:', redactSensitive(err));
 		});
 
 		// Schedule knowledge inference (creates edges in knowledge graph)
 		const { scheduleKnowledgeInference } = await import('../queues/knowledge-inference');
 		await scheduleKnowledgeInference(workspaceId).catch((err) => {
-			console.error('[brief] Failed to schedule knowledge inference:', err);
+			console.error('[brief] Failed to schedule knowledge inference:', redactSensitive(err));
 		});
 
 		// CGC Phase 4b: Daily confidence decay on stale causal edges
@@ -889,7 +901,7 @@ export const briefWorker = new Worker(
 				);
 			}
 		} catch (err) {
-			console.error('[brief] Confidence decay failed:', (err as Error).message);
+			console.error('[brief] Confidence decay failed:', redactSensitive(err));
 		}
 	},
 	{ connection, prefix: '{ai-flow}', concurrency: 2 },
@@ -900,5 +912,5 @@ briefWorker.on('completed', (job) => {
 	console.log(`[brief] Job ${job.id} completed`);
 });
 briefWorker.on('failed', (job, err) => {
-	console.error(`[brief] Job ${job?.id} failed:`, err.message);
+	console.error(`[brief] Job ${job?.id} failed:`, redactSensitive(err));
 });

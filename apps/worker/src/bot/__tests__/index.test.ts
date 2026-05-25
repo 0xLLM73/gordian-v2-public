@@ -4,12 +4,10 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@grammyjs/runner', () => ({ sequentialize: vi.fn(() => vi.fn()) }));
 vi.mock('@grammyjs/storage-redis', () => ({ RedisAdapter: vi.fn() }));
 vi.mock('grammy', () => ({
-	Bot: vi.fn(function MockBot() {
-		return {
-			use: vi.fn(),
-			catch: vi.fn(),
-		};
-	}),
+	Bot: vi.fn(() => ({
+		use: vi.fn(),
+		catch: vi.fn(),
+	})),
 	session: vi.fn(() => vi.fn()),
 }));
 vi.mock('../../redis', () => ({ connection: {} }));
@@ -99,5 +97,30 @@ describe('sanitizeUpdate (SEC-025)', () => {
 		const update = { update_id: 1 };
 		const sanitized = sanitizeUpdate(update);
 		expect(sanitized).toEqual({ update_id: 1 });
+	});
+
+	it('namespaces Redis-backed grammY sessions', async () => {
+		const previousToken = process.env.BOT_TOKEN;
+		process.env.BOT_TOKEN = 'test-bot-token';
+		try {
+			const grammy = await import('grammy');
+			const { GRAMMY_SESSION_KEY_PREFIX, initBot } = await import('../index');
+			const sessionMock = vi.mocked(grammy.session);
+			sessionMock.mockClear();
+
+			await initBot();
+
+			expect(sessionMock).toHaveBeenCalledWith(
+				expect.objectContaining({
+					prefix: GRAMMY_SESSION_KEY_PREFIX,
+				}),
+			);
+		} finally {
+			if (previousToken === undefined) {
+				process.env.BOT_TOKEN = undefined;
+			} else {
+				process.env.BOT_TOKEN = previousToken;
+			}
+		}
 	});
 });

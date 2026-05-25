@@ -12,12 +12,10 @@ vi.mock('../../queues/sync', () => ({
 }));
 
 vi.mock('grammy', () => ({
-	Composer: vi.fn(function MockComposer() {
-		return {
-			command: vi.fn(),
-			on: vi.fn(() => ({ filter: vi.fn() })),
-		};
-	}),
+	Composer: vi.fn(() => ({
+		command: vi.fn(),
+		on: vi.fn(() => ({ filter: vi.fn() })),
+	})),
 }));
 
 describe('briefs bot feature', () => {
@@ -51,11 +49,16 @@ describe('briefs bot feature', () => {
 		mockSyncQueueAdd.mockResolvedValue({ id: 'job-2' });
 
 		const { syncQueue } = await import('../../queues/sync');
-		await syncQueue.add('sync-contacts', { userId: '456', workspaceId: 'ws-2' });
+		await syncQueue.add('sync-contacts', {
+			userId: '456',
+			workspaceId: 'ws-2',
+			syncScope: 'contacts_only',
+		});
 
 		expect(mockSyncQueueAdd).toHaveBeenCalledWith('sync-contacts', {
 			userId: '456',
 			workspaceId: 'ws-2',
+			syncScope: 'contacts_only',
 		});
 	});
 

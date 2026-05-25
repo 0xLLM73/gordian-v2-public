@@ -3,16 +3,6 @@
 Use this checklist only after the local release checks pass. It covers the parts
 that cannot be proven by the repository alone.
 
-## Current Public Repo Status
-
-This public snapshot was published from a clean-history repository. The GitHub
-publication gate has been completed for the public repo: repository visibility,
-Dependabot alerts/security updates, secret scanning, push protection, private
-vulnerability reporting, and `main` branch protection are enabled.
-
-Use the checklist below for future releases, forks, or deployment-specific
-publication work.
-
 ## Local Release Gate
 
 Run these from a clean checkout:
@@ -20,6 +10,7 @@ Run these from a clean checkout:
 ```bash
 pnpm install --frozen-lockfile
 pnpm audit:open-source
+pnpm audit
 pnpm audit --prod
 pnpm lint
 pnpm typecheck
@@ -28,10 +19,25 @@ pnpm demo:setup
 pnpm demo:smoke
 ```
 
+If the public demo is intended to run without hosted AI provider accounts, use
+the documented Nomic path, or Qwen when you only need to prove local KG vectors:
+
+```bash
+pnpm local-ai:setup:nomic
+# or
+pnpm local-ai:setup:qwen
+pnpm kg:local:smoke
+```
+
 `pnpm audit:open-source` scans the tracked and unignored public tree, verifies
-required governance files, confirms `docs/archive/` is tombstone-only, checks
-safe Telegram defaults, and runs `gitleaks` against the public tree and full git
-history.
+required governance files and Dependabot npm/GitHub Actions/Docker/Docker Compose coverage,
+confirms `docs/archive/` is tombstone-only, checks safe Telegram defaults, and
+requires `gitleaks` against the public tree and full git history. CI installs a
+pinned Gitleaks release on a full-depth checkout before running this gate; a
+missing scanner or shallow checkout is a failure.
+`pnpm audit` covers both runtime and development/tooling dependencies, including
+packages that contributors install locally. `pnpm audit --prod` is kept as a
+separate production-runtime signal.
 
 ## GitHub Publication Gate
 
@@ -44,6 +50,8 @@ pnpm check:publication
 This read-only check uses `gh api` against the origin repository and fails until:
 
 - repository visibility is public;
+- Dependabot version-update coverage includes npm, GitHub Actions, the web and
+  worker Dockerfiles, and `docker-compose.yml`;
 - Dependabot vulnerability alerts are enabled;
 - Dependabot security updates are enabled and unpaused;
 - secret scanning is enabled;
@@ -53,10 +61,9 @@ This read-only check uses `gh api` against the origin repository and fails until
 - `main` blocks force pushes and deletion;
 - `main` enforces admins, linear history, and conversation resolution.
 
-If the repo is private, branch protection is incomplete, or the account plan does
-not expose secret scanning, push protection, or private vulnerability reporting,
-this command should fail. That failure is expected until the GitHub-side settings
-are available.
+If the repo is private or the account plan does not expose secret scanning,
+push protection, or private vulnerability reporting, this command should fail.
+That failure is expected until the GitHub-side settings are available.
 
 ## Provider-Side Rotation Gate
 
@@ -72,10 +79,15 @@ the project publicly, verify each item in the provider dashboards:
 - Supabase anon and service keys are rotated;
 - AWS access keys and KMS-related credentials are rotated;
 - AI provider and observability keys are rotated;
+- local/proxy AI endpoint bearer tokens are rotated if they were ever used;
 - GitHub Actions has no deployment secrets except intentional throwaway demo
   infrastructure;
 - old databases, Redis/Dragonfly snapshots, and backups are deleted or purged
   with `pnpm purge:secrets`.
+
+Record the final human sign-off in [RELEASE_ATTESTATION.md](RELEASE_ATTESTATION.md).
+Do not paste secret values, raw session strings, database URLs, or customer data
+into that record; use dates, owners, and short evidence notes only.
 
 ## Release Note
 

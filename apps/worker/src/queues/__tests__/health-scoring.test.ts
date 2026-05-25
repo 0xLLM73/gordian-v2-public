@@ -44,19 +44,15 @@ vi.mock('../outcome-evaluation', () => ({
 }));
 
 vi.mock('bullmq', () => ({
-	Queue: vi.fn(function MockQueue() {
-		return {
-			add: vi.fn(),
-			close: vi.fn(),
-		};
-	}),
-	Worker: vi.fn(function MockWorker(_name: string, processor: unknown) {
-		return {
-			processor,
-			close: vi.fn(),
-			on: vi.fn(),
-		};
-	}),
+	Queue: vi.fn().mockImplementation(() => ({
+		add: vi.fn(),
+		close: vi.fn(),
+	})),
+	Worker: vi.fn().mockImplementation((_name: string, processor: unknown) => ({
+		processor,
+		close: vi.fn(),
+		on: vi.fn(),
+	})),
 }));
 
 vi.mock('../../redis', () => ({
@@ -465,6 +461,10 @@ describe('computeRecency', () => {
 		expect(computeRecency(days, 'prospect')).toBeCloseTo(Math.exp(-0.033 * 14), 6);
 		expect(computeRecency(days, 'vendor')).toBeCloseTo(Math.exp(-0.023 * 14), 6);
 	});
+
+	it('rounds effectively-zero recency scores to zero for Postgres real storage', () => {
+		expect(computeRecency(10000)).toBe(0);
+	});
 });
 
 describe('computeFrequency', () => {
@@ -479,6 +479,10 @@ describe('computeFrequency', () => {
 	it('penalizes deviation from center', () => {
 		expect(computeFrequency(0)).toBeLessThan(computeFrequency(5));
 		expect(computeFrequency(20)).toBeLessThan(computeFrequency(5));
+	});
+
+	it('rounds effectively-zero frequency scores to zero for Postgres real storage', () => {
+		expect(computeFrequency(500)).toBe(0);
 	});
 
 	it('uses default center for unknown type', () => {
@@ -513,6 +517,10 @@ describe('computeResponseLatency', () => {
 		const h12 = computeResponseLatency(12);
 		expect(h1).toBeGreaterThan(h4);
 		expect(h4).toBeGreaterThan(h12);
+	});
+
+	it('rounds effectively-zero response scores to zero for Postgres real storage', () => {
+		expect(computeResponseLatency(250)).toBe(0);
 	});
 });
 

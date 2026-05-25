@@ -22,7 +22,9 @@ export default async function ContactsPage({
 	const session = await requireSession();
 	const workspaceId = await getUserWorkspaceId(session.user.id);
 	const params = await searchParams;
-	const sourceAccountId = typeof params.account === 'string' ? params.account : undefined;
+	const accountParam = typeof params.account === 'string' ? params.account : undefined;
+	const accountIds = workspaceId ? await getUserTelegramAccountIds(session.user.id) : [];
+	const selectedAccount = resolveSelectedAccount(accountParam, accountIds);
 
 	return (
 		<div>
@@ -35,7 +37,7 @@ export default async function ContactsPage({
 
 			{workspaceId ? (
 				<Suspense fallback={null}>
-					<AccountFilterSection selectedAccount={sourceAccountId} userId={session.user.id} />
+					<AccountFilterSection accounts={accountIds} selectedAccountKey={selectedAccount?.key} />
 				</Suspense>
 			) : null}
 
@@ -44,7 +46,7 @@ export default async function ContactsPage({
 					<ContactList
 						workspaceId={workspaceId}
 						userId={session.user.id}
-						sourceAccountId={sourceAccountId}
+						sourceAccountId={selectedAccount?.id}
 					/>
 				) : (
 					<div className="mt-4 rounded-lg border border-border bg-muted p-8 text-center text-sm text-muted-foreground">
@@ -56,13 +58,41 @@ export default async function ContactsPage({
 	);
 }
 
+function resolveSelectedAccount(accountParam: string | undefined, accountIds: string[]) {
+	if (!accountParam) return undefined;
+
+	const selectedIndex = Number.parseInt(accountParam, 10);
+	if (
+		Number.isInteger(selectedIndex) &&
+		String(selectedIndex) === accountParam &&
+		selectedIndex >= 0 &&
+		selectedIndex < accountIds.length
+	) {
+		return { id: accountIds[selectedIndex], key: accountParam };
+	}
+
+	const legacyIndex = accountIds.indexOf(accountParam);
+	if (legacyIndex >= 0) {
+		return { id: accountParam, key: String(legacyIndex) };
+	}
+
+	return undefined;
+}
+
 async function AccountFilterSection({
-	selectedAccount,
-	userId,
-}: { selectedAccount?: string; userId: string }) {
-	const accounts = await getUserTelegramAccountIds(userId);
+	accounts,
+	selectedAccountKey,
+}: { accounts: string[]; selectedAccountKey?: string }) {
 	if (accounts.length === 0) return null;
-	return <AccountFilter accounts={accounts} selectedAccount={selectedAccount} />;
+	return (
+		<AccountFilter
+			accounts={accounts.map((_, index) => ({
+				key: String(index),
+				label: `Telegram account ${index + 1}`,
+			}))}
+			selectedAccountKey={selectedAccountKey}
+		/>
+	);
 }
 
 async function ContactList({
@@ -139,7 +169,7 @@ async function ContactList({
 							<p className="mt-0.5 truncate text-xs text-muted-foreground">
 								{contact.sourceAccountId ? (
 									<span className="mr-1.5 inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-										{contact.sourceAccountId as string}
+										Telegram account
 									</span>
 								) : null}
 								<span>

@@ -2,6 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockChat = vi.hoisted(() => vi.fn());
 const mockChatStream = vi.hoisted(() => vi.fn());
+const mockHasUserAiAnalysisConsent = vi.hoisted(() => vi.fn());
+const mockIsWorkspaceMember = vi.hoisted(() => vi.fn());
+
+vi.mock('@repo/db', () => ({
+	hasUserAiAnalysisConsent: mockHasUserAiAnalysisConsent,
+	isWorkspaceMember: mockIsWorkspaceMember,
+}));
 
 vi.mock('../../ai/chat', () => ({
 	chat: mockChat,
@@ -16,9 +23,11 @@ process.env.WORKER_INTERNAL_SECRET = 'test-secret';
 
 const SECRET = 'test-secret';
 const WRONG_SECRET = 'bad-secret';
+const USER = '8cb49fc0-1ef8-4bbb-8b9a-300a6a2f0466';
 const WS = 'b33d11fe-e592-434a-9457-c5aa9774795e';
 
 const VALID_BODY = {
+	userId: USER,
 	workspaceId: WS,
 	messages: [{ role: 'user', content: 'Hello' }],
 	envelope: {
@@ -48,6 +57,8 @@ function parseSSE(text: string): Array<{ event: string; data: string; id?: strin
 describe('POST /chat (non-streaming fallback)', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockIsWorkspaceMember.mockResolvedValue(true);
+		mockHasUserAiAnalysisConsent.mockResolvedValue(true);
 	});
 
 	it('returns 401 when X-Internal-Secret is missing', async () => {
@@ -93,6 +104,8 @@ describe('POST /chat (non-streaming fallback)', () => {
 describe('POST /chat/stream', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockIsWorkspaceMember.mockResolvedValue(true);
+		mockHasUserAiAnalysisConsent.mockResolvedValue(true);
 	});
 
 	it('returns 401 when X-Internal-Secret is missing', async () => {
@@ -129,6 +142,22 @@ describe('POST /chat/stream', () => {
 			body: JSON.stringify({ messages: [] }),
 		});
 		expect(res.status).toBe(400);
+	});
+
+	it('returns 403 when AI consent is not persisted', async () => {
+		mockHasUserAiAnalysisConsent.mockResolvedValue(false);
+		const { chatRoutes } = await import('../../routes/chat');
+		const res = await chatRoutes.request('/stream', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'X-Internal-Secret': SECRET,
+			},
+			body: JSON.stringify(VALID_BODY),
+		});
+
+		expect(res.status).toBe(403);
+		expect(mockChatStream).not.toHaveBeenCalled();
 	});
 
 	it('streams SSE events from chatStream callbacks', async () => {

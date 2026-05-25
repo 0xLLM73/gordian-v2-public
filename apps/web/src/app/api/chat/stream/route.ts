@@ -5,6 +5,18 @@ import { getUserWorkspaceId, getWorkspaceEnvelope } from '@/lib/workspace';
 import { headers } from 'next/headers';
 import { NextResponse } from 'next/server';
 
+async function safeWorkerChatError(response: Response): Promise<string> {
+	try {
+		const body = (await response.json()) as { error?: unknown };
+		if (typeof body.error === 'string' && body.error.includes('AI analysis consent')) {
+			return body.error;
+		}
+	} catch {
+		// Keep the generic service error when the worker does not return JSON.
+	}
+	return 'Chat service unavailable';
+}
+
 export async function POST(request: Request) {
 	const session = await auth.api.getSession({ headers: await headers() });
 	if (!session?.user) {
@@ -51,6 +63,7 @@ export async function POST(request: Request) {
 				'X-Internal-Secret': getInternalSecret(),
 			},
 			body: JSON.stringify({
+				userId: session.user.id,
 				workspaceId,
 				messages: body.messages,
 				envelope: {
@@ -67,7 +80,7 @@ export async function POST(request: Request) {
 
 	if (!workerResponse.ok) {
 		return NextResponse.json(
-			{ error: 'Chat service unavailable' },
+			{ error: await safeWorkerChatError(workerResponse) },
 			{ status: workerResponse.status },
 		);
 	}
