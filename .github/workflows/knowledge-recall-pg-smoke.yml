@@ -60,7 +60,7 @@ jobs:
       KG_RECALL_PG_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gordian_recall_test
       NODE_ENV: test
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061 # v4
         with:
           version: 9.15.4
