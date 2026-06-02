@@ -64,6 +64,7 @@ describe('invites DAL', () => {
 		vi.clearAllMocks();
 		mockWhere.mockReturnValue({ limit: mockLimit, returning: mockReturning });
 		mockLimit.mockResolvedValue([]);
+		mockReturning.mockResolvedValue([{ id: SAFE_INVITE.id }]);
 	});
 
 	describe('acceptInvite', () => {
@@ -128,6 +129,17 @@ describe('invites DAL', () => {
 				userId: 'user-2',
 				role: SAFE_INVITE.role,
 			});
+		});
+
+		it('throws if another transaction consumed the invite before update', async () => {
+			mockLimit.mockResolvedValueOnce([SAFE_INVITE]);
+			mockReturning.mockResolvedValueOnce([]);
+
+			const { acceptInvite } = await import('../dal/invites');
+			await expect(acceptInvite('tok-abc', 'user-2')).rejects.toThrow(
+				'Invite not found or already used',
+			);
+			expect(mockInsertValues).not.toHaveBeenCalled();
 		});
 	});
 

@@ -39,7 +39,13 @@ vi.mock('@anthropic-ai/sdk', () => ({
 	},
 }));
 
-const MESSAGES = [{ role: 'user', content: 'Test message', timestamp: '2026-01-01T00:00:00Z' }];
+const MESSAGES = [
+	{
+		role: 'contact',
+		content: 'Can you send the report tomorrow?',
+		timestamp: '2026-01-01T00:00:00Z',
+	},
+];
 const REF_TIME = '2026-01-01T00:00:00Z';
 
 function makeCandidate(title: string, confidence: number) {
@@ -86,6 +92,32 @@ describe('P7 — Sonnet removal + confidence routing', () => {
 		expect(mockInferWithCache).not.toHaveBeenCalled();
 		// Haiku Pass 1 should be called
 		expect(mockHaikuCreate).toHaveBeenCalledTimes(1);
+	});
+
+	it('masks structured PII before sending transcripts to Haiku', async () => {
+		mockHaikuCreate.mockResolvedValue({ content: [] });
+
+		const { extractCommitmentsWithBandit } = await import('../commitment-extraction');
+		await extractCommitmentsWithBandit(
+			[
+				{
+					role: 'contact',
+					content: 'Can you send alice@example.com the report tomorrow and call +1-555-123-4567?',
+					timestamp: '2026-01-01T00:00:00Z',
+				},
+			],
+			REF_TIME,
+			'user-1',
+			'workspace-1',
+			{ workspaceSalt: Buffer.from('workspace-salt') },
+		);
+
+		const callArgs = mockHaikuCreate.mock.calls[0][0];
+		const userMessage = callArgs.messages[0].content;
+		expect(userMessage).not.toContain('alice@example.com');
+		expect(userMessage).not.toContain('+1-555-123-4567');
+		expect(userMessage).toContain('EMAIL_');
+		expect(userMessage).toContain('PHONE_');
 	});
 
 	it('confidence >= 0.95 auto-confirmed (in commitments)', async () => {

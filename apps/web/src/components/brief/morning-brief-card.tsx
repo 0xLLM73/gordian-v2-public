@@ -21,7 +21,14 @@ export function MorningBriefCard({ brief }: MorningBriefCardProps) {
 				<div className="flex items-center justify-between">
 					<h2 className="font-semibold text-foreground">Morning Brief</h2>
 				</div>
-				<p className="mt-4 text-sm text-muted-foreground">No brief yet — check back tomorrow.</p>
+				<div className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-3">
+					<p className="text-sm font-medium text-foreground">No morning brief generated yet.</p>
+					<ul className="mt-2 space-y-1 text-sm text-muted-foreground">
+						<li>Enable the brief schedule in Settings.</li>
+						<li>Sync or import enough conversation data for a useful summary.</li>
+						<li>Keep the local worker running at the scheduled brief time.</li>
+					</ul>
+				</div>
 			</div>
 		);
 	}

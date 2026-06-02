@@ -11,6 +11,15 @@ import {
 /** Minimum shared-contact co-occurrences to create a related_to link. */
 const MIN_CO_OCCURRENCE = 2;
 
+export interface KnowledgeInferenceResult {
+	workspaceId: string;
+	nodesProcessed: number;
+	coOccurrenceLinks: number;
+	similarityLinks: number;
+	totalLinks: number;
+	skippedReason?: 'feature_flag_off' | 'too_few_nodes';
+}
+
 // ─── Core inference pipeline ──────────────────────────────────────────────────
 
 /**
@@ -29,17 +38,37 @@ const MIN_CO_OCCURRENCE = 2;
  * Both paths are per-error resilient — one failed link does not abort the run.
  * Feature-flag gated: `knowledge_links` must be enabled for the workspace.
  */
-export async function runKnowledgeInference(workspaceId: string): Promise<void> {
-	const enabled = await isFeatureEnabled('knowledge_links', workspaceId);
+export async function runKnowledgeInference(
+	workspaceId: string,
+	options: { requireFeatureFlag?: boolean } = {},
+): Promise<KnowledgeInferenceResult> {
+	const requireFeatureFlag = options.requireFeatureFlag ?? true;
+	const enabled = requireFeatureFlag
+		? await isFeatureEnabled('knowledge_links', workspaceId)
+		: true;
 	if (!enabled) {
 		console.log('[knowledge-inference] Feature flag off — skipping');
-		return;
+		return {
+			workspaceId,
+			nodesProcessed: 0,
+			coOccurrenceLinks: 0,
+			similarityLinks: 0,
+			totalLinks: 0,
+			skippedReason: 'feature_flag_off',
+		};
 	}
 
 	const nodes = await listKnowledgeNodes(workspaceId, { limit: 5000 });
 	if (nodes.length < 2) {
 		console.log(`[knowledge-inference] Too few nodes (${nodes.length}) — skipping`);
-		return;
+		return {
+			workspaceId,
+			nodesProcessed: nodes.length,
+			coOccurrenceLinks: 0,
+			similarityLinks: 0,
+			totalLinks: 0,
+			skippedReason: 'too_few_nodes',
+		};
 	}
 
 	console.log(
@@ -99,7 +128,18 @@ export async function runKnowledgeInference(workspaceId: string): Promise<void> 
 			if (weight < 0.05) continue;
 
 			try {
-				await createKnowledgeLink(workspaceId, aId, bId, 'related_to', weight);
+				await createKnowledgeLink(workspaceId, aId, bId, 'related_to', weight, {
+					evidenceKind: 'contact_cooccurrence',
+					confidence: weight,
+					metadata: {
+						source: 'knowledge_inference',
+						method: 'shared_contact_jaccard',
+						sharedContactCount: count,
+						contactsA: contactsA.length,
+						contactsB: contactsB.length,
+						unionSize,
+					},
+				});
 				coLinks++;
 			} catch (err) {
 				console.error('[knowledge-inference] Co-occurrence link failed:', (err as Error).message);
@@ -121,4 +161,11 @@ export async function runKnowledgeInference(workspaceId: string): Promise<void> 
 	console.log(
 		`[knowledge-inference] Done for workspace=${workspaceId.slice(0, 8)}: ${coLinks + simLinks} total links`,
 	);
+	return {
+		workspaceId,
+		nodesProcessed: nodes.length,
+		coOccurrenceLinks: coLinks,
+		similarityLinks: simLinks,
+		totalLinks: coLinks + simLinks,
+	};
 }

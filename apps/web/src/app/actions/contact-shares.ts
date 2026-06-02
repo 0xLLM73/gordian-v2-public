@@ -2,6 +2,7 @@
 
 import { workspaceAction } from '@/lib/safe-action';
 import {
+	canManageContact,
 	getUserTelegramAccountIds as dalGetAccounts,
 	getContactShares as dalGetShares,
 	shareContact as dalShare,
@@ -17,6 +18,13 @@ export const shareContactAction = workspaceAction
 		}),
 	)
 	.action(async ({ parsedInput, ctx }) => {
+		const allowed = await canManageContact(
+			ctx.workspaceId,
+			ctx.session.user.id,
+			parsedInput.contactId,
+		);
+		if (!allowed) throw new Error('Not found');
+
 		return dalShare(
 			ctx.workspaceId,
 			parsedInput.contactId,
@@ -33,6 +41,13 @@ export const unshareContactAction = workspaceAction
 		}),
 	)
 	.action(async ({ parsedInput, ctx }) => {
+		const allowed = await canManageContact(
+			ctx.workspaceId,
+			ctx.session.user.id,
+			parsedInput.contactId,
+		);
+		if (!allowed) throw new Error('Not found');
+
 		await dalUnshare(ctx.workspaceId, parsedInput.contactId, parsedInput.targetUserId);
 		return { success: true };
 	});
@@ -44,6 +59,13 @@ export const getContactSharesAction = workspaceAction
 		}),
 	)
 	.action(async ({ parsedInput, ctx }) => {
+		const allowed = await canManageContact(
+			ctx.workspaceId,
+			ctx.session.user.id,
+			parsedInput.contactId,
+		);
+		if (!allowed) throw new Error('Not found');
+
 		return dalGetShares(ctx.workspaceId, parsedInput.contactId);
 	});
 

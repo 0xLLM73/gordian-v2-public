@@ -75,11 +75,13 @@ vi.mock('@repo/crypto', () => ({
 }));
 
 vi.mock('bullmq', () => ({
-	Worker: vi.fn(function MockWorker(_name: string, processor: unknown) {
+	// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
+	Worker: vi.fn(function (_name: string, processor: unknown) {
 		if (_name === 'briefs') processorStore.fn = processor as (job: unknown) => Promise<unknown>;
 		return { on: vi.fn() };
 	}),
-	Queue: vi.fn(function MockQueue() {
+	// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
+	Queue: vi.fn(function () {
 		return { add: vi.fn(() => Promise.resolve()), on: vi.fn() };
 	}),
 }));

@@ -1,11 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockUpdateCommitmentStatus = vi.fn();
 const mockGetActiveCommitments = vi.fn();
+const mockSnoozeCommitment = vi.fn();
 
 vi.mock('@repo/db', () => ({
 	updateCommitmentStatus: mockUpdateCommitmentStatus,
 	getActiveCommitments: mockGetActiveCommitments,
+	snoozeCommitment: mockSnoozeCommitment,
 }));
 
 // Mock grammY Composer to capture the handler directly (bypasses filter checks)
@@ -47,6 +49,10 @@ describe('callbacksComposer', () => {
 		vi.clearAllMocks();
 	});
 
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
 	it('fulfill:{id} marks commitment completed and removes markup', async () => {
 		mockUpdateCommitmentStatus.mockResolvedValue({ id: 'commit-1' });
 
@@ -83,7 +89,11 @@ describe('callbacksComposer', () => {
 		expect(ctx.editMessageReplyMarkup).toHaveBeenCalledWith({ reply_markup: undefined });
 	});
 
-	it('snooze:{id} answers with snooze message and removes markup', async () => {
+	it('snooze:{id} persists snoozedUntil and removes markup', async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-05-14T12:00:00.000Z'));
+		mockSnoozeCommitment.mockResolvedValue({ id: 'commit-3' });
+
 		const ctx = createMockCtx('snooze:commit-3', 'ws-1');
 		const next = vi.fn();
 
@@ -94,6 +104,11 @@ describe('callbacksComposer', () => {
 		) => Promise<void>;
 		await handler(ctx, next);
 
+		expect(mockSnoozeCommitment).toHaveBeenCalledWith(
+			'ws-1',
+			'commit-3',
+			new Date('2026-05-15T12:00:00.000Z'),
+		);
 		expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
 			text: 'Snoozed. Will remind you later.',
 		});

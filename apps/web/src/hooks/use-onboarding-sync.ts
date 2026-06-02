@@ -33,7 +33,7 @@ export interface StaleContact {
 	messageCount: number;
 }
 
-const POLL_INTERVAL_MS = 3000;
+const POLL_INTERVAL_MS = 8000;
 
 function getSupabaseRealtimeConfig() {
 	const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';

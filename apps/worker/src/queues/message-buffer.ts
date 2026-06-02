@@ -1,4 +1,6 @@
+import { redactSensitive } from '@repo/shared';
 import type { CommitmentSensitivity } from '../ai/confidence-thresholds';
+import type { PipelineMessage } from './ai-flow';
 import { scheduleAIPipeline } from './ai-flow';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -14,12 +16,6 @@ const MAX_BUFFER_AGE_MS = 120_000; // 2 minutes
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface BufferedMessage {
-	role: string;
-	content: string;
-	timestamp: string;
-}
-
 interface BufferEntry {
 	userId: string;
 	workspaceId: string;
@@ -31,7 +27,8 @@ interface BufferEntry {
 	};
 	workspaceSalt?: string;
 	commitmentSensitivity?: CommitmentSensitivity;
-	messages: BufferedMessage[];
+	sourceAccountId?: string;
+	messages: PipelineMessage[];
 	timer: ReturnType<typeof setTimeout>;
 	createdAt: number;
 }
@@ -67,10 +64,11 @@ export function bufferMessage(
 	userId: string,
 	contactId: string,
 	workspaceId: string,
-	messages: BufferedMessage[],
+	messages: PipelineMessage[],
 	keyEnvelope?: BufferEntry['keyEnvelope'],
 	workspaceSalt?: string,
 	commitmentSensitivity?: CommitmentSensitivity,
+	sourceAccountId?: string,
 ): void {
 	const key = `${contactId}:${workspaceId}`;
 	const existing = buffers.get(key);
@@ -81,6 +79,7 @@ export function bufferMessage(
 		existing.keyEnvelope = keyEnvelope ?? existing.keyEnvelope;
 		existing.workspaceSalt = workspaceSalt ?? existing.workspaceSalt;
 		existing.commitmentSensitivity = commitmentSensitivity ?? existing.commitmentSensitivity;
+		existing.sourceAccountId = sourceAccountId ?? existing.sourceAccountId;
 
 		clearTimeout(existing.timer);
 
@@ -106,6 +105,7 @@ export function bufferMessage(
 		keyEnvelope,
 		workspaceSalt,
 		commitmentSensitivity,
+		sourceAccountId,
 		messages: [...messages],
 		timer: setTimeout(() => flushBuffer(key), BUFFER_WINDOW_MS),
 		createdAt: Date.now(),
@@ -141,6 +141,7 @@ async function flushBuffer(key: string): Promise<void> {
 			entry.messages,
 			entry.workspaceSalt,
 			entry.commitmentSensitivity,
+			entry.sourceAccountId,
 		);
 		console.log(
 			`[message-buffer] Flushed ${entry.messages.length} messages for contact=${entry.contactId.slice(0, 8)}`,
@@ -148,7 +149,7 @@ async function flushBuffer(key: string): Promise<void> {
 	} catch (err) {
 		console.error(
 			`[message-buffer] Failed to flush buffer for contact=${entry.contactId.slice(0, 8)}:`,
-			(err as Error).message,
+			redactSensitive(err),
 		);
 		// Messages are NOT lost — they exist in Telegram and will be re-synced
 	}

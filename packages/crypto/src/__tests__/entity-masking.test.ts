@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { maskEntities } from '../entity-masking';
+import { generatePersonPseudonym, maskContactAliases, maskEntities } from '../entity-masking';
 import type { DetectedEntity } from '../types';
 
 const salt = Buffer.from('test-workspace-salt-for-entity-masking');
@@ -28,8 +28,9 @@ describe('maskEntities', () => {
 		const result1 = maskEntities('Alice said hello', salt, entities);
 		const result2 = maskEntities('Alice said goodbye', salt, entities);
 
-		const alice1 = result1.entityMap.find((e) => e.original === 'Alice')!;
-		const alice2 = result2.entityMap.find((e) => e.original === 'Alice')!;
+		const alice1 = result1.entityMap.find((e) => e.original === 'Alice');
+		const alice2 = result2.entityMap.find((e) => e.original === 'Alice');
+		if (!alice1 || !alice2) throw new Error('Alice entity was not masked');
 		expect(alice1.pseudonym).toBe(alice2.pseudonym);
 	});
 
@@ -142,5 +143,99 @@ describe('maskEntities', () => {
 		expect(result.maskedText).toContain(' and ');
 		expect(result.maskedText).toContain(' went to ');
 		expect(result.maskedText).toContain(' HQ');
+	});
+});
+
+describe('contact-aware masking', () => {
+	it('masks full names with contact-id pseudonyms', () => {
+		const result = maskContactAliases('Alice Johnson introduced Bob.', salt, [
+			{ contactId: 'contact-alice', fullName: 'Alice Johnson' },
+		]);
+		const pseudonym = generatePersonPseudonym('contact-alice', salt);
+
+		expect(result.maskedText).toBe(`${pseudonym} introduced Bob.`);
+		expect(result.maskedText).not.toContain('Alice Johnson');
+		expect(result.aliasMap).toEqual([
+			{
+				alias: 'Alice Johnson',
+				matchedText: 'Alice Johnson',
+				contactId: 'contact-alice',
+				pseudonym,
+				kind: 'fullName',
+			},
+		]);
+	});
+
+	it('masks @username and username variants', () => {
+		const result = maskContactAliases('Ping @alicej and alicej today.', salt, [
+			{ contactId: 'contact-alice', username: 'alicej' },
+		]);
+		const pseudonym = generatePersonPseudonym('contact-alice', salt);
+
+		expect(result.maskedText).toBe(`Ping ${pseudonym} and ${pseudonym} today.`);
+		expect(result.aliasMap.map((entry) => entry.matchedText)).toEqual(['@alicej', 'alicej']);
+		expect(new Set(result.aliasMap.map((entry) => entry.pseudonym))).toEqual(new Set([pseudonym]));
+	});
+
+	it('prefers longest non-overlapping contact spans', () => {
+		const result = maskContactAliases(
+			'Alice Johnson said hi.',
+			salt,
+			[{ contactId: 'contact-alice', firstName: 'Alice', lastName: 'Johnson' }],
+			{ maskFirstNames: true, maskLastNames: true },
+		);
+		const pseudonym = generatePersonPseudonym('contact-alice', salt);
+
+		expect(result.maskedText).toBe(`${pseudonym} said hi.`);
+		expect(result.aliasMap).toHaveLength(1);
+		expect(result.aliasMap[0].kind).toBe('fullName');
+	});
+
+	it('does not mask partial words', () => {
+		const result = maskContactAliases(
+			'Annual planning with Ann and McAnn.',
+			salt,
+			[{ contactId: 'contact-ann', firstName: 'Ann' }],
+			{ maskFirstNames: true },
+		);
+		const pseudonym = generatePersonPseudonym('contact-ann', salt);
+
+		expect(result.maskedText).toBe(`Annual planning with ${pseudonym} and McAnn.`);
+	});
+
+	it('derives stable aliases from contact id, not raw alias text', () => {
+		const alice = maskContactAliases(
+			'Alice replied.',
+			salt,
+			[{ contactId: 'stable-contact-id', firstName: 'Alice' }],
+			{ maskFirstNames: true },
+		);
+		const alicia = maskContactAliases(
+			'Alicia replied.',
+			salt,
+			[{ contactId: 'stable-contact-id', firstName: 'Alicia' }],
+			{ maskFirstNames: true },
+		);
+		const otherAlice = maskContactAliases(
+			'Alice replied.',
+			salt,
+			[{ contactId: 'other-contact-id', firstName: 'Alice' }],
+			{ maskFirstNames: true },
+		);
+
+		expect(alice.aliasMap[0].pseudonym).toBe(alicia.aliasMap[0].pseudonym);
+		expect(alice.aliasMap[0].pseudonym).not.toBe(otherAlice.aliasMap[0].pseudonym);
+	});
+
+	it('combines contact masking with structured PII masking', () => {
+		const result = maskContactAliases('Email Alice Johnson at alice@example.com.', salt, [
+			{ contactId: 'contact-alice', fullName: 'Alice Johnson', username: 'alice' },
+		]);
+
+		expect(result.maskedText).toContain('PERSON_');
+		expect(result.maskedText).toContain('EMAIL_');
+		expect(result.maskedText).not.toContain('Alice Johnson');
+		expect(result.maskedText).not.toContain('alice@example.com');
+		expect(result.entityMap.map((entry) => entry.type)).toEqual(['PERSON', 'EMAIL']);
 	});
 });

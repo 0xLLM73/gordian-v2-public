@@ -76,6 +76,7 @@ pnpm install --frozen-lockfile
 pnpm demo:setup
 pnpm demo:smoke
 pnpm audit:open-source
+pnpm audit
 pnpm audit --prod
 pnpm lint
 pnpm typecheck
@@ -91,5 +92,5 @@ pnpm purge:secrets -- --dry-run
 To purge a restored old runtime:
 
 ```bash
-DATABASE_URL="postgres://..." DRAGONFLY_URL="redis://..." pnpm purge:secrets -- --confirm
+DATABASE_URL="postgres://..." DRAGONFLY_URL="redis://..." ALLOW_NONLOCAL_RUNTIME_PURGE=true pnpm purge:secrets -- --confirm
 ```

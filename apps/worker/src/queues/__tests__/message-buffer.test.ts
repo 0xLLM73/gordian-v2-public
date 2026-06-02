@@ -46,6 +46,7 @@ describe('message-buffer', () => {
 			[MSG, MSG],
 			undefined, // workspaceSalt
 			undefined, // commitmentSensitivity
+			undefined, // sourceAccountId
 		);
 	});
 

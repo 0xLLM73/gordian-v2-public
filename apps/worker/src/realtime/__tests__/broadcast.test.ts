@@ -42,4 +42,31 @@ describe('broadcastContactUpdate (SEC-027)', () => {
 		};
 		expect(call.payload).toEqual({ id: expect.any(String) });
 	});
+
+	it('no-ops without Supabase config in local mode', async () => {
+		vi.unstubAllEnvs();
+		vi.stubEnv('NODE_ENV', 'development');
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const { broadcastSyncComplete } = await import('../broadcast');
+
+		await expect(
+			broadcastSyncComplete('ws-1', { newMessages: 0, newContacts: 0 }),
+		).resolves.toBeUndefined();
+
+		expect(mockSend).not.toHaveBeenCalled();
+		expect(warn).toHaveBeenCalledWith(
+			'[realtime] Supabase Realtime is not configured; broadcasts disabled locally.',
+		);
+		warn.mockRestore();
+	});
+
+	it('fails closed without Supabase config in hosted production', async () => {
+		vi.unstubAllEnvs();
+		vi.stubEnv('NODE_ENV', 'production');
+		const { broadcastSyncComplete } = await import('../broadcast');
+
+		await expect(broadcastSyncComplete('ws-1', { newMessages: 0, newContacts: 0 })).rejects.toThrow(
+			/SUPABASE_URL and SUPABASE_SERVICE_KEY/,
+		);
+	});
 });

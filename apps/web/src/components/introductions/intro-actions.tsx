@@ -12,6 +12,7 @@ import {
 	AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
+import { Archive, Check, X } from 'lucide-react';
 import { useAction } from 'next-safe-action/hooks';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
@@ -23,8 +24,8 @@ const NEXT_STATUS: Record<string, string> = {
 };
 
 const NEXT_LABELS: Record<string, string> = {
-	triage: 'Activate',
-	active: 'Archive',
+	triage: 'Approve',
+	active: 'Complete',
 };
 
 export function IntroActions({
@@ -47,6 +48,7 @@ export function IntroActions({
 	if (status === 'archive') return null;
 
 	const nextStatus = NEXT_STATUS[status];
+	const nextResolution = status === 'active' ? 'completed' : undefined;
 
 	return (
 		<>
@@ -59,11 +61,17 @@ export function IntroActions({
 							execute({
 								introductionId,
 								status: nextStatus as 'triage' | 'active' | 'archive',
+								resolution: nextResolution,
 							})
 						}
 						disabled={isExecuting}
 						className="text-blue-700 hover:bg-blue-50"
 					>
+						{status === 'triage' ? (
+							<Check className="h-3.5 w-3.5" />
+						) : (
+							<Archive className="h-3.5 w-3.5" />
+						)}
 						{NEXT_LABELS[status] || 'Advance'}
 					</Button>
 				) : null}
@@ -74,6 +82,7 @@ export function IntroActions({
 					disabled={isExecuting}
 					className="text-muted-foreground hover:bg-accent"
 				>
+					<X className="h-3.5 w-3.5" />
 					Dismiss
 				</Button>
 			</div>
@@ -88,7 +97,11 @@ export function IntroActions({
 					</AlertDialogHeader>
 					<AlertDialogFooter>
 						<AlertDialogCancel>Cancel</AlertDialogCancel>
-						<AlertDialogAction onClick={() => execute({ introductionId, status: 'archive' })}>
+						<AlertDialogAction
+							onClick={() =>
+								execute({ introductionId, status: 'archive', resolution: 'dismissed' })
+							}
+						>
 							Dismiss
 						</AlertDialogAction>
 					</AlertDialogFooter>

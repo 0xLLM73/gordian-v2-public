@@ -1,0 +1,73 @@
+name: Knowledge Recall Postgres Smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/knowledge-recall-pg-smoke.yml'
+      - 'apps/web/src/app/actions/knowledge.ts'
+      - 'packages/db/drizzle/**'
+      - 'packages/db/src/__tests__/fixtures/knowledge-recall-*'
+      - 'packages/db/src/__tests__/knowledge-recall-*.test.ts'
+      - 'packages/db/src/dal/knowledge.ts'
+      - 'packages/db/src/dal/memories.ts'
+      - 'packages/db/src/dal/messages.ts'
+      - 'packages/db/src/schema/knowledge.ts'
+      - 'packages/db/src/schema/memories.ts'
+      - 'packages/db/src/schema/messages.ts'
+      - 'scripts/knowledge-recall-pg-smoke.ts'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/knowledge-recall-pg-smoke.yml'
+      - 'apps/web/src/app/actions/knowledge.ts'
+      - 'packages/db/drizzle/**'
+      - 'packages/db/src/__tests__/fixtures/knowledge-recall-*'
+      - 'packages/db/src/__tests__/knowledge-recall-*.test.ts'
+      - 'packages/db/src/dal/knowledge.ts'
+      - 'packages/db/src/dal/memories.ts'
+      - 'packages/db/src/dal/messages.ts'
+      - 'packages/db/src/schema/knowledge.ts'
+      - 'packages/db/src/schema/memories.ts'
+      - 'packages/db/src/schema/messages.ts'
+      - 'scripts/knowledge-recall-pg-smoke.ts'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+
+jobs:
+  postgres-smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.2-pg16-trixie
+        env:
+          POSTGRES_DB: gordian_recall_test
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d gordian_recall_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gordian_recall_test
+      DEV_KMS_BYPASS: 'true'
+      KG_RECALL_PG_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gordian_recall_test
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061 # v4
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate
+      - run: pnpm kg:recall:pg:smoke

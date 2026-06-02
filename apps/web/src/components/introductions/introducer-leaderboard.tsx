@@ -27,7 +27,7 @@ export async function IntroducerLeaderboard({ workspaceId }: IntroducerLeaderboa
 
 	return (
 		<div className="rounded-lg border border-border p-4">
-			<h3 className="mb-3 text-sm font-semibold text-foreground">Top Introducers</h3>
+			<h3 className="mb-3 text-sm font-semibold text-foreground">Top Active Introducers</h3>
 			<div className="space-y-2">
 				{leaderboard.map((entry, i) => (
 					<div

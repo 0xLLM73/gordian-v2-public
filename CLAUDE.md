@@ -20,6 +20,7 @@ notes and may contain stale infrastructure guidance.
 ## Commands
 
 - `pnpm install --frozen-lockfile` - install dependencies.
+- `pnpm setup:local` - create `.env.local` with random local-only internal secrets.
 - `pnpm demo:setup` - start local Postgres/Redis, migrate, and seed synthetic data.
 - `pnpm demo:smoke` - run the local demo Playwright smoke test.
 - `pnpm lint` - run Biome checks.
@@ -45,6 +46,7 @@ notes and may contain stale infrastructure guidance.
   or production-like deployments.
 - Do not embed raw PII for semantic search. Use entity masking before embedding.
 - Redis/Dragonfly should not run in eviction/cache mode when it backs BullMQ.
+- Local demo/setup commands should touch only loopback Postgres/Redis unless an explicit nonlocal override is set.
 
 ## Current Docs
 

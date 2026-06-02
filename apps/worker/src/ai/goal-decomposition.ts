@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { assertAiProcessingEnabled, getHeliconeApiKey } from '@repo/shared';
 
 const HAIKU_MODEL = 'claude-haiku-4-5-20251001';
 
@@ -166,13 +167,17 @@ const DECOMPOSITION_KERNEL = `You are a personal chief of staff for a VC/crypto 
  * All input must be ELM-masked before calling this function.
  */
 export async function decomposeGoal(context: DecompositionContext): Promise<DecompositionResult> {
+	assertAiProcessingEnabled('Claude goal decomposition');
+	const heliconeApiKey = getHeliconeApiKey();
 	const client = new Anthropic({
-		defaultHeaders: {
-			'Helicone-Auth': `Bearer ${process.env.HELICONE_API_KEY}`,
-			'Helicone-Property-Feature': 'goal-decomposition',
-			'Helicone-Property-Goal-Type': context.goalType,
-		},
-		baseURL: process.env.HELICONE_API_KEY ? 'https://anthropic.helicone.ai/v1' : undefined,
+		defaultHeaders: heliconeApiKey
+			? {
+					'Helicone-Auth': `Bearer ${heliconeApiKey}`,
+					'Helicone-Property-Feature': 'goal-decomposition',
+					'Helicone-Property-Goal-Type': context.goalType,
+				}
+			: undefined,
+		baseURL: heliconeApiKey ? 'https://anthropic.helicone.ai/v1' : undefined,
 	});
 
 	// Build structured context for the prompt

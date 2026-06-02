@@ -1,8 +1,11 @@
+import { hasUserAiAnalysisConsent } from '@repo/db';
 import { Hono } from 'hono';
 import { validateInternalSecret } from '../middleware/auth';
 import { digestQueue } from '../queues/digest';
 
 export const digest = new Hono();
+
+const TERMINAL_DIGEST_JOB_STATES = new Set(['completed', 'failed']);
 
 /**
  * POST /digest/generate — Enqueue a digest generation job.
@@ -24,8 +27,22 @@ digest.post('/generate', async (c) => {
 		return c.json({ error: 'Missing required fields' }, 400);
 	}
 
+	if (!(await hasUserAiAnalysisConsent(body.userId, body.workspaceId))) {
+		return c.json({ error: 'AI analysis consent is required.' }, 403);
+	}
+
 	// Deduplicate: same user + period = same jobId
 	const jobId = `digest-${body.userId}-${body.period}`;
+	const existingJob = await digestQueue.getJob(jobId);
+
+	if (existingJob) {
+		const state = await existingJob.getState();
+		if (TERMINAL_DIGEST_JOB_STATES.has(state)) {
+			await existingJob.remove();
+		} else {
+			return c.json({ queued: true, jobId, existing: true, state });
+		}
+	}
 
 	await digestQueue.add(
 		'generate-digest',
@@ -37,5 +54,5 @@ digest.post('/generate', async (c) => {
 		{ jobId, priority: 1 },
 	);
 
-	return c.json({ queued: true });
+	return c.json({ queued: true, jobId });
 });

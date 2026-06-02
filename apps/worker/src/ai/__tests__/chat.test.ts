@@ -8,6 +8,7 @@ const mockGetDealsByContact = vi.hoisted(() => vi.fn());
 const mockListDeals = vi.hoisted(() => vi.fn());
 const mockHybridSearch = vi.hoisted(() => vi.fn());
 const mockGenerateEmbedding = vi.hoisted(() => vi.fn());
+const fetchMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../cached-inference', () => ({
 	inferWithCache: mockInferWithCache,
@@ -44,8 +45,28 @@ const toolUseResponse = (toolName: string, toolId: string, input: Record<string,
 	content: [{ type: 'tool_use', id: toolId, name: toolName, input }],
 });
 
+const localModelResponse = (payload: Record<string, unknown>) => ({
+	ok: true,
+	json: () =>
+		Promise.resolve({
+			message: {
+				content: JSON.stringify(payload),
+			},
+		}),
+	text: () => Promise.resolve(''),
+});
+
+function enableLocalQwenChat() {
+	vi.stubEnv('CHAT_LLM_PROVIDER', 'local');
+	vi.stubEnv('CHAT_LLM_BASE_URL', 'http://localhost:11434/v1');
+	vi.stubEnv('CHAT_LLM_MODEL', 'qwen3:4b-instruct');
+}
+
 describe('chat', () => {
 	beforeEach(() => {
+		vi.unstubAllEnvs();
+		vi.stubEnv('COMMITMENT_LLM_PROVIDER', 'cloud');
+		vi.stubGlobal('fetch', fetchMock);
 		vi.clearAllMocks();
 	});
 
@@ -74,6 +95,72 @@ describe('chat', () => {
 		expect(result.toolsUsed).toContain('search_contacts');
 		expect(mockInferWithCache).toHaveBeenCalledTimes(2);
 		expect(mockSearchContactByName).toHaveBeenCalledWith('ws-1', 'Alice', fakeEnvelope);
+	});
+
+	it('routes local Qwen chat through Ollama tools without calling cloud inference', async () => {
+		enableLocalQwenChat();
+		mockSearchContactByName.mockResolvedValue([{ id: 'c-1', firstName: 'Alice' }]);
+		fetchMock
+			.mockResolvedValueOnce(
+				localModelResponse({
+					type: 'tool_use',
+					tools: [{ id: 'tool_1', name: 'search_contacts', input: { name: 'Alice' } }],
+				}),
+			)
+			.mockResolvedValueOnce(
+				localModelResponse({
+					type: 'answer',
+					response: 'I found Alice in your contacts.',
+				}),
+			);
+
+		const result = await chat('ws-1', fakeEnvelope, [{ role: 'user', content: 'Find Alice' }]);
+
+		expect(result.response).toBe('I found Alice in your contacts.');
+		expect(result.toolsUsed).toEqual(['search_contacts']);
+		expect(mockInferWithCache).not.toHaveBeenCalled();
+		expect(mockSearchContactByName).toHaveBeenCalledWith('ws-1', 'Alice', fakeEnvelope);
+		expect(fetchMock).toHaveBeenCalledWith(
+			'http://localhost:11434/api/chat',
+			expect.objectContaining({
+				headers: expect.not.objectContaining({
+					Authorization: expect.any(String),
+				}),
+			}),
+		);
+
+		const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as {
+			model: string;
+			stream: boolean;
+			think: boolean;
+			format: { properties: Record<string, unknown> };
+			options: { temperature: number; num_predict: number };
+		};
+		expect(body.model).toBe('qwen3:4b-instruct');
+		expect(body.stream).toBe(false);
+		expect(body.think).toBe(false);
+		expect(body.format.properties).toHaveProperty('tools');
+		expect(body.options.temperature).toBe(0.2);
+		expect(body.options.num_predict).toBeGreaterThan(0);
+	});
+
+	it('preserves local chat fallback from commitment Qwen config', async () => {
+		vi.stubEnv('COMMITMENT_LLM_PROVIDER', 'local');
+		vi.stubEnv('COMMITMENT_LLM_BASE_URL', 'http://localhost:11434/v1');
+		vi.stubEnv('COMMITMENT_LLM_MODEL', 'qwen3.5:9b');
+		fetchMock.mockResolvedValueOnce(
+			localModelResponse({
+				type: 'answer',
+				response: 'Commitment fallback is local chat.',
+			}),
+		);
+
+		const result = await chat('ws-1', fakeEnvelope, [{ role: 'user', content: 'Hi' }]);
+
+		expect(result.response).toBe('Commitment fallback is local chat.');
+		expect(mockInferWithCache).not.toHaveBeenCalled();
+		const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as { model: string };
+		expect(body.model).toBe('qwen3.5:9b');
 	});
 
 	it('returns fallback message when max iterations (5) are reached', async () => {

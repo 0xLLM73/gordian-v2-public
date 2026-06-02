@@ -150,6 +150,11 @@ describe('recordExtractionFeedback', () => {
 
 		// 1 golden for the verified + 1 golden for the false positive's parent
 		expect(mockCreateGoldenExample).toHaveBeenCalledTimes(2);
+		expect(mockCreateGoldenExample).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				correctedOutput: { no_commitment: true },
+			}),
+		);
 
 		// 1 correction diff for the false positive
 		expect(mockCreateCorrectionDiff).toHaveBeenCalledTimes(1);

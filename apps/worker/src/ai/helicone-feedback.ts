@@ -5,12 +5,14 @@
  * Non-fatal: silently no-ops if HELICONE_API_KEY is not set,
  * and catches/logs errors without throwing.
  */
+import { getHeliconeApiKey } from '@repo/shared';
+
 export async function sendHeliconeFeedback(
 	heliconeRequestId: string,
 	rating: boolean,
 	comment?: string,
 ): Promise<void> {
-	const apiKey = process.env.HELICONE_API_KEY;
+	const apiKey = getHeliconeApiKey();
 	if (!apiKey) return;
 
 	try {

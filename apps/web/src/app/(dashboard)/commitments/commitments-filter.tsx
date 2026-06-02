@@ -1,14 +1,13 @@
 'use client';
 
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-
-const statuses = ['all', 'active', 'draft', 'snoozed', 'completed', 'dismissed'] as const;
+import { COMMITMENT_STATUS_FILTERS, normalizeCommitmentStatusFilter } from './status-filter';
 
 export function CommitmentsFilter({ workspaceId: _workspaceId }: { workspaceId: string }) {
 	const router = useRouter();
 	const pathname = usePathname();
 	const searchParams = useSearchParams();
-	const currentStatus = searchParams.get('status') || 'all';
+	const currentStatus = normalizeCommitmentStatusFilter(searchParams.get('status') ?? undefined);
 
 	function handleFilter(status: string) {
 		const params = new URLSearchParams(searchParams.toString());
@@ -22,7 +21,7 @@ export function CommitmentsFilter({ workspaceId: _workspaceId }: { workspaceId: 
 
 	return (
 		<div className="flex gap-2">
-			{statuses.map((status) => (
+			{COMMITMENT_STATUS_FILTERS.map((status) => (
 				<button
 					key={status}
 					type="button"

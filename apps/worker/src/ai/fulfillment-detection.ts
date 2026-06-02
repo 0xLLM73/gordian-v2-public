@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { Tool } from '@anthropic-ai/sdk/resources/messages';
 import { maskEntities } from '@repo/crypto';
+import { assertAiProcessingEnabled, getHeliconeApiKey } from '@repo/shared';
 import { selectPromptVariant } from './bandit';
 import { getHeliconeHeaders } from './cached-inference';
 import { prefilterEntities } from './prefilter';
@@ -14,11 +15,10 @@ import { prefilterEntities } from './prefilter';
 let _anthropic: Anthropic | null = null;
 function getAnthropicClient(): Anthropic {
 	if (!_anthropic) {
+		const heliconeApiKey = getHeliconeApiKey();
 		_anthropic = new Anthropic({
-			baseURL: process.env.HELICONE_API_KEY ? 'https://anthropic.helicone.ai' : undefined,
-			defaultHeaders: process.env.HELICONE_API_KEY
-				? { 'Helicone-Auth': `Bearer ${process.env.HELICONE_API_KEY}` }
-				: undefined,
+			baseURL: heliconeApiKey ? 'https://anthropic.helicone.ai' : undefined,
+			defaultHeaders: heliconeApiKey ? { 'Helicone-Auth': `Bearer ${heliconeApiKey}` } : undefined,
 		});
 	}
 	return _anthropic;
@@ -142,6 +142,7 @@ Check each commitment against the messages and report any that have been fulfill
 		feature: 'fulfillment-detection',
 		banditArm: variant,
 	});
+	assertAiProcessingEnabled('Claude fulfillment detection');
 
 	const response = await getAnthropicClient().messages.create(
 		{

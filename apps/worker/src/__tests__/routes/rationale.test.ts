@@ -13,7 +13,8 @@ vi.mock('../../redis', () => ({ connection: {} }));
 
 vi.mock('bullmq', () => ({
 	Queue: vi.fn(),
-	Worker: vi.fn(function MockWorker() {
+	// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
+	Worker: vi.fn().mockImplementation(function () {
 		return { on: vi.fn() };
 	}),
 }));

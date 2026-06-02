@@ -1,14 +1,46 @@
-import { beforeAll, describe, expect, it } from 'vitest';
-import { decryptSessionKek, generateSessionKek } from '../kms';
+import { beforeEach, describe, expect, it } from 'vitest';
+import {
+	assertSafeTelegramSessionKeyProviderForMtProto,
+	decryptSessionKek,
+	generateSessionKek,
+	getTelegramSessionKeyProvider,
+} from '../kms';
 
 // All tests run with DEV_KMS_BYPASS=true.
 // In bypass mode: generateSessionKek returns a random key; ciphertextBlob IS the key.
-beforeAll(() => {
+beforeEach(() => {
 	process.env.DEV_KMS_BYPASS = 'true';
+	Reflect.deleteProperty(process.env, 'TELEGRAM_SESSION_KEY_PROVIDER');
 	// Ensure production guard doesn't fire
 	Reflect.deleteProperty(process.env, 'FLY_APP_NAME');
 	Reflect.deleteProperty(process.env, 'COOLIFY_URL');
 	process.env.NODE_ENV = 'test';
+});
+
+describe('Telegram session key provider config', () => {
+	it('uses dev-insecure only when the local KMS bypass is enabled', () => {
+		expect(getTelegramSessionKeyProvider()).toBe('dev-insecure');
+	});
+
+	it('uses an explicit OS keychain provider when configured', () => {
+		process.env.TELEGRAM_SESSION_KEY_PROVIDER = 'os-keychain';
+		expect(getTelegramSessionKeyProvider()).toBe('os-keychain');
+	});
+
+	it('rejects dev-insecure for MTProto startup', () => {
+		expect(() => assertSafeTelegramSessionKeyProviderForMtProto()).toThrow(/dev-insecure/);
+	});
+
+	it('rejects unknown provider names', () => {
+		process.env.TELEGRAM_SESSION_KEY_PROVIDER = 'plaintext';
+		expect(() => getTelegramSessionKeyProvider()).toThrow(/Invalid TELEGRAM_SESSION_KEY_PROVIDER/);
+	});
+
+	it('requires DEV_KMS_BYPASS for explicit dev-insecure session KEKs', async () => {
+		process.env.TELEGRAM_SESSION_KEY_PROVIDER = 'dev-insecure';
+		process.env.DEV_KMS_BYPASS = 'false';
+		await expect(generateSessionKek('user-no-bypass')).rejects.toThrow(/DEV_KMS_BYPASS=true/);
+	});
 });
 
 describe('generateSessionKek', () => {

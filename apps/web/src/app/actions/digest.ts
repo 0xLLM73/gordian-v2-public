@@ -1,7 +1,7 @@
 'use server';
 
 import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
-import { getLatestDigest, listDigests } from '@repo/db';
+import { getCalibration, getLatestDigest, listDigests } from '@repo/db';
 import { z } from 'zod';
 
 export const getLatestDigestAction = workspaceAction
@@ -31,6 +31,12 @@ export const generateDigestAction = workspaceAction
 		}),
 	)
 	.action(async ({ parsedInput, ctx }) => {
+		if (!ctx.envelope) throw new Error('Workspace encryption key not found');
+		const calibration = await getCalibration(ctx.session.user.id, ctx.workspaceId, ctx.envelope);
+		if (calibration?.consentAiAnalysis !== true) {
+			throw new Error('AI analysis consent is required');
+		}
+
 		const workerUrl = process.env.WORKER_URL;
 		if (!workerUrl) throw new Error('WORKER_URL is not configured');
 		const response = await fetch(`${workerUrl}/digest/generate`, {

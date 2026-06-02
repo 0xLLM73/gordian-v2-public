@@ -38,6 +38,8 @@ const mockUnifiedSearch = vi.fn(() =>
 		deals: [] as Array<Record<string, unknown>>,
 	}),
 );
+const mockFetch = vi.fn();
+vi.stubGlobal('fetch', mockFetch);
 
 vi.mock('@repo/db', () => ({
 	withWorkspaceRLS: vi.fn((_wsId: string, fn: (tx: unknown) => unknown) => fn({})),
@@ -45,9 +47,28 @@ vi.mock('@repo/db', () => ({
 	trackBehavior: vi.fn().mockResolvedValue(null),
 }));
 
+vi.mock('@repo/crypto', () => ({
+	unwrapWrk: vi.fn(() => Promise.resolve(Buffer.from('workspace-key'))),
+	deriveKeys: vi.fn(() => Promise.resolve({ bik: Buffer.from('blind-index-key') })),
+	prefilterEntities: vi.fn(() => [
+		{ text: 'alice@example.com', type: 'EMAIL', start: 15, end: 32 },
+	]),
+	maskEntities: vi.fn((text: string) => ({
+		maskedText: text.replace('alice@example.com', '[EMAIL_1]'),
+	})),
+}));
+
 describe('search actions', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.stubEnv('NODE_ENV', 'test');
+		vi.stubEnv('AI_PROCESSING_ENABLED', 'false');
+		vi.stubEnv('AI_SEARCH_EMBEDDINGS_ENABLED', 'false');
+		vi.stubEnv('KNOWLEDGE_EMBEDDING_PROVIDER', 'openai');
+		vi.stubEnv('KNOWLEDGE_EMBEDDING_BASE_URL', '');
+		vi.stubEnv('KNOWLEDGE_EMBEDDING_MODEL', '');
+		vi.stubEnv('WORKER_URL', 'http://localhost:3001');
+		vi.stubEnv('WORKER_INTERNAL_SECRET', 'test-secret');
 	});
 
 	describe('searchAction', () => {
@@ -110,6 +131,93 @@ describe('search actions', () => {
 			expect(result?.data?.memories).toHaveLength(1);
 			expect(result?.data?.commitments).toHaveLength(1);
 			expect(result?.data?.deals).toHaveLength(1);
+		});
+
+		it('does not embed long queries unless semantic search egress is explicitly enabled', async () => {
+			const { searchAction } = await import('@/app/actions/search');
+			await searchAction({
+				query: 'meeting notes about project',
+			});
+
+			expect(mockFetch).not.toHaveBeenCalled();
+			expect(mockUnifiedSearch).toHaveBeenCalledWith(
+				WORKSPACE_ID,
+				expect.any(String),
+				expect.any(Object),
+				null,
+			);
+		});
+
+		it('requires the global AI egress gate for cloud search embeddings', async () => {
+			vi.stubEnv('NODE_ENV', 'development');
+			vi.stubEnv('AI_PROCESSING_ENABLED', 'false');
+			vi.stubEnv('AI_SEARCH_EMBEDDINGS_ENABLED', 'true');
+
+			const { searchAction } = await import('@/app/actions/search');
+			await searchAction({
+				query: 'meeting notes about project',
+			});
+
+			expect(mockFetch).not.toHaveBeenCalled();
+			expect(mockUnifiedSearch).toHaveBeenCalledWith(
+				WORKSPACE_ID,
+				expect.any(String),
+				expect.any(Object),
+				null,
+			);
+		});
+
+		it('allows local search embeddings without enabling vendor egress', async () => {
+			vi.stubEnv('NODE_ENV', 'development');
+			vi.stubEnv('AI_PROCESSING_ENABLED', 'false');
+			vi.stubEnv('AI_SEARCH_EMBEDDINGS_ENABLED', 'true');
+			vi.stubEnv('KNOWLEDGE_EMBEDDING_PROVIDER', 'local');
+			vi.stubEnv('KNOWLEDGE_EMBEDDING_PRESET', 'qwen');
+			vi.stubEnv('KNOWLEDGE_EMBEDDING_MODEL', 'qwen3-embedding:0.6b');
+			vi.stubEnv('KNOWLEDGE_EMBEDDING_BASE_URL', 'http://localhost:11434/v1');
+			mockFetch.mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ embedding: [0.1, 0.2, 0.3] }),
+			});
+
+			const { searchAction } = await import('@/app/actions/search');
+			await searchAction({
+				query: 'follow up with alice@example.com about the deal',
+			});
+
+			expect(mockFetch).toHaveBeenCalledOnce();
+			const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+			expect(body.text).toContain('[EMAIL_1]');
+			expect(mockUnifiedSearch).toHaveBeenCalledWith(
+				WORKSPACE_ID,
+				'follow up with alice@example.com about the deal',
+				expect.any(Object),
+				[0.1, 0.2, 0.3],
+			);
+		});
+
+		it('masks long search queries before embedding when semantic search egress is enabled', async () => {
+			vi.stubEnv('AI_PROCESSING_ENABLED', 'true');
+			vi.stubEnv('AI_SEARCH_EMBEDDINGS_ENABLED', 'true');
+			mockFetch.mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ embedding: [0.1, 0.2, 0.3] }),
+			});
+
+			const { searchAction } = await import('@/app/actions/search');
+			await searchAction({
+				query: 'follow up with alice@example.com about the deal',
+			});
+
+			const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+			expect(body.text).toContain('[EMAIL_1]');
+			expect(body.text).not.toContain('alice@example.com');
+			expect(mockUnifiedSearch).toHaveBeenCalledWith(
+				WORKSPACE_ID,
+				'follow up with alice@example.com about the deal',
+				expect.any(Object),
+				[0.1, 0.2, 0.3],
+			);
 		});
 	});
 });

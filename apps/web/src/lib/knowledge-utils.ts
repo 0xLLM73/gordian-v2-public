@@ -30,11 +30,13 @@ export function computeDecayedRelevance(
 	}
 
 	const lastSeen = typeof lastSeenAt === 'string' ? new Date(lastSeenAt) : lastSeenAt;
-	const daysSinceSeen = Math.max(0, (Date.now() - lastSeen.getTime()) / MS_PER_DAY);
+	const now = new Date();
+	const stableTodayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+	const daysSinceSeen = Math.max(0, (stableTodayUtc - lastSeen.getTime()) / MS_PER_DAY);
 	const decayFactor = Math.exp(-LAMBDA * daysSinceSeen);
 
-	const relevanceScore = mentionCount * decayFactor;
-	const opacity = Math.max(0.3, Math.min(1.0, decayFactor));
+	const relevanceScore = Math.round(mentionCount * decayFactor * 1000) / 1000;
+	const opacity = Math.round(Math.max(0.3, Math.min(1.0, decayFactor)) * 1000) / 1000;
 
 	return { relevanceScore, opacity };
 }

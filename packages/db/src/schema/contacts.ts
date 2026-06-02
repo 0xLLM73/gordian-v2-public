@@ -15,12 +15,14 @@ export const contacts = pgTable(
 		// Encrypted fields
 		firstName: encryptedText('first_name'),
 		lastName: encryptedText('last_name'),
+		username: encryptedText('username'),
 		phone: encryptedText('phone'),
 		email: encryptedText('email'),
 		notes: encryptedText('notes'),
 		// Blind indexes for search (HMAC-SHA256, 64-bit truncated, Base64)
 		firstNameBidx: blindIndex('first_name_bidx'),
 		lastNameBidx: blindIndex('last_name_bidx'),
+		usernameBidx: blindIndex('username_bidx'),
 		phoneBidx: blindIndex('phone_bidx'),
 		emailBidx: blindIndex('email_bidx'),
 		// Inline recency (Feature 6) — maintained during sync, not via 24h cron
@@ -36,6 +38,7 @@ export const contacts = pgTable(
 		index('contacts_source_account_idx').on(table.workspaceId, table.sourceAccountId),
 		index('contacts_first_name_bidx_idx').on(table.firstNameBidx),
 		index('contacts_last_name_bidx_idx').on(table.lastNameBidx),
+		index('contacts_username_bidx_idx').on(table.usernameBidx),
 		index('contacts_phone_bidx_idx').on(table.phoneBidx),
 		index('contacts_email_bidx_idx').on(table.emailBidx),
 	],

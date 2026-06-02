@@ -36,7 +36,8 @@ vi.mock('grammy', () => {
 	>();
 	let filterCount = 0;
 	return {
-		Composer: vi.fn(function MockComposer() {
+		// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
+		Composer: vi.fn().mockImplementation(function () {
 			return {
 				command: vi.fn((name: string, handler: (ctx: unknown) => Promise<void>) => {
 					handlers.set(name, handler);

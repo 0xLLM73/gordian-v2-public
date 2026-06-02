@@ -1,4 +1,100 @@
 export {
+	TELEGRAM_CONSENT_VERSION,
+	TELEGRAM_SYNC_SCOPES,
+	DEFAULT_TELEGRAM_SYNC_SCOPE,
+	isTelegramSyncScope,
+	resolveTelegramSyncScope,
+} from './telegram-safety';
+export type { TelegramSyncScope } from './telegram-safety';
+
+export {
+	ALLOW_NONLOCAL_AI_ENDPOINTS_ENV,
+	DEFAULT_LOCAL_AI_BASE_URL,
+	DEFAULT_LOCAL_EMBEDDING_MODEL,
+	DEFAULT_LOCAL_LLM_MODEL,
+	DEFAULT_OPENAI_BASE_URL,
+	DEFAULT_OPENAI_EMBEDDING_MODEL,
+	assertTrustedLocalAiBaseUrl,
+	formatKnowledgeEmbeddingInput,
+	getKnowledgeEmbeddingConfiguredFingerprint,
+	getKnowledgeEmbeddingFingerprint,
+	getKnowledgeEmbeddingFingerprintWarning,
+	getKnowledgeEmbeddingRuntime,
+	getKnowledgeLlmRuntime,
+	isKnowledgeLlmEnabled,
+	KNOWLEDGE_EMBEDDING_DIMENSIONS,
+	KNOWLEDGE_EMBEDDING_FORMAT_VERSION,
+	knowledgeEmbeddingFingerprintKey,
+	knowledgeEmbeddingRuntimeFingerprint,
+	openAICompatibleUrl,
+	QWEN_KNOWLEDGE_QUERY_INSTRUCTION,
+} from './knowledge-ai';
+export type {
+	EnvLike,
+	KnowledgeEmbeddingFingerprint,
+	KnowledgeEmbeddingMode,
+	KnowledgeEmbeddingProvider,
+	KnowledgeEmbeddingPurpose,
+	KnowledgeEmbeddingPreset,
+	KnowledgeEmbeddingRuntime,
+	KnowledgeLlmMode,
+	KnowledgeLlmProvider,
+	KnowledgeLlmRuntime,
+} from './knowledge-ai';
+
+export {
+	DEFAULT_LOCAL_COMMITMENT_LLM_BASE_URL,
+	DEFAULT_LOCAL_COMMITMENT_LLM_MODEL,
+	canRunLocalCommitmentExtraction,
+	getCommitmentLlmRuntime,
+} from './commitment-ai';
+export type {
+	CommitmentLlmApi,
+	CommitmentLlmMode,
+	CommitmentLlmProvider,
+	CommitmentLlmRuntime,
+} from './commitment-ai';
+
+export {
+	DEFAULT_LOCAL_CHAT_LLM_BASE_URL,
+	DEFAULT_LOCAL_CHAT_LLM_MODEL,
+	canRunLocalDigest,
+	canRunLocalChat,
+	getChatLlmRuntime,
+	getDigestLlmRuntime,
+} from './chat-ai';
+export type {
+	ChatLlmApi,
+	ChatLlmConfigSource,
+	ChatLlmMode,
+	ChatLlmProvider,
+	ChatLlmRuntime,
+	DigestLlmApi,
+	DigestLlmConfigSource,
+	DigestLlmMode,
+	DigestLlmProvider,
+	DigestLlmRuntime,
+} from './chat-ai';
+
+export {
+	assertAiProcessingEnabled,
+	canRunCommitmentExtraction,
+	canRunEmbeddingGeneration,
+	canRunCloudCommitmentIntelligence,
+	canRunCloudRationaleExtraction,
+	canRunLocalEmbeddingGeneration,
+	getHeliconeApiKey,
+	isAiAnalysisAvailable,
+	isAiProcessingEnabled,
+	isHeliconeEnabled,
+	isLocalOnlyMode,
+	isVendorAiEgressEnabled,
+} from './ai-privacy';
+
+export { redactErrorMessage, redactSensitive, redactText } from './redaction';
+export type { RedactOptions } from './redaction';
+
+export {
 	memoryCategorySchema,
 	commitmentTypeSchema,
 	commitmentStatusSchema,

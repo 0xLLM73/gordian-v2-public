@@ -46,9 +46,11 @@ const mockGetMessagesByContact = vi.fn(() =>
 		},
 	]),
 );
+const mockCanAccessContact = vi.fn(() => Promise.resolve(true));
 
 vi.mock('@repo/db', () => ({
 	withWorkspaceRLS: vi.fn((_wsId: string, fn: (tx: unknown) => unknown) => fn({})),
+	canAccessContact: mockCanAccessContact,
 	getMessagesByContact: mockGetMessagesByContact,
 }));
 
@@ -66,12 +68,29 @@ describe('message actions', () => {
 			});
 
 			expect(result?.data).toBeDefined();
+			expect(mockCanAccessContact).toHaveBeenCalledWith(
+				WORKSPACE_ID,
+				'user-1',
+				'550e8400-e29b-41d4-a716-446655440001',
+			);
 			expect(mockGetMessagesByContact).toHaveBeenCalledWith(
 				WORKSPACE_ID,
 				'550e8400-e29b-41d4-a716-446655440001',
 				expect.any(Object),
 				{ limit: 50, offset: 0 },
 			);
+		});
+
+		it('denies messages for inaccessible contacts', async () => {
+			const { getMessagesByContactAction } = await import('@/app/actions/messages');
+			mockCanAccessContact.mockResolvedValueOnce(false);
+
+			const result = await getMessagesByContactAction({
+				contactId: '550e8400-e29b-41d4-a716-446655440001',
+			});
+
+			expect(result?.serverError).toBe('Not found');
+			expect(mockGetMessagesByContact).not.toHaveBeenCalled();
 		});
 
 		it('passes custom limit and offset for pagination', async () => {

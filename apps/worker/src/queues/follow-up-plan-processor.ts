@@ -11,6 +11,14 @@ import {
 
 const FOLLOW_UP_PLAN_CHECK_INTERVAL = 60 * 60 * 1000; // 1 hour
 
+function replaceKnownContactAliases(text: string, aliases: string[], replacement: string): string {
+	return aliases.reduce((current, alias) => {
+		const escaped = alias.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+		if (!escaped) return current;
+		return current.replace(new RegExp(`\\b${escaped}\\b`, 'gi'), replacement);
+	}, text);
+}
+
 /**
  * Fetch the workspace encryption envelope and owner ID from the database.
  */
@@ -55,7 +63,11 @@ export async function processFollowUpPlanSteps(): Promise<void> {
 
 		const { generateDraftWithBandit } = await import('../ai/draft-generation');
 		const { buildVoiceModifier } = await import('../ai/voice-modifier');
-		const { getLatestSummary, getVoiceProfile, getContactStyleOverride } = await import('@repo/db');
+		const { deriveKeys, generatePersonPseudonym, maskEntities, prefilterEntities, unwrapWrk } =
+			await import('@repo/crypto');
+		const { getContact, getLatestSummary, getVoiceProfile, getContactStyleOverride } = await import(
+			'@repo/db'
+		);
 
 		for (const { step, cadence } of readySteps) {
 			try {
@@ -68,22 +80,45 @@ export async function processFollowUpPlanSteps(): Promise<void> {
 					continue;
 				}
 				const { envelope, ownerId } = workspaceData;
+				const wrk = await unwrapWrk(envelope);
+				const keys = await deriveKeys(wrk, cadence.workspaceId, envelope.wrkVersion);
+				const contactPseudonym = generatePersonPseudonym(cadence.contactId, keys.bik);
 
 				// Re-query encrypted plan/step data using per-workspace envelope
-				const [decryptedPlan, decryptedSteps] = await Promise.all([
+				const [decryptedPlan, decryptedSteps, contact] = await Promise.all([
 					getFollowUpPlan(cadence.workspaceId, cadence.id, envelope),
 					getFollowUpPlanSteps(cadence.workspaceId, cadence.id, envelope),
+					getContact(cadence.workspaceId, cadence.contactId, envelope),
 				]);
 				const decryptedStep = decryptedSteps.find((s) => s.id === step.id);
 				const planTitle = decryptedPlan?.title ?? '';
 				const stepPrompt = decryptedStep?.prompt ?? '';
+				const contactName = contact
+					? [contact.firstName, contact.lastName].filter(Boolean).join(' ')
+					: '';
+				const contactAliases = [
+					contactName,
+					contact?.firstName,
+					contact?.lastName,
+					(contact as Record<string, unknown> | null | undefined)?.username,
+				].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+				const maskDraftContext = (value: string) =>
+					replaceKnownContactAliases(
+						maskEntities(value, keys.bik, prefilterEntities(value)).maskedText,
+						contactAliases,
+						contactPseudonym,
+					);
 
 				// Get contact summary for context
 				const summary = await getLatestSummary(cadence.workspaceId, cadence.contactId, envelope);
-				const contactSummary = summary?.summary ?? 'No summary available';
+				const contactSummary = summary?.summary
+					? `Contact: ${contactPseudonym}\n${maskDraftContext(summary.summary)}`
+					: `Contact: ${contactPseudonym}\nNo summary available`;
 
 				// Build context from step prompt + plan config
-				const context = `Follow-up Plan: ${planTitle}\nStep ${step.stepNumber}/${cadence.totalSteps}\nInstructions: ${stepPrompt}`;
+				const context = maskDraftContext(
+					`Follow-up Plan: ${planTitle}\nStep ${step.stepNumber}/${cadence.totalSteps}\nInstructions: ${stepPrompt}`,
+				);
 
 				// Build voice modifier for personalized draft tone
 				let voiceModifier: string | undefined;

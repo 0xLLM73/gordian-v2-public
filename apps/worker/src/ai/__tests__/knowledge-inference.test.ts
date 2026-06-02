@@ -29,13 +29,41 @@ describe('runKnowledgeInference', () => {
 
 	it('skips when feature flag is off', async () => {
 		mockIsFeatureEnabled.mockResolvedValue(false);
-		await runKnowledgeInference(WS);
+		const result = await runKnowledgeInference(WS);
+		expect(result).toEqual({
+			workspaceId: WS,
+			nodesProcessed: 0,
+			coOccurrenceLinks: 0,
+			similarityLinks: 0,
+			totalLinks: 0,
+			skippedReason: 'feature_flag_off',
+		});
 		expect(mockListKnowledgeNodes).not.toHaveBeenCalled();
+	});
+
+	it('can bypass the feature flag for explicit admin-triggered local inference', async () => {
+		mockIsFeatureEnabled.mockResolvedValue(false);
+		mockListKnowledgeNodes.mockResolvedValue([{ id: 'n1' }, { id: 'n2' }]);
+		mockInferSimilarityLinks.mockResolvedValue(1);
+
+		const result = await runKnowledgeInference(WS, { requireFeatureFlag: false });
+
+		expect(mockIsFeatureEnabled).not.toHaveBeenCalled();
+		expect(mockListKnowledgeNodes).toHaveBeenCalledWith(WS, { limit: 5000 });
+		expect(result).toEqual({
+			workspaceId: WS,
+			nodesProcessed: 2,
+			coOccurrenceLinks: 0,
+			similarityLinks: 1,
+			totalLinks: 1,
+		});
 	});
 
 	it('skips when fewer than 2 nodes', async () => {
 		mockListKnowledgeNodes.mockResolvedValue([{ id: 'n1' }]);
-		await runKnowledgeInference(WS);
+		const result = await runKnowledgeInference(WS);
+		expect(result.skippedReason).toBe('too_few_nodes');
+		expect(result.nodesProcessed).toBe(1);
 		expect(mockInferSimilarityLinks).not.toHaveBeenCalled();
 	});
 
@@ -76,6 +104,14 @@ describe('runKnowledgeInference', () => {
 			expect.any(String),
 			'related_to',
 			0.5,
+			expect.objectContaining({
+				evidenceKind: 'contact_cooccurrence',
+				confidence: 0.5,
+				metadata: expect.objectContaining({
+					method: 'shared_contact_jaccard',
+					sharedContactCount: 2,
+				}),
+			}),
 		);
 	});
 

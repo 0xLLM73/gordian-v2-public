@@ -1,6 +1,6 @@
 import { computeBlindIndex, getCurrentKeys, withKeys } from '@repo/crypto';
 import type { SealedEnvelope } from '@repo/crypto';
-import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { db } from '../client';
 import { accounts } from '../schema/auth';
 import { contactShares } from '../schema/contact-shares';
@@ -9,6 +9,7 @@ import { contacts } from '../schema/contacts';
 export interface CreateContactInput {
 	firstName?: string;
 	lastName?: string;
+	username?: string;
 	phone?: string;
 	email?: string;
 	notes?: string;
@@ -19,9 +20,17 @@ export interface CreateContactInput {
 export interface UpdateContactInput {
 	firstName?: string;
 	lastName?: string;
+	username?: string;
 	phone?: string;
 	email?: string;
-	notes?: string;
+	notes?: string | null;
+}
+
+export interface ContactMaskingAlias {
+	id: string;
+	firstName: string | null;
+	lastName: string | null;
+	username: string | null;
 }
 
 export async function getContactsByIds(
@@ -49,6 +58,105 @@ export async function getContact(workspaceId: string, contactId: string, envelop
 			.limit(1);
 		return result[0] ?? null;
 	});
+}
+
+export async function canAccessContact(
+	workspaceId: string,
+	userId: string,
+	contactId: string,
+): Promise<boolean> {
+	const [contact] = await db
+		.select({ id: contacts.id, sourceAccountId: contacts.sourceAccountId })
+		.from(contacts)
+		.where(and(eq(contacts.id, contactId), eq(contacts.workspaceId, workspaceId)))
+		.limit(1);
+
+	if (!contact) return false;
+	if (!contact.sourceAccountId) return true;
+
+	const [ownedAccount] = await db
+		.select({ id: accounts.id })
+		.from(accounts)
+		.where(
+			and(
+				eq(accounts.userId, userId),
+				eq(accounts.providerId, 'telegram'),
+				eq(accounts.accountId, contact.sourceAccountId),
+			),
+		)
+		.limit(1);
+	if (ownedAccount) return true;
+
+	const [share] = await db
+		.select({ id: contactShares.id })
+		.from(contactShares)
+		.where(
+			and(
+				eq(contactShares.workspaceId, workspaceId),
+				eq(contactShares.contactId, contactId),
+				eq(contactShares.sharedWithUserId, userId),
+			),
+		)
+		.limit(1);
+
+	return !!share;
+}
+
+export async function canManageContact(
+	workspaceId: string,
+	userId: string,
+	contactId: string,
+): Promise<boolean> {
+	const [contact] = await db
+		.select({ id: contacts.id, sourceAccountId: contacts.sourceAccountId })
+		.from(contacts)
+		.where(and(eq(contacts.id, contactId), eq(contacts.workspaceId, workspaceId)))
+		.limit(1);
+
+	if (!contact) return false;
+	if (!contact.sourceAccountId) return true;
+
+	const [ownedAccount] = await db
+		.select({ id: accounts.id })
+		.from(accounts)
+		.where(
+			and(
+				eq(accounts.userId, userId),
+				eq(accounts.providerId, 'telegram'),
+				eq(accounts.accountId, contact.sourceAccountId),
+			),
+		)
+		.limit(1);
+
+	return !!ownedAccount;
+}
+
+export async function getAccessibleContact(
+	workspaceId: string,
+	userId: string,
+	contactId: string,
+	envelope: SealedEnvelope,
+) {
+	const allowed = await canAccessContact(workspaceId, userId, contactId);
+	if (!allowed) return null;
+	return getContact(workspaceId, contactId, envelope);
+}
+
+export async function getAccessibleContactTelegramId(
+	workspaceId: string,
+	userId: string,
+	contactId: string,
+): Promise<string | null> {
+	const allowed = await canAccessContact(workspaceId, userId, contactId);
+	if (!allowed) return null;
+
+	const [contact] = await db
+		.select({ telegramId: contacts.telegramId })
+		.from(contacts)
+		.where(and(eq(contacts.id, contactId), eq(contacts.workspaceId, workspaceId)))
+		.limit(1);
+
+	return contact?.telegramId ?? null;
 }
 
 export async function searchContactByName(
@@ -122,6 +230,22 @@ export async function searchContactByEmail(
 	});
 }
 
+export async function searchContactByUsername(
+	workspaceId: string,
+	username: string,
+	envelope: SealedEnvelope,
+) {
+	return withKeys(envelope, async () => {
+		const keys = getCurrentKeys();
+		const usernameHash = computeBlindIndex(username, keys.bik);
+
+		return await db
+			.select()
+			.from(contacts)
+			.where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.usernameBidx, usernameHash)));
+	});
+}
+
 export async function createContact(
 	workspaceId: string,
 	input: CreateContactInput,
@@ -136,12 +260,14 @@ export async function createContact(
 				sourceAccountId: input.sourceAccountId ?? null,
 				firstName: input.firstName,
 				lastName: input.lastName,
+				username: input.username,
 				phone: input.phone,
 				email: input.email,
 				notes: input.notes,
 				// Blind indexes — computed automatically by custom type
 				firstNameBidx: input.firstName,
 				lastNameBidx: input.lastName,
+				usernameBidx: input.username,
 				phoneBidx: input.phone,
 				emailBidx: input.email,
 			})
@@ -169,6 +295,10 @@ export async function updateContact(
 			updates.lastName = input.lastName;
 			updates.lastNameBidx = input.lastName;
 		}
+		if (input.username !== undefined) {
+			updates.username = input.username;
+			updates.usernameBidx = input.username;
+		}
 		if (input.phone !== undefined) {
 			updates.phone = input.phone;
 			updates.phoneBidx = input.phone;
@@ -193,7 +323,12 @@ export async function updateContact(
 export async function listContacts(
 	workspaceId: string,
 	envelope: SealedEnvelope,
-	options?: { limit?: number; offset?: number; sourceAccountId?: string },
+	options?: {
+		limit?: number;
+		offset?: number;
+		sourceAccountId?: string;
+		sourceAccountIds?: string[];
+	},
 ) {
 	const limit = options?.limit ?? 50;
 	const offset = options?.offset ?? 0;
@@ -202,10 +337,47 @@ export async function listContacts(
 		const conditions = [eq(contacts.workspaceId, workspaceId)];
 		if (options?.sourceAccountId) {
 			conditions.push(eq(contacts.sourceAccountId, options.sourceAccountId));
+		} else if (options?.sourceAccountIds?.length) {
+			conditions.push(inArray(contacts.sourceAccountId, options.sourceAccountIds));
 		}
 
 		return await db
 			.select()
+			.from(contacts)
+			.where(and(...conditions))
+			.limit(limit)
+			.offset(offset)
+			.orderBy(contacts.createdAt);
+	});
+}
+
+export async function listContactMaskingAliases(
+	workspaceId: string,
+	envelope: SealedEnvelope,
+	options?: { limit?: number; offset?: number; sourceAccountId?: string; includeLegacy?: boolean },
+): Promise<ContactMaskingAlias[]> {
+	const limit = options?.limit ?? 1000;
+	const offset = options?.offset ?? 0;
+
+	return withKeys(envelope, async () => {
+		const conditions = [eq(contacts.workspaceId, workspaceId)];
+		if (options?.sourceAccountId) {
+			const sourceFilter = options.includeLegacy
+				? or(
+						eq(contacts.sourceAccountId, options.sourceAccountId),
+						isNull(contacts.sourceAccountId),
+					)
+				: eq(contacts.sourceAccountId, options.sourceAccountId);
+			if (sourceFilter) conditions.push(sourceFilter);
+		}
+
+		return await db
+			.select({
+				id: contacts.id,
+				firstName: contacts.firstName,
+				lastName: contacts.lastName,
+				username: contacts.username,
+			})
 			.from(contacts)
 			.where(and(...conditions))
 			.limit(limit)
@@ -277,7 +449,8 @@ export async function getUserTelegramAccountIds(userId: string): Promise<string[
 	const result = await db
 		.select({ accountId: accounts.accountId })
 		.from(accounts)
-		.where(and(eq(accounts.userId, userId), eq(accounts.providerId, 'telegram')));
+		.where(and(eq(accounts.userId, userId), eq(accounts.providerId, 'telegram')))
+		.orderBy(asc(accounts.createdAt), asc(accounts.id));
 	return result.map((r) => r.accountId);
 }
 
@@ -337,12 +510,13 @@ export async function updateContactRecency(
 	newMessageCount: number,
 	latestMessageAt: Date,
 ) {
+	const latestMessageAtIso = latestMessageAt.toISOString();
 	await db
 		.update(contacts)
 		.set({
 			messageCount: sql`${contacts.messageCount} + ${newMessageCount}`,
-			lastMessageAt: sql`GREATEST(${contacts.lastMessageAt}, ${latestMessageAt})`,
-			updatedAt: new Date(),
+			lastMessageAt: sql`GREATEST(COALESCE(${contacts.lastMessageAt}, '-infinity'::timestamptz), ${latestMessageAtIso}::timestamptz)`,
+			updatedAt: sql`now()`,
 		})
 		.where(and(eq(contacts.id, contactId), eq(contacts.workspaceId, workspaceId)));
 }

@@ -30,6 +30,20 @@ describe('prefilterEntities', () => {
 		expect(entities[0].text).toBe('2.5 ETH');
 	});
 
+	it('detects Telegram handles as person identifiers', () => {
+		const entities = prefilterEntities('Ask @alice_dev about the intro');
+		expect(entities).toHaveLength(1);
+		expect(entities[0].type).toBe('PERSON');
+		expect(entities[0].text).toBe('@alice_dev');
+	});
+
+	it('detects wallet addresses as address identifiers', () => {
+		const entities = prefilterEntities('Send to 0x1111111111111111111111111111111111111111');
+		expect(entities).toHaveLength(1);
+		expect(entities[0].type).toBe('ADDRESS');
+		expect(entities[0].text).toBe('0x1111111111111111111111111111111111111111');
+	});
+
 	it('detects multiple entities in one text', () => {
 		const entities = prefilterEntities(
 			'Email alice@example.com or call +1-555-987-6543 about the $500 payment',

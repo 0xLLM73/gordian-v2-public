@@ -2,12 +2,13 @@
  * KG-4 — Batch API for Nightly Relationship Extraction
  *
  * Collects LLM relationship extraction requests during the nightly cron,
- * submits them as a single Anthropic Message Batch (50% cost discount),
+ * submits them as a single Anthropic Message Batch when cloud batch mode is active,
  * and routes results back to the correct workspace/contact.
  *
  * Security:
  * - SEC-073: Batch payloads contain ONLY ELM-masked text
  * - SEC-050: workspace_id preserved in custom_id for result routing
+ * - Local KG LLM mode bypasses Anthropic Batch and uses sync local calls
  * - Batch errors fall back to sync inferWithCache() per-workspace
  */
 
@@ -23,7 +24,17 @@ import {
 	searchKnowledgeNodes,
 	upsertExtractionLog,
 } from '@repo/db';
-import { generateEmbedding } from './embeddings';
+import {
+	assertAiProcessingEnabled,
+	getHeliconeApiKey,
+	getKnowledgeEmbeddingFingerprint,
+	getKnowledgeLlmRuntime,
+	knowledgeEmbeddingFingerprintKey,
+} from '@repo/shared';
+import { generateEmbeddingCached } from './embeddings';
+import type { KnowledgeExtractionMessage } from './knowledge-extraction';
+import { evidenceSourceSelectionMetadata, selectEvidenceMessage } from './knowledge-extraction';
+import { inferKnowledgeEntitiesJson, normalizeKnowledgeEntities } from './knowledge-llm';
 import { prefilterEntities } from './prefilter';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -32,6 +43,7 @@ interface BatchExtractionRequest {
 	workspaceId: string;
 	contactId: string;
 	maskedMessages: string[];
+	sourceMessages: NormalizedKnowledgeMessage[];
 	workspaceSalt: Buffer;
 	envelope: SealedEnvelope;
 }
@@ -39,6 +51,7 @@ interface BatchExtractionRequest {
 interface BatchResultEntry {
 	request: BatchExtractionRequest;
 	entities: ExtractedEntity[];
+	source?: string;
 }
 
 type KnowledgeNodeType = 'topic' | 'project' | 'organization' | 'technology' | 'sector' | 'concept';
@@ -58,6 +71,48 @@ interface ExtractedEntity {
 	description: string;
 	relationshipType: KnowledgeRelType;
 	confidence: number;
+	aliases?: string[];
+	sourceMention?: string;
+	mentionSpan?: string;
+	evidenceQuote?: string;
+}
+
+type KnowledgeExtractionInput = string | KnowledgeExtractionMessage;
+
+interface NormalizedKnowledgeMessage {
+	id?: string;
+	text: string;
+	occurredAt?: Date;
+}
+
+function normalizeKnowledgeMessages(
+	messages: KnowledgeExtractionInput[],
+): NormalizedKnowledgeMessage[] {
+	return messages
+		.map((message) => {
+			if (typeof message === 'string') return { text: message };
+			const occurredAt =
+				message.timestamp instanceof Date
+					? message.timestamp
+					: message.timestamp
+						? new Date(message.timestamp)
+						: undefined;
+			return {
+				id: message.id,
+				text: message.text,
+				occurredAt: occurredAt && !Number.isNaN(occurredAt.getTime()) ? occurredAt : undefined,
+			};
+		})
+		.filter((message) => message.text.length > 0);
+}
+
+function latestMessageHorizon(messages: NormalizedKnowledgeMessage[]): Date | undefined {
+	let latest: Date | undefined;
+	for (const message of messages) {
+		if (!message.occurredAt) continue;
+		if (!latest || message.occurredAt > latest) latest = message.occurredAt;
+	}
+	return latest;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -66,6 +121,7 @@ const HAIKU_MODEL = 'claude-haiku-4-5-20251001';
 const COSINE_DEDUP_THRESHOLD = 0.75;
 const BATCH_POLL_INTERVAL_MS = 10_000; // 10 seconds
 const BATCH_POLL_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes max wait
+const fingerprintWarnings = new Set<string>();
 
 const KNOWLEDGE_SYSTEM_PROMPT = `You are extracting structured knowledge entities from Telegram messages.
 Identify topics, projects, organizations, technologies, market sectors, and concepts
@@ -78,7 +134,21 @@ IMPORTANT naming rules:
 - Never add qualifiers like "ecosystem", "space", "industry", "community" unless they are part of the proper name.
 
 Only extract entities with clear evidence in the messages.
-Do not include personal names, phone numbers, Telegram usernames, or any contact-identifying information in entity names or descriptions.`;
+Do not include personal names, phone numbers, Telegram usernames, or any contact-identifying information in entity names or descriptions.
+When possible, include sourceMention as a short exact phrase from the message that supports the entity.`;
+
+const KNOWLEDGE_JSON_SYSTEM_PROMPT = `${KNOWLEDGE_SYSTEM_PROMPT}
+
+Respond with ONLY a JSON object containing an "entities" array. Each entity must have:
+- type: one of "topic", "project", "organization", "technology", "sector", "concept"
+- name: short canonical lowercase name for deduplication, e.g. "solana" or "defi"
+- displayName: original casing for display
+- description: 1-sentence description
+- relationshipType: one of "knows_about", "works_on", "member_of", "expert_in", "uses", "invested_in", "interested_in"
+- confidence: number from 0.0 to 1.0 based on evidence strength
+- sourceMention: optional exact short phrase from the source message that supports the entity
+
+Example: {"entities":[{"type":"technology","name":"solana","displayName":"Solana","description":"Layer 1 blockchain","relationshipType":"works_on","confidence":0.9,"sourceMention":"building on Solana"}]}`;
 
 const EXTRACT_TOOL = {
 	name: 'extract_knowledge_entities',
@@ -112,6 +182,7 @@ const EXTRACT_TOOL = {
 							],
 						},
 						confidence: { type: 'number' },
+						sourceMention: { type: 'string' },
 					},
 					required: [
 						'type',
@@ -128,16 +199,41 @@ const EXTRACT_TOOL = {
 	},
 };
 
+function currentEmbeddingMetadata(): Record<string, unknown> {
+	const embeddingFingerprint = getKnowledgeEmbeddingFingerprint(process.env);
+	return {
+		embeddingFingerprint,
+		embeddingFingerprintKey: knowledgeEmbeddingFingerprintKey(embeddingFingerprint),
+	};
+}
+
+function warnIfEmbeddingFingerprintChanged(
+	source: string,
+	node: { id: string; metadata?: Record<string, unknown> | null },
+): void {
+	const previous = node.metadata?.embeddingFingerprintKey;
+	if (typeof previous !== 'string') return;
+
+	const current = knowledgeEmbeddingFingerprintKey(getKnowledgeEmbeddingFingerprint(process.env));
+	if (previous === current) return;
+
+	const warningKey = `${source}:${previous}:${current}`;
+	if (fingerprintWarnings.has(warningKey)) return;
+	fingerprintWarnings.add(warningKey);
+	console.warn(
+		`[batch-relationship] Embedding fingerprint mismatch in ${source}: existing node ${node.id.slice(0, 8)} was embedded with "${previous}", active runtime is "${current}". Re-embed the knowledge graph before trusting semantic match quality.`,
+	);
+}
+
 // ─── Lazy Anthropic client ───────────────────────────────────────────────────
 
 let _client: Anthropic | null = null;
 function getClient(): Anthropic {
 	if (!_client) {
+		const heliconeApiKey = getHeliconeApiKey();
 		_client = new Anthropic({
-			baseURL: process.env.HELICONE_API_KEY ? 'https://anthropic.helicone.ai' : undefined,
-			defaultHeaders: process.env.HELICONE_API_KEY
-				? { 'Helicone-Auth': `Bearer ${process.env.HELICONE_API_KEY}` }
-				: undefined,
+			baseURL: heliconeApiKey ? 'https://anthropic.helicone.ai' : undefined,
+			defaultHeaders: heliconeApiKey ? { 'Helicone-Auth': `Bearer ${heliconeApiKey}` } : undefined,
 		});
 	}
 	return _client;
@@ -159,19 +255,21 @@ export class BatchRelationshipExtractor {
 	addRequest(
 		workspaceId: string,
 		contactId: string,
-		messages: string[],
+		messages: KnowledgeExtractionInput[],
 		workspaceSalt: Buffer,
 		envelope: SealedEnvelope,
 	): void {
-		const maskedMessages = messages.slice(-50).map((m) => {
-			const detected = prefilterEntities(m);
-			return maskEntities(m, workspaceSalt, detected).maskedText;
+		const sourceMessages = normalizeKnowledgeMessages(messages).slice(-50);
+		const maskedMessages = sourceMessages.map((m) => {
+			const detected = prefilterEntities(m.text);
+			return maskEntities(m.text, workspaceSalt, detected).maskedText;
 		});
 
 		this.requests.push({
 			workspaceId,
 			contactId,
 			maskedMessages,
+			sourceMessages,
 			workspaceSalt,
 			envelope,
 		});
@@ -195,6 +293,22 @@ export class BatchRelationshipExtractor {
 		const requests = [...this.requests];
 		this.requests = []; // Clear for reuse
 
+		const llmRuntime = getKnowledgeLlmRuntime(process.env);
+		if (llmRuntime.mode === 'disabled') {
+			for (const req of requests) {
+				await upsertExtractionLog(req.workspaceId, req.contactId, {
+					messageHorizon: latestMessageHorizon(req.sourceMessages),
+					entitiesExtracted: 0,
+					llmCalled: false,
+				});
+			}
+			return { totalLinked: 0, batchUsed: false };
+		}
+
+		if (llmRuntime.provider === 'local' || llmRuntime.provider === 'gemini') {
+			return this.fallbackSync(requests);
+		}
+
 		try {
 			const results = await this.submitBatch(requests);
 			let totalLinked = 0;
@@ -215,6 +329,7 @@ export class BatchRelationshipExtractor {
 	// ─── Private: Batch submission ─────────────────────────────────────────
 
 	private async submitBatch(requests: BatchExtractionRequest[]): Promise<BatchResultEntry[]> {
+		assertAiProcessingEnabled('Claude relationship batch extraction');
 		const client = getClient();
 
 		// Build batch request items
@@ -307,13 +422,9 @@ export class BatchRelationshipExtractor {
 			if (!toolUse || toolUse.type !== 'tool_use') continue;
 
 			const input = toolUse.input as { entities?: unknown };
-			if (!Array.isArray(input.entities)) continue;
+			const entities = normalizeKnowledgeEntities(input.entities);
 
-			const entities = (input.entities as ExtractedEntity[])
-				.filter((e) => typeof e.confidence === 'number' && e.confidence >= 0.7)
-				.slice(0, 10);
-
-			results.push({ request: req, entities });
+			results.push({ request: req, entities, source: 'anthropic_batch' });
 		}
 
 		return results;
@@ -328,6 +439,21 @@ export class BatchRelationshipExtractor {
 		for (const entity of entities) {
 			try {
 				const normalizedName = entity.name.toLowerCase();
+				const evidenceSelection = selectEvidenceMessage(entity, request.sourceMessages);
+				const evidenceMessage = evidenceSelection.message;
+				const evidence = {
+					messageId: evidenceMessage?.id,
+					snippet: evidenceMessage?.text.slice(0, 1000),
+					occurredAt: evidenceMessage?.occurredAt,
+					evidenceKind: 'llm_extracted' as const,
+					confidence: entity.confidence,
+					metadata: {
+						source: result.source ?? 'anthropic_batch',
+						entityType: entity.type,
+						sourceMessageSelection: evidenceSourceSelectionMetadata(evidenceSelection),
+					},
+					envelope: request.envelope,
+				};
 
 				// Cross-type dedup
 				const existingAnyType = await findNodeByNameAnyType(
@@ -343,6 +469,7 @@ export class BatchRelationshipExtractor {
 						request.contactId,
 						entity.relationshipType,
 						entity.confidence,
+						evidence,
 					);
 					linked++;
 					continue;
@@ -362,6 +489,7 @@ export class BatchRelationshipExtractor {
 						request.contactId,
 						entity.relationshipType,
 						entity.confidence,
+						evidence,
 					);
 					linked++;
 					continue;
@@ -377,7 +505,7 @@ export class BatchRelationshipExtractor {
 					request.workspaceSalt,
 					embDetected,
 				);
-				const embedding = await generateEmbedding(embeddingInput);
+				const embedding = await generateEmbeddingCached(embeddingInput, { purpose: 'dedup' });
 				const candidates = await searchKnowledgeNodes(
 					request.workspaceId,
 					normalizedName,
@@ -388,6 +516,9 @@ export class BatchRelationshipExtractor {
 				let nodeId: string;
 				const closest = candidates[0];
 
+				if (closest?.similarity !== undefined) {
+					warnIfEmbeddingFingerprintChanged('batch_dedup', closest);
+				}
 				if (closest?.similarity !== undefined && closest.similarity > COSINE_DEDUP_THRESHOLD) {
 					nodeId = closest.id;
 					await incrementNodeMentionCount(request.workspaceId, nodeId);
@@ -400,6 +531,7 @@ export class BatchRelationshipExtractor {
 							displayName: entity.displayName,
 							description: entity.description,
 							embedding,
+							metadata: currentEmbeddingMetadata(),
 						},
 						request.envelope,
 					);
@@ -412,6 +544,7 @@ export class BatchRelationshipExtractor {
 					request.contactId,
 					entity.relationshipType,
 					entity.confidence,
+					evidence,
 				);
 				linked++;
 			} catch (err) {
@@ -424,6 +557,7 @@ export class BatchRelationshipExtractor {
 
 		// Record extraction log
 		await upsertExtractionLog(request.workspaceId, request.contactId, {
+			messageHorizon: latestMessageHorizon(request.sourceMessages),
 			entitiesExtracted: linked,
 			llmCalled: true,
 		});
@@ -438,10 +572,25 @@ export class BatchRelationshipExtractor {
 	): Promise<{ totalLinked: number; batchUsed: false }> {
 		const { inferWithCache } = await import('./cached-inference');
 		let totalLinked = 0;
+		const llmRuntime = getKnowledgeLlmRuntime(process.env);
 
 		for (const req of requests) {
 			try {
 				const userPrompt = `Extract knowledge entities from these messages:\n\n${req.maskedMessages.join('\n')}`;
+
+				if (llmRuntime.provider === 'local' || llmRuntime.provider === 'gemini') {
+					const inference = await inferKnowledgeEntitiesJson({
+						systemPrompt: KNOWLEDGE_JSON_SYSTEM_PROMPT,
+						userPrompt,
+					});
+					const linked = await this.processEntities({
+						request: req,
+						entities: inference.entities,
+						source: inference.source,
+					});
+					totalLinked += linked;
+					continue;
+				}
 
 				const response = await inferWithCache(
 					KNOWLEDGE_SYSTEM_PROMPT,
@@ -462,13 +611,13 @@ export class BatchRelationshipExtractor {
 				if (!toolUse || toolUse.type !== 'tool_use') continue;
 
 				const input = toolUse.input as { entities?: unknown };
-				if (!Array.isArray(input.entities)) continue;
+				const entities = normalizeKnowledgeEntities(input.entities);
 
-				const entities = (input.entities as ExtractedEntity[])
-					.filter((e) => typeof e.confidence === 'number' && e.confidence >= 0.7)
-					.slice(0, 10);
-
-				const linked = await this.processEntities({ request: req, entities });
+				const linked = await this.processEntities({
+					request: req,
+					entities,
+					source: 'anthropic_fallback',
+				});
 				totalLinked += linked;
 			} catch (err) {
 				console.error(
@@ -477,8 +626,9 @@ export class BatchRelationshipExtractor {
 				);
 				// Record failed extraction
 				await upsertExtractionLog(req.workspaceId, req.contactId, {
+					messageHorizon: latestMessageHorizon(req.sourceMessages),
 					entitiesExtracted: 0,
-					llmCalled: false,
+					llmCalled: true,
 				});
 			}
 		}

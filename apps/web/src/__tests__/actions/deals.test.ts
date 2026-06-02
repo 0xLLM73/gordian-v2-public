@@ -113,7 +113,7 @@ describe('deal actions', () => {
 			const { createDealAction } = await import('@/app/actions/deals');
 			const result = await createDealAction({
 				contactId: CONTACT_ID,
-				title: 'SAFT Round',
+				title: '  SAFT Round  ',
 				value: 500000,
 			});
 			expect(result?.data).toBeDefined();
@@ -131,6 +131,18 @@ describe('deal actions', () => {
 			);
 		});
 
+		it('rejects blank deal titles after trimming', async () => {
+			const { createDealAction } = await import('@/app/actions/deals');
+			const result = await createDealAction({
+				contactId: CONTACT_ID,
+				title: '   ',
+				value: 0,
+			});
+
+			expect(result?.validationErrors).toBeDefined();
+			expect(mockCreate).not.toHaveBeenCalled();
+		});
+
 		it('creates a deal with all optional fields', async () => {
 			const { createDealAction } = await import('@/app/actions/deals');
 			const result = await createDealAction({
@@ -138,7 +150,7 @@ describe('deal actions', () => {
 				title: 'Token Warrant',
 				dealType: 'token',
 				value: 100000,
-				notes: 'Series A',
+				notes: '  Series A  ',
 				terms: { discount: 20, vestingCliffMonths: 12 },
 			});
 			expect(result?.data).toBeDefined();

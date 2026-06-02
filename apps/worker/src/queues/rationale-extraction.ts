@@ -1,6 +1,7 @@
 import { deriveKeys, unwrapWrk } from '@repo/crypto';
 import type { SealedEnvelope } from '@repo/crypto';
 import { getMessagesByContact } from '@repo/db';
+import { canRunCloudRationaleExtraction, redactSensitive } from '@repo/shared';
 import { Queue, Worker } from 'bullmq';
 import { withRLS } from '../middleware/rls';
 import { connection } from '../redis';
@@ -42,6 +43,13 @@ export const rationaleExtractionWorker = new Worker(
 	withRLS(async (job) => {
 		const data = job.data as RationaleJobData;
 		const { action, label, contactId, entityId, entityType, workspaceId, keyEnvelope } = data;
+
+		if (!canRunCloudRationaleExtraction()) {
+			console.log(
+				`[rationale] Cloud rationale extraction disabled for workspace=${workspaceId.slice(0, 8)}, skipping`,
+			);
+			return { skipped: true, reason: 'cloud_rationale_extraction_disabled' };
+		}
 
 		if (!keyEnvelope) {
 			throw new Error('[rationale] Missing keyEnvelope in job data (SEC-PROV-004)');
@@ -109,5 +117,5 @@ rationaleExtractionWorker.on('completed', (job) => {
 	console.log(`[rationale] Job ${job.id} completed`);
 });
 rationaleExtractionWorker.on('failed', (job, err) => {
-	console.error(`[rationale] Job ${job?.id} failed:`, err.message);
+	console.error(`[rationale] Job ${job?.id} failed:`, redactSensitive(err));
 });

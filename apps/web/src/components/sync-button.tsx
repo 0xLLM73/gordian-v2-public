@@ -4,10 +4,10 @@ import { triggerSyncAction } from '@/app/actions/sync';
 import { Button } from '@/components/ui/button';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { useAction } from 'next-safe-action/hooks';
-import { useState } from 'react';
+import * as React from 'react';
 
 export function SyncButton({ disabledReason }: { disabledReason?: string }) {
-	const [lastSynced, setLastSynced] = useState<string | null>(null);
+	const [lastSynced, setLastSynced] = React.useState<string | null>(null);
 	const { execute, isExecuting } = useAction(triggerSyncAction, {
 		onSuccess: () => {
 			setLastSynced(new Date().toLocaleTimeString());
@@ -20,20 +20,23 @@ export function SyncButton({ disabledReason }: { disabledReason?: string }) {
 			variant="outline"
 			size="sm"
 			onClick={() => {
-				if (!disabledReason) execute({});
+				if (!disabledReason) execute({ syncScope: 'contacts_only' });
 			}}
 			disabled={disabled}
-			title={disabledReason}
+			title={
+				disabledReason ??
+				'Updates linked Telegram contacts only. Use Telegram history import for messages.'
+			}
 		>
 			{isExecuting ? (
 				<>
 					<Loader2 className="h-4 w-4 animate-spin" />
-					Syncing...
+					Syncing contacts...
 				</>
 			) : (
 				<>
 					<RefreshCw className="h-4 w-4" />
-					{disabledReason ? 'Sync disabled' : 'Sync Now'}
+					{disabledReason ? 'Sync disabled' : 'Sync contacts'}
 				</>
 			)}
 			{lastSynced && <span className="text-xs text-muted-foreground">({lastSynced})</span>}

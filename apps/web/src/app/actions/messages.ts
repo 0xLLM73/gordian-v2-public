@@ -1,7 +1,7 @@
 'use server';
 
 import { workspaceAction } from '@/lib/safe-action';
-import { getMessagesByContact } from '@repo/db';
+import { canAccessContact, getMessagesByContact } from '@repo/db';
 import { z } from 'zod';
 
 export const getMessagesByContactAction = workspaceAction
@@ -14,6 +14,12 @@ export const getMessagesByContactAction = workspaceAction
 	)
 	.action(async ({ parsedInput, ctx }) => {
 		if (!ctx.envelope) throw new Error('Workspace encryption key not found');
+		const allowed = await canAccessContact(
+			ctx.workspaceId,
+			ctx.session.user.id,
+			parsedInput.contactId,
+		);
+		if (!allowed) throw new Error('Not found');
 		return getMessagesByContact(ctx.workspaceId, parsedInput.contactId, ctx.envelope, {
 			limit: parsedInput.limit,
 			offset: parsedInput.offset,

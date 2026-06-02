@@ -4,7 +4,7 @@
 import {
 	confirmCommitmentAction,
 	dismissCommitmentAction,
-	getActiveCommitmentsAction,
+	getFirstLookCommitmentsAction,
 	trackCommitmentCardEventAction,
 } from '@/app/actions/commitments';
 import { GuidedActionCard } from '@/components/onboarding/guided-action-card';
@@ -46,7 +46,7 @@ export function CommitmentsCard() {
 	useEffect(() => {
 		async function load() {
 			try {
-				const result = await getActiveCommitmentsAction({ limit: 10 });
+				const result = await getFirstLookCommitmentsAction({ limit: 10 });
 				if (result?.data) {
 					setCommitments(
 						(result.data as Array<Record<string, unknown>>).map((c) => {
@@ -162,7 +162,7 @@ export function CommitmentsCard() {
 	return (
 		<GuidedActionCard
 			title="Review commitments"
-			description="AI-detected promises from your conversations"
+			description="Short-term promises from your conversations"
 			accentColor="bg-primary"
 			onSkip={() => setSkipped(true)}
 		>
@@ -174,7 +174,8 @@ export function CommitmentsCard() {
 				</div>
 			) : commitments.length === 0 ? (
 				<p className="text-xs text-muted-foreground">
-					No commitments detected yet — they'll appear as more messages are analyzed.
+					No commitments ready to review yet. Local mode keeps automatic extraction off unless you
+					explicitly enable an analysis workflow.
 				</p>
 			) : allReviewed ? (
 				<div className="flex flex-col items-center py-4 text-center">

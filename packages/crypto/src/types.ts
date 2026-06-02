@@ -51,3 +51,47 @@ export interface MaskResult {
 	maskedText: string;
 	entityMap: EntityMap[];
 }
+
+export type ContactAliasKind = 'fullName' | 'firstName' | 'lastName' | 'username' | 'alias';
+
+export interface ContactAliasInput {
+	value: string;
+	kind?: ContactAliasKind;
+}
+
+/** Contact identity material already known locally by the workspace. */
+export interface ContactMaskEntity {
+	contactId: string;
+	fullName?: string | null;
+	firstName?: string | null;
+	lastName?: string | null;
+	username?: string | null;
+	aliases?: Array<string | ContactAliasInput>;
+}
+
+export interface ContactAliasMaskOptions {
+	/** Full names are masked by default. */
+	maskFullNames?: boolean;
+	/** First names can be noisy, so callers must opt in. */
+	maskFirstNames?: boolean;
+	/** Last names can be noisy, so callers must opt in. */
+	maskLastNames?: boolean;
+	/** @username and username tokens are masked by default. */
+	maskUsernames?: boolean;
+	/** Structured PII prefiltering is enabled by default unless set false. */
+	maskStructuredPii?: boolean;
+	/** Optional caller-provided structured PII spans, e.g. prefilterEntities(text). */
+	structuredEntities?: DetectedEntity[];
+}
+
+export interface ContactAliasMapEntry {
+	alias: string;
+	matchedText: string;
+	contactId: string;
+	pseudonym: string;
+	kind: ContactAliasKind;
+}
+
+export interface ContactMaskResult extends MaskResult {
+	aliasMap: ContactAliasMapEntry[];
+}

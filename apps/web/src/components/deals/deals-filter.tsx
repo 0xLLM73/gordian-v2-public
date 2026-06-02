@@ -1,32 +1,13 @@
 'use client';
 
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-
-const stages = [
-	'all',
-	'discovery',
-	'diligence',
-	'negotiation',
-	'committed',
-	'won',
-	'lost',
-] as const;
-
-const stageLabels: Record<string, string> = {
-	all: 'All',
-	discovery: 'Discovery',
-	diligence: 'Diligence',
-	negotiation: 'Negotiation',
-	committed: 'Committed',
-	won: 'Won',
-	lost: 'Lost',
-};
+import { DEAL_STAGE_FILTERS, DEAL_STAGE_LABELS, normalizeDealStageFilter } from './filter-options';
 
 export function DealsFilter({ workspaceId: _workspaceId }: { workspaceId: string }) {
 	const router = useRouter();
 	const pathname = usePathname();
 	const searchParams = useSearchParams();
-	const currentStage = searchParams.get('stage') || 'all';
+	const currentStage = normalizeDealStageFilter(searchParams.get('stage') ?? undefined);
 
 	function handleFilter(stage: string) {
 		const params = new URLSearchParams(searchParams.toString());
@@ -40,7 +21,7 @@ export function DealsFilter({ workspaceId: _workspaceId }: { workspaceId: string
 
 	return (
 		<div className="flex flex-wrap gap-2">
-			{stages.map((stage) => (
+			{DEAL_STAGE_FILTERS.map((stage) => (
 				<button
 					key={stage}
 					type="button"
@@ -51,7 +32,7 @@ export function DealsFilter({ workspaceId: _workspaceId }: { workspaceId: string
 							: 'bg-muted text-muted-foreground hover:bg-accent'
 					}`}
 				>
-					{stageLabels[stage]}
+					{DEAL_STAGE_LABELS[stage]}
 				</button>
 			))}
 		</div>

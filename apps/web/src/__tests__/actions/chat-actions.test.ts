@@ -31,16 +31,17 @@ vi.mock('@/lib/workspace', () => ({
 	getWorkspaceEnvelope: mockGetWorkspaceEnvelope,
 }));
 
-const mockGetContact = vi.fn();
+const mockGetAccessibleContact = vi.fn();
+const mockAppendAuditLog = vi.fn();
 vi.mock('@repo/db', () => ({
 	withWorkspaceRLS: vi.fn((_wsId: string, fn: (tx: unknown) => unknown) => fn({})),
 	createCommitment: vi.fn().mockResolvedValue({ id: 'c1', title: 'Test' }),
 	createDeal: vi.fn().mockResolvedValue(null),
 	createGoal: vi.fn().mockResolvedValue(null),
 	updateDeal: vi.fn().mockResolvedValue(null),
-	getContact: (...args: unknown[]) => mockGetContact(...args),
+	getAccessibleContact: (...args: unknown[]) => mockGetAccessibleContact(...args),
 	trackBehavior: vi.fn().mockResolvedValue(null),
-	appendAuditLog: vi.fn(),
+	appendAuditLog: mockAppendAuditLog,
 }));
 
 const mockFetch = vi.fn();
@@ -58,7 +59,7 @@ describe('executeTelegramSendAction', () => {
 	it('sends message to worker with correct payload', async () => {
 		const { executeTelegramSendAction } = await import('@/app/actions/chat-actions');
 
-		mockGetContact.mockResolvedValue({
+		mockGetAccessibleContact.mockResolvedValue({
 			id: CONTACT_ID,
 			firstName: 'Alice',
 			telegramId: '12345',
@@ -93,13 +94,19 @@ describe('executeTelegramSendAction', () => {
 		expect(body.contactTelegramId).toBe('12345');
 		expect(body.text).toBe('Hey Alice!');
 		expect(body.idempotencyKey).toBeDefined();
+		expect(mockAppendAuditLog).toHaveBeenCalledWith(
+			expect.objectContaining({
+				metadata: { channel: 'telegram', contactNameProvided: true },
+			}),
+		);
+		expect(JSON.stringify(mockAppendAuditLog.mock.calls[0][0].metadata)).not.toContain('Alice');
 	});
 
 	it('does not call worker when Telegram sending is disabled', async () => {
 		vi.resetModules();
 		process.env.TELEGRAM_SEND_ENABLED = 'false';
 		const { executeTelegramSendAction } = await import('@/app/actions/chat-actions');
-		mockGetContact.mockResolvedValue({
+		mockGetAccessibleContact.mockResolvedValue({
 			id: CONTACT_ID,
 			firstName: 'Alice',
 			telegramId: '12345',
@@ -118,7 +125,7 @@ describe('executeTelegramSendAction', () => {
 	it('fails when contact has no telegramId', async () => {
 		const { executeTelegramSendAction } = await import('@/app/actions/chat-actions');
 
-		mockGetContact.mockResolvedValue({
+		mockGetAccessibleContact.mockResolvedValue({
 			id: CONTACT_ID,
 			firstName: 'Bob',
 			telegramId: null,
@@ -137,7 +144,7 @@ describe('executeTelegramSendAction', () => {
 	it('fails when contact not found', async () => {
 		const { executeTelegramSendAction } = await import('@/app/actions/chat-actions');
 
-		mockGetContact.mockResolvedValue(null);
+		mockGetAccessibleContact.mockResolvedValue(null);
 
 		const result = await executeTelegramSendAction({
 			contactId: CONTACT_ID,
@@ -152,7 +159,7 @@ describe('executeTelegramSendAction', () => {
 	it('propagates worker error response', async () => {
 		const { executeTelegramSendAction } = await import('@/app/actions/chat-actions');
 
-		mockGetContact.mockResolvedValue({
+		mockGetAccessibleContact.mockResolvedValue({
 			id: CONTACT_ID,
 			firstName: 'Alice',
 			telegramId: '12345',

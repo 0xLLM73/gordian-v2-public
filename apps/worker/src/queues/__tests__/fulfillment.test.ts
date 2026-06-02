@@ -24,16 +24,18 @@ vi.mock('@repo/crypto', () => ({
 
 // Mock DB DAL functions
 const mockGetCommitmentsForFulfillmentCheck = vi.fn();
+const mockHasUserAiAnalysisConsent = vi.fn();
 const mockMarkCommitmentFulfilled = vi.fn();
 const mockUpdateLastCheckedAt = vi.fn();
 
 vi.mock('@repo/db', () => ({
+	getActiveGoalsByType: vi.fn(() => Promise.resolve([])),
 	getCommitmentsForFulfillmentCheck: (...args: unknown[]) =>
 		mockGetCommitmentsForFulfillmentCheck(...args),
+	hasUserAiAnalysisConsent: (...args: unknown[]) => mockHasUserAiAnalysisConsent(...args),
 	markCommitmentFulfilled: (...args: unknown[]) => mockMarkCommitmentFulfilled(...args),
-	updateLastCheckedAt: (...args: unknown[]) => mockUpdateLastCheckedAt(...args),
-	getActiveGoalsByType: vi.fn(() => Promise.resolve([])),
 	updateGoalProgress: vi.fn(() => Promise.resolve()),
+	updateLastCheckedAt: (...args: unknown[]) => mockUpdateLastCheckedAt(...args),
 }));
 
 // Mock AI detection
@@ -51,13 +53,15 @@ vi.mock('../outcome-evaluation', () => ({
 
 // Mock BullMQ
 vi.mock('bullmq', () => ({
-	Queue: vi.fn(function MockQueue() {
+	// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
+	Queue: vi.fn().mockImplementation(function () {
 		return {
 			add: vi.fn(),
 			close: vi.fn(),
 		};
 	}),
-	Worker: vi.fn(function MockWorker(_name: string, processor: unknown) {
+	// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
+	Worker: vi.fn().mockImplementation(function (_name: string, processor: unknown) {
 		return {
 			processor,
 			close: vi.fn(),
@@ -97,6 +101,44 @@ describe('fulfillment worker', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.stubEnv('NODE_ENV', 'test');
+		vi.stubEnv('AI_PROCESSING_ENABLED', '');
+		vi.stubEnv('COMMITMENT_CLOUD_AI_ENABLED', '');
+		vi.stubEnv('COMMITMENT_LLM_PROVIDER', '');
+		mockHasUserAiAnalysisConsent.mockResolvedValue(true);
+	});
+
+	it('skips cloud fulfillment detection in local-only mode before decrypting messages', async () => {
+		vi.stubEnv('NODE_ENV', 'development');
+		vi.stubEnv('AI_PROCESSING_ENABLED', 'false');
+
+		const result = await processorFn({ data: baseJobData });
+
+		expect(result).toEqual({
+			skipped: true,
+			reason: 'cloud_commitment_intelligence_disabled',
+		});
+		expect(mockHasUserAiAnalysisConsent).not.toHaveBeenCalled();
+		expect(mockGetCommitmentsForFulfillmentCheck).not.toHaveBeenCalled();
+		expect(mockDetectFulfillment).not.toHaveBeenCalled();
+	});
+
+	it('does not enable cloud fulfillment when local Qwen commitment extraction is configured', async () => {
+		vi.stubEnv('NODE_ENV', 'development');
+		vi.stubEnv('AI_PROCESSING_ENABLED', 'false');
+		vi.stubEnv('COMMITMENT_LLM_PROVIDER', 'local');
+		vi.stubEnv('COMMITMENT_LLM_BASE_URL', 'http://localhost:11434/v1');
+		vi.stubEnv('COMMITMENT_LLM_MODEL', 'qwen3:4b-instruct');
+		vi.stubEnv('KNOWLEDGE_EMBEDDING_PROVIDER', 'local');
+		vi.stubEnv('KNOWLEDGE_EMBEDDING_MODEL', 'qwen3-embedding:0.6b');
+
+		const result = await processorFn({ data: baseJobData });
+
+		expect(result).toEqual({
+			skipped: true,
+			reason: 'cloud_commitment_intelligence_disabled',
+		});
+		expect(mockDetectFulfillment).not.toHaveBeenCalled();
 	});
 
 	it('skips contacts with no messages', async () => {

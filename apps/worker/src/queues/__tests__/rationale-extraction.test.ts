@@ -3,13 +3,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // ─── Mocks (hoisted before imports) ──────────────────────────────────────────
 
 vi.mock('bullmq', () => ({
-	Queue: vi.fn(function MockQueue() {
+	// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
+	Queue: vi.fn().mockImplementation(function () {
 		return {
 			add: vi.fn().mockResolvedValue({ id: 'job-1' }),
 			getJobCounts: vi.fn().mockResolvedValue({}),
 		};
 	}),
-	Worker: vi.fn(function MockWorker(_name: string, processor: unknown) {
+	// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
+	Worker: vi.fn().mockImplementation(function (_name: string, processor: unknown) {
 		return {
 			processor,
 			on: vi.fn(),
@@ -91,10 +93,28 @@ const validJobData = {
 describe('rationale-extraction worker', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.stubEnv('NODE_ENV', 'test');
+		vi.stubEnv('AI_PROCESSING_ENABLED', '');
+		vi.stubEnv('RATIONALE_CLOUD_AI_ENABLED', '');
 		mockGetMessagesByContact.mockResolvedValue([
 			{ text: 'The tokenomics are terrible', sentAt: new Date() },
 			{ text: 'Team has no experience', sentAt: new Date() },
 		]);
+	});
+
+	it('skips cloud rationale extraction in local-only mode before decrypting messages', async () => {
+		vi.stubEnv('NODE_ENV', 'development');
+		vi.stubEnv('AI_PROCESSING_ENABLED', 'false');
+
+		const result = await processorFn({ data: validJobData });
+
+		expect(result).toEqual({
+			skipped: true,
+			reason: 'cloud_rationale_extraction_disabled',
+		});
+		expect(mockUnwrapWrk).not.toHaveBeenCalled();
+		expect(mockGetMessagesByContact).not.toHaveBeenCalled();
+		expect(mockExtractDecisionRationales).not.toHaveBeenCalled();
 	});
 
 	it('processes a valid job with messages', async () => {

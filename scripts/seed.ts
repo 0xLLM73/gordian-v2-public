@@ -19,8 +19,10 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from '../packages/db/src/schema/index';
 import { loadRootEnv } from './lib/load-root-env.mjs';
+import { assertLocalDemoTargets } from './lib/local-runtime-safety.mjs';
 
 loadRootEnv();
+assertLocalDemoTargets(process.env);
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 

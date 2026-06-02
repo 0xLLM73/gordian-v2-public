@@ -12,6 +12,19 @@ interface DigestSections {
 		active_conversations: number;
 		new_contacts?: number;
 	};
+	source_coverage?: {
+		total_messages: number;
+		sampled_messages: number;
+		total_conversations: number;
+		sampled_conversations: number;
+		prompt_conversations: number;
+		prompt_messages?: number;
+		sample_strategy: string;
+		message_budget: number;
+		batch_count?: number;
+		batch_messages?: number;
+		batch_strategy?: string;
+	};
 	highlights?: Array<{
 		title: string;
 		detail: string;
@@ -51,6 +64,8 @@ interface DigestRecord {
 interface DigestViewerProps {
 	pastDigests: DigestRecord[];
 	contactMap?: Record<string, string>;
+	canGenerate?: boolean;
+	generateDisabledReason?: string;
 }
 
 const PERIOD_LABELS: Record<Period, string> = {
@@ -60,7 +75,12 @@ const PERIOD_LABELS: Record<Period, string> = {
 	week: 'Last Week',
 };
 
-export function DigestViewer({ pastDigests: initialDigests, contactMap = {} }: DigestViewerProps) {
+export function DigestViewer({
+	pastDigests: initialDigests,
+	contactMap = {},
+	canGenerate = true,
+	generateDisabledReason,
+}: DigestViewerProps) {
 	const [period, setPeriod] = useState<Period>('today');
 	const [digests, setDigests] = useState<DigestRecord[]>(initialDigests);
 	const [selectedDigest, setSelectedDigest] = useState<DigestRecord | null>(
@@ -68,8 +88,15 @@ export function DigestViewer({ pastDigests: initialDigests, contactMap = {} }: D
 	);
 	const [isPending, startTransition] = useTransition();
 	const [generating, setGenerating] = useState(false);
+	const [generateError, setGenerateError] = useState<string | null>(null);
 
 	function handleGenerate() {
+		if (!canGenerate) {
+			setGenerateError(generateDisabledReason ?? 'Digest generation is currently unavailable.');
+			return;
+		}
+
+		setGenerateError(null);
 		setGenerating(true);
 		startTransition(async () => {
 			const result = await generateDigestAction({ period });
@@ -88,6 +115,7 @@ export function DigestViewer({ pastDigests: initialDigests, contactMap = {} }: D
 					});
 				}, 5000);
 			} else {
+				setGenerateError(result?.serverError ?? 'Digest generation could not be started.');
 				setGenerating(false);
 			}
 		});
@@ -128,12 +156,15 @@ export function DigestViewer({ pastDigests: initialDigests, contactMap = {} }: D
 				<button
 					type="button"
 					onClick={handleGenerate}
-					disabled={isPending || generating}
+					disabled={!canGenerate || isPending || generating}
 					className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary/90 disabled:opacity-50"
 				>
 					{generating ? 'Generating...' : 'Generate Digest'}
 				</button>
 			</div>
+			{!canGenerate || generateError ? (
+				<p className="text-sm text-muted-foreground">{generateError ?? generateDisabledReason}</p>
+			) : null}
 
 			<div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
 				{/* Digest content */}
@@ -175,7 +206,7 @@ export function DigestViewer({ pastDigests: initialDigests, contactMap = {} }: D
 									<p className="text-xs text-muted-foreground">{formatDate(d.generatedAt)}</p>
 									{d.messageCount !== null ? (
 										<p className="mt-1 text-xs text-muted-foreground">
-											{d.messageCount} messages, {d.contactCount} contacts
+											{d.messageCount} messages, {d.contactCount} conversations
 										</p>
 									) : null}
 								</button>
@@ -214,6 +245,7 @@ function DigestContent({
 							<Stat label="Conversations" value={sections.activity_overview.active_conversations} />
 							<Stat label="New Contacts" value={sections.activity_overview.new_contacts ?? 0} />
 						</div>
+						<SourceCoverage coverage={sections.source_coverage} />
 					</Section>
 				) : null}
 
@@ -305,6 +337,37 @@ function Stat({ label, value }: { label: string; value: number }) {
 		<div className="rounded-md bg-muted p-3 text-center">
 			<p className="text-2xl font-bold text-foreground">{value}</p>
 			<p className="text-xs text-muted-foreground">{label}</p>
+		</div>
+	);
+}
+
+function SourceCoverage({ coverage }: { coverage: DigestSections['source_coverage'] }) {
+	if (!coverage) return null;
+
+	const usedFullPeriod = coverage.sampled_messages >= coverage.total_messages;
+	const conversationLabel = coverage.total_conversations === 1 ? 'conversation' : 'conversations';
+	const promptConversationLabel =
+		coverage.prompt_conversations === 1 ? 'conversation' : 'conversations';
+
+	return (
+		<div className="mt-3 rounded-md border border-border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+			<p>
+				{usedFullPeriod
+					? `Digest used all ${coverage.total_messages} messages across ${coverage.total_conversations} ${conversationLabel}.`
+					: `Digest sampled ${coverage.sampled_messages} of ${coverage.total_messages} messages across ${coverage.total_conversations} ${conversationLabel}.`}
+			</p>
+			<p className="mt-1">
+				Prompt included{' '}
+				{coverage.prompt_messages ? `${coverage.prompt_messages} message excerpts from ` : ''}
+				{coverage.prompt_conversations} {promptConversationLabel}. Strategy:{' '}
+				{coverage.sample_strategy}.
+			</p>
+			{coverage.batch_count && coverage.batch_count > 1 ? (
+				<p className="mt-1">
+					Local Qwen summarized {coverage.batch_messages ?? coverage.prompt_messages ?? 0} excerpts{' '}
+					into {coverage.batch_count} batches. Strategy: {coverage.batch_strategy}.
+				</p>
+			) : null}
 		</div>
 	);
 }

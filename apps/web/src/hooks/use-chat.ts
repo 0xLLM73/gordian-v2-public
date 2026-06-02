@@ -10,6 +10,23 @@ export type { ChatMessage } from './use-chat-context';
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 20;
+const GENERIC_CHAT_ERROR = 'Sorry, something went wrong. Please try again.';
+
+function chatErrorMessage(serverError?: string): string {
+	if (serverError?.includes('AI analysis consent')) {
+		return 'AI analysis consent is required. Enable AI analysis in Settings to use chat over imported messages.';
+	}
+	return GENERIC_CHAT_ERROR;
+}
+
+async function streamErrorMessage(response: Response): Promise<string | null> {
+	try {
+		const body = (await response.json()) as { error?: unknown };
+		return typeof body.error === 'string' ? body.error : null;
+	} catch {
+		return null;
+	}
+}
 
 /** Parse a raw SSE chunk into event/data pairs. */
 function parseSSEChunk(chunk: string): Array<{ event: string; data: string }> {
@@ -79,7 +96,23 @@ export function useChatPanel() {
 					}),
 				});
 
-				if (!response.ok || !response.body) {
+				if (!response.ok) {
+					const message = await streamErrorMessage(response);
+					if (message?.includes('AI analysis consent')) {
+						const errorMessage: ChatMessage = {
+							id: crypto.randomUUID(),
+							role: 'assistant',
+							content: chatErrorMessage(message),
+							timestamp: new Date(),
+							isError: true,
+						};
+						setMessages((prev) => [...prev, errorMessage]);
+						return;
+					}
+					throw new Error('SSE unavailable');
+				}
+
+				if (!response.body) {
 					throw new Error('SSE unavailable');
 				}
 
@@ -195,7 +228,7 @@ export function useChatPanel() {
 						const errorMessage: ChatMessage = {
 							id: crypto.randomUUID(),
 							role: 'assistant',
-							content: 'Sorry, something went wrong. Please try again.',
+							content: chatErrorMessage(result.serverError),
 							timestamp: new Date(),
 							isError: true,
 						};
@@ -269,7 +302,23 @@ export function useChatPanel() {
 				}),
 			});
 
-			if (!response.ok || !response.body) {
+			if (!response.ok) {
+				const message = await streamErrorMessage(response);
+				if (message?.includes('AI analysis consent')) {
+					const errorMessage: ChatMessage = {
+						id: crypto.randomUUID(),
+						role: 'assistant',
+						content: chatErrorMessage(message),
+						timestamp: new Date(),
+						isError: true,
+					};
+					setMessages((prev) => [...prev, errorMessage]);
+					return;
+				}
+				throw new Error('SSE unavailable');
+			}
+
+			if (!response.body) {
 				throw new Error('SSE unavailable');
 			}
 
@@ -362,7 +411,7 @@ export function useChatPanel() {
 					const errorMessage: ChatMessage = {
 						id: crypto.randomUUID(),
 						role: 'assistant',
-						content: 'Sorry, something went wrong. Please try again.',
+						content: chatErrorMessage(result.serverError),
 						timestamp: new Date(),
 						isError: true,
 					};

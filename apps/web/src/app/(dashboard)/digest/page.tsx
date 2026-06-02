@@ -1,6 +1,6 @@
 import { DigestViewer } from '@/components/digest/digest-viewer';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
-import { getContactsByIds, listDigests } from '@repo/db';
+import { getCalibration, getContactsByIds, listDigests } from '@repo/db';
 import { Suspense } from 'react';
 
 export default async function DigestPage() {
@@ -23,7 +23,11 @@ export default async function DigestPage() {
 async function DigestContent({ workspaceId, userId }: { workspaceId: string; userId: string }) {
 	const envelope = await getWorkspaceEnvelope(workspaceId);
 	if (!envelope) return <div>Encryption key not found.</div>;
-	const pastDigests = await listDigests(workspaceId, userId, envelope, { limit: 10 });
+	const [pastDigests, calibration] = await Promise.all([
+		listDigests(workspaceId, userId, envelope, { limit: 10 }),
+		getCalibration(userId, workspaceId, envelope),
+	]);
+	const canGenerateDigest = calibration?.consentAiAnalysis === true;
 
 	// Extract unique contactId UUIDs from all digest sections (contact_ref + inline in text)
 	const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
@@ -66,7 +70,18 @@ async function DigestContent({ workspaceId, userId }: { workspaceId: string; use
 		}
 	}
 
-	return <DigestViewer pastDigests={pastDigests} contactMap={contactMap} />;
+	return (
+		<DigestViewer
+			pastDigests={pastDigests}
+			contactMap={contactMap}
+			canGenerate={canGenerateDigest}
+			generateDisabledReason={
+				canGenerateDigest
+					? undefined
+					: 'Enable AI analysis consent before generating a digest from imported messages.'
+			}
+		/>
+	);
 }
 
 function DigestSkeleton() {

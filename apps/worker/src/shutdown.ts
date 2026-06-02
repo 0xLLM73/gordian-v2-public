@@ -18,6 +18,7 @@ import { flushAllBuffers } from './queues/message-buffer';
 import { relationshipExtractionWorker } from './queues/relationship-extraction';
 import { rotationWorker } from './queues/rotation';
 import { syncWorker } from './queues/sync';
+import { telegramHistoryImportWorker } from './queues/telegram-history-import';
 import { stopTokenPriceUpdates } from './queues/token-price';
 import { connection } from './redis';
 
@@ -75,6 +76,7 @@ export function gracefulShutdown(bot?: { stop: () => void }): void {
 			stopStyleAggregation();
 			await Promise.allSettled([
 				syncWorker.close(),
+				telegramHistoryImportWorker.close(),
 				backfillWorker.close(),
 				embeddingBackfillWorker.close(),
 				orchestratorWorker.close(),

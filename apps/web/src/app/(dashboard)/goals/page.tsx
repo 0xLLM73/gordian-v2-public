@@ -1,4 +1,9 @@
 import { CreateGoalForm } from '@/components/goals/create-goal-form';
+import {
+	normalizeGoalSortFilter,
+	normalizeGoalStatusFilter,
+	normalizeGoalTypeFilter,
+} from '@/components/goals/filter-options';
 import { GoalActionList } from '@/components/goals/goal-action-list';
 import { GoalActions } from '@/components/goals/goal-actions';
 import { GoalAnalytics } from '@/components/goals/goal-analytics';
@@ -18,6 +23,9 @@ export default async function GoalsPage({
 	const session = await requireSession();
 	const workspaceId = await getUserWorkspaceId(session.user.id);
 	const { status, type, sort } = await searchParams;
+	const statusFilter = normalizeGoalStatusFilter(status);
+	const typeFilter = normalizeGoalTypeFilter(type);
+	const sortFilter = normalizeGoalSortFilter(sort);
 
 	return (
 		<div>
@@ -32,7 +40,12 @@ export default async function GoalsPage({
 
 			<Suspense fallback={<GoalsSkeleton />}>
 				{workspaceId ? (
-					<GoalsList workspaceId={workspaceId} status={status} type={type} sort={sort} />
+					<GoalsList
+						workspaceId={workspaceId}
+						status={statusFilter}
+						type={typeFilter}
+						sort={sortFilter}
+					/>
 				) : (
 					<EmptyState />
 				)}

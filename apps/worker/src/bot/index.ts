@@ -14,6 +14,8 @@ import { notificationsComposer } from './features/notifications';
 import { onboardingComposer } from './features/onboarding';
 import { summaryComposer } from './features/summary';
 
+export const GRAMMY_SESSION_KEY_PREFIX = 'grammy:session:';
+
 /**
  * Strip PII from a Telegram Update object before logging (SEC-025).
  * Retains structural info (IDs, types, timestamps) but omits names, text, and phone numbers.
@@ -66,6 +68,7 @@ export async function initBot(): Promise<Bot<BotContext>> {
 	bot.use(
 		session<SessionData, BotContext>({
 			initial: (): SessionData => ({ step: 'idle' }),
+			prefix: GRAMMY_SESSION_KEY_PREFIX,
 			storage: new RedisAdapter<SessionData>({ instance: connection }),
 		}),
 	);
