@@ -60,7 +60,7 @@ export async function recordExtractionFeedback(input: ExtractionFeedbackInput): 
 			featureDomain: 'commitment_extraction',
 			inputContext: transcript.slice(0, 2000),
 			modelPrediction: fp,
-			correctedOutput: null, // Pass 2 rejected it
+			correctedOutput: { no_commitment: true }, // Pass 2 rejected it
 			// SEC-002: Only structural metadata — no raw titles or quotes
 			correctionReasoning: `False positive: Pass 1 candidate rejected by Pass 2 (type=${fp.commitment_type}, confidence=${fp.confidence}, variant=${variant})`,
 			source: 'implicit_signal',

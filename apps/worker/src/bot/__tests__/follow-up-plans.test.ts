@@ -24,7 +24,8 @@ vi.mock('@repo/db', () => ({
 vi.mock('grammy', () => {
 	const handlers = new Map<string, (ctx: unknown) => Promise<void>>();
 	return {
-		Composer: vi.fn(function MockComposer() {
+		// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
+		Composer: vi.fn().mockImplementation(function () {
 			return {
 				command: vi.fn((name: string, handler: (ctx: unknown) => Promise<void>) => {
 					handlers.set(name, handler);

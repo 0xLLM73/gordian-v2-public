@@ -1,6 +1,13 @@
 import { decrypt, deriveKeys, maskEntities, unwrapWrk } from '@repo/crypto';
 import type { SealedEnvelope } from '@repo/crypto';
-import { createDecision, createEdge, findRecentDecision, findSimilarDecisions } from '@repo/db';
+import {
+	createDecision,
+	createEdge,
+	findRecentDecision,
+	findSimilarDecisions,
+	hasUserAiAnalysisConsent,
+} from '@repo/db';
+import { redactSensitive } from '@repo/shared';
 import { Queue, Worker } from 'bullmq';
 import { generateEmbedding } from '../ai/embeddings';
 import { prefilterEntities } from '../ai/prefilter';
@@ -33,8 +40,8 @@ export const decisionQueue = new Queue('decision-recording', {
 	defaultJobOptions: {
 		attempts: 2,
 		backoff: { type: 'exponential', delay: 5000 },
-		removeOnComplete: 100,
-		removeOnFail: 50,
+		removeOnComplete: true,
+		removeOnFail: { count: 50, age: 3600 },
 	},
 });
 
@@ -51,6 +58,13 @@ export const decisionRecordingWorker = new Worker(
 	'decision-recording',
 	withRLS(async (job) => {
 		const data = job.data as DecisionJobData;
+
+		if (!(await hasUserAiAnalysisConsent(data.userId, data.workspaceId))) {
+			console.log(
+				`[decision] AI consent no longer persisted for workspace=${data.workspaceId.slice(0, 8)} user=${data.userId.slice(0, 8)}, skipping`,
+			);
+			return { skipped: true, reason: 'no_ai_consent' };
+		}
 
 		// Web hook path: explicit decision from web action
 		if (data.decisionType && data.label) {
@@ -264,7 +278,7 @@ async function createEdgesForDecision(
 			});
 		}
 	} catch (err) {
-		console.error('[decision] Temporal edge creation failed:', (err as Error).message);
+		console.error('[decision] Temporal edge creation failed:', redactSensitive(err));
 	}
 
 	// 2b. Semantic edges: find similar decisions (cosine > 0.85)
@@ -285,7 +299,7 @@ async function createEdgesForDecision(
 			});
 		}
 	} catch (err) {
-		console.error('[decision] Semantic edge creation failed:', (err as Error).message);
+		console.error('[decision] Semantic edge creation failed:', redactSensitive(err));
 	}
 }
 
@@ -293,5 +307,5 @@ decisionRecordingWorker.on('completed', (job) => {
 	console.log(`[decision] Job ${job.id} completed`);
 });
 decisionRecordingWorker.on('failed', (job, err) => {
-	console.error(`[decision] Job ${job?.id} failed:`, err.message);
+	console.error(`[decision] Job ${job?.id} failed:`, redactSensitive(err));
 });

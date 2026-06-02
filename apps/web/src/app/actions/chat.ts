@@ -27,6 +27,7 @@ export const sendChatMessageAction = workspaceAction
 				'X-Internal-Secret': getInternalSecret(),
 			},
 			body: JSON.stringify({
+				userId: ctx.session.user.id,
 				workspaceId: ctx.workspaceId,
 				messages: parsedInput.messages,
 				envelope: {
@@ -38,7 +39,16 @@ export const sendChatMessageAction = workspaceAction
 		});
 
 		if (!response.ok) {
-			throw new Error('Chat service unavailable');
+			let errorMessage = 'Chat service unavailable';
+			try {
+				const body = (await response.json()) as { error?: unknown };
+				if (typeof body.error === 'string' && body.error.includes('AI analysis consent')) {
+					errorMessage = body.error;
+				}
+			} catch {
+				// Keep the generic service error when the worker does not return JSON.
+			}
+			throw new Error(errorMessage);
 		}
 
 		track(ctx.workspaceId, ctx.session.user.id, 'use_chat');

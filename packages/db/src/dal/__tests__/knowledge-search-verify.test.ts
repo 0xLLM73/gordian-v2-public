@@ -104,10 +104,11 @@ describe('searchKnowledgeNodes — blind index path', () => {
 		expect(mockWithKeys).toHaveBeenCalledWith(fakeEnvelope, expect.any(Function));
 	});
 
-	it('computes blind index from lowercase query', async () => {
+	it('delegates blind-index encoding to the column type', async () => {
 		await searchKnowledgeNodes(WS, 'DeFi', undefined, fakeEnvelope);
 
-		expect(mockComputeBlindIndex).toHaveBeenCalledWith('defi', expect.any(Buffer));
+		expect(mockComputeBlindIndex).not.toHaveBeenCalled();
+		expect(mockWhere).toHaveBeenCalled();
 	});
 
 	it('does NOT use transaction/iterative scan for blind index path', async () => {

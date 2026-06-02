@@ -1,6 +1,6 @@
 # CRITICAL: Use node:20-slim, NOT Alpine
 # GramJS client.connect() hangs indefinitely on Alpine (musl libc bug)
-FROM node:20-slim AS base
+FROM node:20.19.5-slim AS base
 RUN corepack enable
 RUN npm install -g turbo@2.8.9
 
@@ -13,7 +13,7 @@ FROM base AS installer
 WORKDIR /app
 COPY --from=builder /app/out/json/ .
 COPY --from=builder /app/out/pnpm-lock.yaml ./pnpm-lock.yaml
-RUN pnpm install --shamefully-hoist
+RUN pnpm install --frozen-lockfile --shamefully-hoist
 
 COPY --from=builder /app/out/full/ .
 COPY --from=builder /app/tsconfig.base.json ./tsconfig.base.json

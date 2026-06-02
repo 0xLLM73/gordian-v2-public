@@ -10,7 +10,7 @@
  *   deals (won/lost within the last 2 hours) on every run. This avoids
  *   coupling the DAL (which runs in the web layer) to BullMQ.
  * • Goal outcomes: scheduled sweep — queries recently completed goals.
- * • Introduction outcomes: scheduled sweep — queries recently completed intros.
+ * • Introduction outcomes: scheduled sweep — queries recently completed/resolved intros.
  * • Relationship outcomes: event-driven — enqueued from health-scoring.ts
  *   after upsertHealthScore() for contacts with significant trend changes.
  *
@@ -226,6 +226,7 @@ async function runSweep(windowMinutes: number): Promise<Record<string, number>> 
 		.where(
 			and(
 				eq(introductions.status, 'archive'),
+				eq(introductions.resolution, 'completed'),
 				sql`${introductions.updatedAt} >= ${since.toISOString()}::timestamptz`,
 			),
 		)

@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/0xLLM73/gordian-v2/security/policy
+    url: https://github.com/0xLLM73/gordian-v2-public/security/policy
     about: Read the private reporting process. Do not open a public issue for suspected credential or Telegram session exposure.

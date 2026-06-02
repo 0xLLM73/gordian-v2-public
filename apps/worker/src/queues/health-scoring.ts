@@ -25,6 +25,14 @@ const WEIGHTS = {
 	depth: 0.2,
 } as const;
 
+const MIN_POSTGRES_REAL_MAGNITUDE = 1e-37;
+
+function normalizeScore(value: number): number {
+	if (!Number.isFinite(value)) return 0;
+	const clamped = Math.min(1, Math.max(0, value));
+	return clamped > 0 && clamped < MIN_POSTGRES_REAL_MAGNITUDE ? 0 : clamped;
+}
+
 // ─── Decay lambdas (per relationship type) ──────────────────────────────────
 
 const DECAY_LAMBDA: Record<string, number> = {
@@ -74,7 +82,7 @@ export function computeRecency(
 	if (daysSinceLastMessage === null) return 0;
 	const lambdaBase = getDecayLambda(relationshipType);
 	const lambda = getEffectiveLambda(lambdaBase, totalMessages);
-	return Math.exp(-lambda * daysSinceLastMessage);
+	return normalizeScore(Math.exp(-lambda * daysSinceLastMessage));
 }
 
 // ─── Gaussian frequency centers (messages/week per relationship type) ────────
@@ -102,7 +110,7 @@ export function computeFrequency(
 	const sigma = center;
 	if (sigma === 0) return messagesPerWeek === 0 ? 1 : 0;
 	const z = (messagesPerWeek - center) / sigma;
-	return Math.exp(-0.5 * z * z);
+	return normalizeScore(Math.exp(-0.5 * z * z));
 }
 
 /**
@@ -115,7 +123,7 @@ export function computeResponseLatency(medianResponseHours: number | null): numb
 	if (medianResponseHours === null) return 0.5;
 	const L50 = 4;
 	const k = 0.5;
-	return 1 / (1 + Math.exp(k * (medianResponseHours - L50)));
+	return normalizeScore(1 / (1 + Math.exp(k * (medianResponseHours - L50))));
 }
 
 /**

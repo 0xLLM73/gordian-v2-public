@@ -94,6 +94,48 @@ describe('useChatPanel', () => {
 		expect(result.current.messages[1].content).toContain('something went wrong');
 	});
 
+	it('shows actionable AI consent errors on serverError', async () => {
+		mockSendChatMessageAction.mockResolvedValue({
+			serverError: 'AI analysis consent is required.',
+		});
+
+		const { useChatPanel } = await import('@/hooks/use-chat');
+		const { result } = renderHook(() => useChatPanel());
+
+		await act(async () => {
+			await result.current.sendMessage('Can you summarize my messages?');
+		});
+
+		expect(result.current.messages).toHaveLength(2);
+		expect(result.current.messages[1].role).toBe('assistant');
+		expect(result.current.messages[1].content).toContain('Enable AI analysis in Settings');
+	});
+
+	it('shows actionable AI consent errors directly from the stream response', async () => {
+		mockSendChatMessageAction.mockResolvedValue({
+			data: { response: 'fallback should not run' },
+		});
+		const mockFetch = vi
+			.fn()
+			.mockResolvedValue(
+				Response.json({ error: 'AI analysis consent is required.' }, { status: 403 }),
+			);
+		vi.stubGlobal('fetch', mockFetch);
+
+		const { useChatPanel } = await import('@/hooks/use-chat');
+		const { result } = renderHook(() => useChatPanel());
+
+		await act(async () => {
+			await result.current.sendMessage('Can you summarize my messages?');
+		});
+
+		expect(mockFetch).toHaveBeenCalledWith('/api/chat/stream', expect.any(Object));
+		expect(mockSendChatMessageAction).not.toHaveBeenCalled();
+		expect(result.current.messages).toHaveLength(2);
+		expect(result.current.messages[1].role).toBe('assistant');
+		expect(result.current.messages[1].content).toContain('Enable AI analysis in Settings');
+	});
+
 	it('shows connection error on network failure', async () => {
 		mockSendChatMessageAction.mockRejectedValue(new Error('Network error'));
 

@@ -9,6 +9,7 @@
 - [ ] No private project archives, runbooks, incident notes, or launch plans were added.
 - [ ] Public-facing docs still say the original Telegram bot was deleted and old infra is not live.
 - [ ] `pnpm audit:open-source` passes.
+- [ ] `pnpm audit` passes.
 - [ ] `pnpm audit --prod` passes.
 
 ## Validation

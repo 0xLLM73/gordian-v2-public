@@ -5,8 +5,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // ---------------------------------------------------------------------------
 
 const mockCreateContact = vi.fn();
+const mockUpdateContact = vi.fn();
 const mockUpsertChat = vi.fn();
 const mockUpsertMessages = vi.fn();
+const mockListMessageIdsByTelegramIds = vi.fn();
 const mockUpdateChatLastSync = vi.fn();
 
 vi.mock('@repo/crypto', () => ({
@@ -99,8 +101,10 @@ vi.mock('@repo/db', () => {
 		workspaces: WORKSPACES_TABLE,
 		contacts: CONTACTS_TABLE,
 		createContact: mockCreateContact,
+		updateContact: mockUpdateContact,
 		upsertChat: mockUpsertChat,
 		upsertMessages: mockUpsertMessages,
+		listMessageIdsByTelegramIds: mockListMessageIdsByTelegramIds,
 		updateChatLastSync: mockUpdateChatLastSync,
 		getActiveGoalsByType: vi.fn(() => Promise.resolve([])),
 		updateGoalProgress: vi.fn(() => Promise.resolve()),
@@ -109,7 +113,13 @@ vi.mock('@repo/db', () => {
 		incrementMentionCount: vi.fn(() => Promise.resolve()),
 		trackAnalyticsEvent: vi.fn(),
 		hasAnalyticsConsent: vi.fn(() => Promise.resolve(false)),
-		getCalibration: vi.fn(() => Promise.resolve(null)),
+		getCalibration: vi.fn(() =>
+			Promise.resolve({
+				commitmentSensitivity: undefined,
+				consentAiAnalysis: true,
+				priorityContactIds: [],
+			}),
+		),
 		updateContactRecency: vi.fn(() => Promise.resolve()),
 		getStaleContacts: vi.fn(() => Promise.resolve([])),
 		withWorkspaceRLS: vi.fn((_wsId: string, fn: (tx: unknown) => unknown) => fn({})),
@@ -117,13 +127,15 @@ vi.mock('@repo/db', () => {
 });
 
 vi.mock('bullmq', () => ({
-	Queue: vi.fn(function MockQueue() {
+	// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
+	Queue: vi.fn().mockImplementation(function () {
 		return {
 			add: vi.fn(),
 			name: 'sync',
 		};
 	}),
-	Worker: vi.fn(function MockWorker(_name: string, processor: unknown) {
+	// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
+	Worker: vi.fn().mockImplementation(function (_name: string, processor: unknown) {
 		(globalThis as Record<string, unknown>).__syncSourceProcessor = processor;
 		return { on: vi.fn() };
 	}),
@@ -139,6 +151,11 @@ vi.mock('../../gramjs/thread', () => ({
 vi.mock('../../realtime/broadcast', () => ({
 	broadcastSyncComplete: vi.fn(() => Promise.resolve()),
 	broadcastSyncProgress: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock('../../telegram-config', () => ({
+	isTelegramFullBackfillEnabled: vi.fn(() => false),
+	isTelegramPeriodicSyncEnabled: vi.fn(() => false),
 }));
 
 vi.mock('../ai-flow', () => ({
@@ -172,6 +189,7 @@ describe('sync sourceAccountId threading', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockCreateContact.mockResolvedValue({ id: 'ct-new-1' });
+		mockUpdateContact.mockResolvedValue({ id: 'ct-existing-1' });
 		mockUpsertChat.mockResolvedValue({
 			id: 'chat-1',
 			workspaceId: 'ws-1',
@@ -179,6 +197,7 @@ describe('sync sourceAccountId threading', () => {
 			lastSyncAt: null,
 		});
 		mockUpsertMessages.mockResolvedValue(0);
+		mockListMessageIdsByTelegramIds.mockResolvedValue([]);
 	});
 
 	it('passes sourceAccountId from job data to createContact', async () => {
@@ -229,7 +248,7 @@ describe('sync sourceAccountId threading', () => {
 			.__syncSourceProcessor as SyncProcessor;
 
 		await processor({
-			data: { userId: 'user-1', workspaceId: 'ws-1' },
+			data: { userId: 'user-1', workspaceId: 'ws-1', syncScope: 'private_recent' },
 		});
 
 		// MY_TG_ID is returned by getTelegramAccount → accountId
@@ -260,9 +279,157 @@ describe('sync sourceAccountId threading', () => {
 			.__syncSourceProcessor as SyncProcessor;
 
 		await processor({
-			data: { userId: 'user-1', workspaceId: 'ws-1' },
+			data: { userId: 'user-1', workspaceId: 'ws-1', syncScope: 'private_recent' },
 		});
 
 		expect(mockCreateContact).not.toHaveBeenCalled();
+	});
+
+	it('passes Telegram contact username to createContact', async () => {
+		mockSendToUser.mockImplementation((_userId: string, msg: Record<string, unknown>) => {
+			if (msg.type === 'get-contacts') {
+				return {
+					type: 'contacts-result',
+					contacts: [
+						{
+							telegramId: 'tg-alice',
+							firstName: 'Alice',
+							lastName: '',
+							phone: '',
+							username: 'alice_tg',
+						},
+					],
+				};
+			}
+			if (msg.type === 'get-dialogs') {
+				return { type: 'dialogs-result', dialogs: [] };
+			}
+			return {};
+		});
+
+		await import('../sync');
+		const processor = (globalThis as Record<string, unknown>)
+			.__syncSourceProcessor as SyncProcessor;
+
+		await processor({
+			data: { userId: 'user-1', workspaceId: 'ws-1', syncScope: 'private_recent' },
+		});
+
+		expect(mockCreateContact).toHaveBeenCalledWith(
+			'ws-1',
+			expect.objectContaining({ telegramId: 'tg-alice', username: 'alice_tg' }),
+			expect.anything(),
+		);
+	});
+
+	it('passes private peer username to createContact', async () => {
+		mockSendToUser.mockImplementation((_userId: string, msg: Record<string, unknown>) => {
+			if (msg.type === 'get-contacts') {
+				return { type: 'contacts-result', contacts: [] };
+			}
+			if (msg.type === 'get-dialogs') {
+				return {
+					type: 'dialogs-result',
+					dialogs: [
+						{
+							chatId: 'tg-peer',
+							type: 'private',
+							firstName: 'Peer',
+							lastName: '',
+							username: 'peer_handle',
+							topMessage: 10,
+							unreadCount: 0,
+							isBot: false,
+						},
+					],
+				};
+			}
+			if (msg.type === 'get-messages') {
+				return { type: 'messages-result', messages: [] };
+			}
+			return {};
+		});
+
+		await import('../sync');
+		const processor = (globalThis as Record<string, unknown>)
+			.__syncSourceProcessor as SyncProcessor;
+
+		await processor({
+			data: { userId: 'user-1', workspaceId: 'ws-1', syncScope: 'private_recent' },
+		});
+
+		expect(mockUpsertChat).toHaveBeenCalledWith(
+			'ws-1',
+			expect.objectContaining({ telegramChatId: 'tg-peer', sourceAccountId: MY_TG_ID }),
+			expect.anything(),
+		);
+		expect(mockCreateContact).toHaveBeenCalledWith(
+			'ws-1',
+			expect.objectContaining({ telegramId: 'tg-peer', username: 'peer_handle' }),
+			expect.anything(),
+		);
+	});
+
+	it('passes group participant username to createContact', async () => {
+		mockSendToUser.mockImplementation((_userId: string, msg: Record<string, unknown>) => {
+			if (msg.type === 'get-contacts') {
+				return { type: 'contacts-result', contacts: [] };
+			}
+			if (msg.type === 'get-dialogs') {
+				return {
+					type: 'dialogs-result',
+					dialogs: [
+						{
+							chatId: 'group-1',
+							type: 'group',
+							title: 'Founders',
+							participantCount: 2,
+							topMessage: 10,
+							unreadCount: 0,
+							isBot: false,
+						},
+					],
+				};
+			}
+			if (msg.type === 'get-participants') {
+				return {
+					type: 'participants-result',
+					participants: [
+						{
+							telegramId: 'tg-participant',
+							firstName: 'Pat',
+							lastName: '',
+							username: 'participant_handle',
+							isBot: false,
+						},
+					],
+				};
+			}
+			if (msg.type === 'get-messages') {
+				return { type: 'messages-result', messages: [] };
+			}
+			return {};
+		});
+
+		await import('../sync');
+		const processor = (globalThis as Record<string, unknown>)
+			.__syncSourceProcessor as SyncProcessor;
+
+		await processor({
+			data: {
+				userId: 'user-1',
+				workspaceId: 'ws-1',
+				syncScope: 'private_recent_with_groups',
+			},
+		});
+
+		expect(mockCreateContact).toHaveBeenCalledWith(
+			'ws-1',
+			expect.objectContaining({
+				telegramId: 'tg-participant',
+				username: 'participant_handle',
+			}),
+			expect.anything(),
+		);
 	});
 });

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * Tests for the cached inference module.
@@ -21,9 +21,13 @@ vi.mock('@anthropic-ai/sdk', () => {
 });
 
 // Import after mock setup
-const { inferWithCache } = await import('../cached-inference');
+const { getHeliconeHeaders, inferWithCache } = await import('../cached-inference');
 
 describe('inferWithCache', () => {
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
 	it('builds system array with cache_control breakpoints', async () => {
 		createSpy.mockClear();
 
@@ -125,5 +129,20 @@ describe('inferWithCache', () => {
 
 		expect(callArgs.max_tokens).toBe(512);
 		expect(callArgs.temperature).toBe(0.7);
+	});
+
+	it('keeps Helicone headers off unless explicitly enabled', () => {
+		vi.stubEnv('AI_PROCESSING_ENABLED', 'true');
+		vi.stubEnv('HELICONE_API_KEY', 'helicone-key');
+		vi.stubEnv('HELICONE_ENABLED', 'false');
+
+		expect(getHeliconeHeaders({ feature: 'test-feature' })).toEqual({});
+
+		vi.stubEnv('HELICONE_ENABLED', 'true');
+		expect(getHeliconeHeaders({ feature: 'test-feature' })).toEqual(
+			expect.objectContaining({
+				'Helicone-Property-Feature': 'test-feature',
+			}),
+		);
 	});
 });

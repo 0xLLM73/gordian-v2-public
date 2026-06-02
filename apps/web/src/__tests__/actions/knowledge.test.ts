@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const mockGetOpenAIApiKey = vi.hoisted(() =>
+	vi.fn(async () => process.env.OPENAI_API_KEY?.trim() || undefined),
+);
+const mockMaskEntities = vi.hoisted(() => vi.fn((text: string) => ({ maskedText: text })));
+
 vi.mock('next/headers', () => ({
 	headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
@@ -9,12 +14,16 @@ vi.mock('@/lib/track', () => ({
 	trackEvent: vi.fn(),
 }));
 
+vi.mock('@repo/crypto/local-secrets', () => ({
+	getOpenAIApiKey: mockGetOpenAIApiKey,
+}));
+
 vi.mock('@repo/crypto', () => ({
 	withKeys: vi.fn((_envelope: unknown, fn: () => unknown) => fn()),
 	unwrapWrk: vi.fn(() => Promise.resolve(Buffer.from('mock-wrk'))),
 	deriveKeys: vi.fn(() => Promise.resolve({ bik: Buffer.from('mock-bik') })),
 	prefilterEntities: vi.fn(() => []),
-	maskEntities: vi.fn((text: string) => ({ maskedText: text })),
+	maskEntities: mockMaskEntities,
 }));
 
 vi.mock('@/lib/auth', () => ({
@@ -56,18 +65,40 @@ const mockListKnowledgeNodes = vi.fn();
 const mockSearchKnowledgeNodes = vi.fn();
 const mockGetKnowledgeNode = vi.fn();
 const mockListContactsByKnowledge = vi.fn();
+const mockListEvidenceForKnowledgeLink = vi.fn();
+const mockListEvidenceForKnowledgeNode = vi.fn();
+const mockListEvidenceForKnowledgeContact = vi.fn();
+const mockListContactsWithEvidenceForKnowledgeNode = vi.fn();
+const mockSearchKnowledgeNodesWithEvidence = vi.fn();
+const mockNormalizeKnowledgeSearchQuery = vi.fn((query: string) =>
+	query.replace(/^who talked about\s+/i, '').trim(),
+);
 const mockListKnowledgeByContact = vi.fn();
 const mockGetKnowledgeNeighbors = vi.fn();
 const mockGetSharedKnowledge = vi.fn();
 const mockMergeKnowledgeNodes = vi.fn();
 const mockGetGraphData = vi.fn();
+const mockGetCalibration = vi.fn();
+const mockCreateKnowledgeNode = vi.fn();
+const mockCreateKnowledgeEvidence = vi.fn();
+const mockUpdateKnowledgeNode = vi.fn();
 
 vi.mock('@repo/db', () => ({
 	withWorkspaceRLS: vi.fn((_wsId: string, fn: (tx: unknown) => unknown) => fn({})),
+	createKnowledgeEvidence: mockCreateKnowledgeEvidence,
+	createKnowledgeNode: mockCreateKnowledgeNode,
+	updateKnowledgeNode: mockUpdateKnowledgeNode,
+	getCalibration: mockGetCalibration,
 	listKnowledgeNodes: mockListKnowledgeNodes,
 	searchKnowledgeNodes: mockSearchKnowledgeNodes,
 	getKnowledgeNode: mockGetKnowledgeNode,
 	listContactsByKnowledge: mockListContactsByKnowledge,
+	listEvidenceForKnowledgeLink: mockListEvidenceForKnowledgeLink,
+	listEvidenceForKnowledgeNode: mockListEvidenceForKnowledgeNode,
+	listEvidenceForKnowledgeContact: mockListEvidenceForKnowledgeContact,
+	listContactsWithEvidenceForKnowledgeNode: mockListContactsWithEvidenceForKnowledgeNode,
+	searchKnowledgeNodesWithEvidence: mockSearchKnowledgeNodesWithEvidence,
+	normalizeKnowledgeSearchQuery: mockNormalizeKnowledgeSearchQuery,
 	listKnowledgeByContact: mockListKnowledgeByContact,
 	getKnowledgeNeighbors: mockGetKnowledgeNeighbors,
 	getSharedKnowledge: mockGetSharedKnowledge,
@@ -144,11 +175,29 @@ const mockNodeB = {
 	updatedAt: new Date(),
 };
 
+const projectedMockNode = {
+	id: NODE_ID_1,
+	type: 'topic',
+	name: 'defi',
+	displayName: 'DeFi',
+	description: 'Decentralised finance protocols',
+	mentionCount: 5,
+	firstSeenAt: null,
+	lastSeenAt: null,
+	createdAt: mockNode.createdAt,
+	reviewStatus: null,
+	reviewedAt: null,
+};
+
 describe('knowledge actions', () => {
 	beforeEach(() => {
 		vi.resetModules();
 		vi.clearAllMocks();
+		mockMaskEntities.mockImplementation((text: string) => ({ maskedText: text }));
+		mockGetCalibration.mockResolvedValue({ consentAiAnalysis: true });
 		vi.stubEnv('OPENAI_API_KEY', 'test-key');
+		vi.stubEnv('WORKER_INTERNAL_SECRET', 'test-secret');
+		vi.stubEnv('WORKER_URL', 'http://localhost:3001');
 	});
 
 	describe('listKnowledgeNodesAction', () => {
@@ -158,7 +207,11 @@ describe('knowledge actions', () => {
 			const { listKnowledgeNodesAction } = await import('@/app/actions/knowledge');
 			const result = await listKnowledgeNodesAction({ limit: 20, offset: 0 });
 
-			expect(result?.data).toEqual([{ ...mockNode, contactCount: 0, contactPreviews: [] }]);
+			expect(result?.data).toEqual([
+				{ ...projectedMockNode, contactCount: 0, contactPreviews: [] },
+			]);
+			expect(JSON.stringify(result?.data)).not.toContain('workspaceId');
+			expect(JSON.stringify(result?.data)).not.toContain('embedding');
 			expect(mockListKnowledgeNodes).toHaveBeenCalledWith(
 				WORKSPACE_ID,
 				expect.objectContaining({ limit: 20, offset: 0 }),
@@ -179,8 +232,8 @@ describe('knowledge actions', () => {
 			);
 		});
 
-		it('calls searchKnowledgeNodes when query is provided', async () => {
-			mockSearchKnowledgeNodes.mockResolvedValue([mockNode]);
+		it('uses confidence-filtered knowledge search when query is provided', async () => {
+			mockSearchKnowledgeNodesWithEvidence.mockResolvedValue([{ node: mockNode }]);
 
 			const mockEmbedding = Array(512).fill(0.1);
 			const originalFetch = globalThis.fetch;
@@ -195,34 +248,48 @@ describe('knowledge actions', () => {
 				const { listKnowledgeNodesAction } = await import('@/app/actions/knowledge');
 				const result = await listKnowledgeNodesAction({ query: 'defi', limit: 20, offset: 0 });
 
-				expect(result?.data).toEqual([{ ...mockNode, contactCount: 0, contactPreviews: [] }]);
-				expect(mockSearchKnowledgeNodes).toHaveBeenCalledWith(
+				expect(result?.data).toEqual([
+					{ ...projectedMockNode, contactCount: 0, contactPreviews: [] },
+				]);
+				expect(mockSearchKnowledgeNodesWithEvidence).toHaveBeenCalledWith(
 					WORKSPACE_ID,
 					'defi',
 					mockEmbedding,
 					MOCK_ENVELOPE,
+					expect.objectContaining({
+						limit: 20,
+						minSimilarity: 0.62,
+					}),
 				);
 				expect(mockListKnowledgeNodes).not.toHaveBeenCalled();
+				expect(mockSearchKnowledgeNodes).not.toHaveBeenCalled();
 			} finally {
 				globalThis.fetch = originalFetch;
 			}
 		});
 
-		it('falls back to text search when embeddings are not configured', async () => {
+		it('uses exact knowledge search when embeddings are not configured', async () => {
 			vi.stubEnv('OPENAI_API_KEY', '');
-			mockSearchKnowledgeNodes.mockResolvedValue([mockNode]);
+			mockSearchKnowledgeNodesWithEvidence.mockResolvedValue([{ node: mockNode }]);
 			const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
 			const { listKnowledgeNodesAction } = await import('@/app/actions/knowledge');
 			const result = await listKnowledgeNodesAction({ query: 'defi', limit: 20, offset: 0 });
 
-			expect(result?.data).toEqual([{ ...mockNode, contactCount: 0, contactPreviews: [] }]);
-			expect(mockSearchKnowledgeNodes).toHaveBeenCalledWith(
+			expect(result?.data).toEqual([
+				{ ...projectedMockNode, contactCount: 0, contactPreviews: [] },
+			]);
+			expect(mockSearchKnowledgeNodesWithEvidence).toHaveBeenCalledWith(
 				WORKSPACE_ID,
 				'defi',
 				undefined,
 				MOCK_ENVELOPE,
+				expect.objectContaining({
+					limit: 20,
+					minSimilarity: 0.62,
+				}),
 			);
+			expect(mockSearchKnowledgeNodes).not.toHaveBeenCalled();
 			expect(fetchSpy).not.toHaveBeenCalled();
 			fetchSpy.mockRestore();
 		});
@@ -236,6 +303,603 @@ describe('knowledge actions', () => {
 			});
 			expect(result?.validationErrors).toBeDefined();
 			expect(mockListKnowledgeNodes).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('searchKnowledgeNodesWithEvidenceAction', () => {
+		it('returns evidence-aware node results with safe projected fields', async () => {
+			const evidenceDate = new Date('2026-05-02T12:00:00Z');
+			const mockEmbedding = Array(512).fill(0.1);
+			mockSearchKnowledgeNodesWithEvidence.mockResolvedValue([
+				{
+					node: {
+						...mockNode,
+						firstSeenAt: null,
+						nameBlindIndex: 'secret-bidx',
+						aliases: ['defi'],
+						metadata: { internal: true },
+					},
+					similarity: 0.82,
+					matchScore: 0.91,
+					matchReasons: ['semantic similarity', 'message evidence'],
+					exactMatch: false,
+					aliasMatch: false,
+					messageRecallScore: 0.84,
+					messageHitCount: 1,
+					messageMatchedEvidenceIds: ['eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'],
+					messageMatchedAt: evidenceDate,
+					messageRecallReasons: ['evidence_message_match', 'memory_semantic'],
+					evidenceCount: 2,
+					aggregateEvidenceCount: 4,
+					latestEvidenceAt: evidenceDate,
+					topConfidence: 0.93,
+					connectedContactCount: 2,
+					connectedContactsWithEvidence: 1,
+					contacts: [
+						{
+							id: CONTACT_ID_1,
+							firstName: 'Alice',
+							lastName: 'Smith',
+							relationType: 'knows_about',
+							strength: 0.9,
+							evidenceCount: 2,
+							lastEvidenceAt: evidenceDate,
+							evidence: [
+								{
+									id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+									contactId: CONTACT_ID_1,
+									messageId: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+									relationType: 'knows_about',
+									evidenceKind: 'llm_extracted',
+									confidence: 0.93,
+									snippet: 'Alice talked about DeFi liquidity.',
+									occurredAt: evidenceDate,
+									createdAt: evidenceDate,
+								},
+							],
+						},
+					],
+					evidence: [
+						{
+							id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+							contactId: CONTACT_ID_1,
+							messageId: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+							relationType: 'knows_about',
+							evidenceKind: 'llm_extracted',
+							confidence: 0.93,
+							snippet: 'Alice talked about DeFi liquidity.',
+							occurredAt: evidenceDate,
+							createdAt: evidenceDate,
+						},
+					],
+				},
+			]);
+			const originalFetch = globalThis.fetch;
+			globalThis.fetch = vi.fn(() =>
+				Promise.resolve({
+					ok: true,
+					json: () => Promise.resolve({ data: [{ embedding: mockEmbedding }] }),
+				}),
+			) as unknown as typeof fetch;
+
+			try {
+				const { searchKnowledgeNodesWithEvidenceAction } = await import('@/app/actions/knowledge');
+				const result = await searchKnowledgeNodesWithEvidenceAction({
+					query: 'who talked about DeFi',
+					limit: 10,
+				});
+
+				expect(mockNormalizeKnowledgeSearchQuery).toHaveBeenCalledWith('who talked about DeFi');
+				expect(mockSearchKnowledgeNodesWithEvidence).toHaveBeenCalledWith(
+					WORKSPACE_ID,
+					'DeFi',
+					mockEmbedding,
+					MOCK_ENVELOPE,
+					expect.objectContaining({
+						limit: 10,
+						minSimilarity: 0.62,
+						messageRecallQueryText: 'DeFi',
+					}),
+				);
+				expect(result?.data).toEqual({
+					query: 'who talked about DeFi',
+					normalizedQuery: 'DeFi',
+					minSimilarity: 0.62,
+					noConfidentResults: false,
+					answer: {
+						title: 'DeFi is the strongest local match for "DeFi".',
+						summary:
+							'1 topic matched with 1 connected contact and 2 source evidence rows. Top match confidence is 91%.',
+						support: [
+							'1 contact connected',
+							'2 evidence rows stored',
+							'1 explicit source in the visible preview',
+						],
+						suggestedAction:
+							'Open the top topic to inspect the supporting contacts and source snippets.',
+					},
+					results: [
+						{
+							node: projectedMockNode,
+							similarity: 0.82,
+							matchScore: 0.91,
+							matchReasons: ['semantic similarity', 'message evidence'],
+							exactMatch: false,
+							aliasMatch: false,
+							messageRecallScore: 0.84,
+							messageHitCount: 1,
+							messageMatchedEvidenceIds: ['eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'],
+							messageMatchedAt: evidenceDate,
+							messageRecallReasons: ['evidence_message_match', 'memory_semantic'],
+							evidenceCount: 2,
+							aggregateEvidenceCount: 4,
+							latestEvidenceAt: evidenceDate,
+							topConfidence: 0.93,
+							connectedContactCount: 2,
+							connectedContactsWithEvidence: 1,
+							contacts: [
+								{
+									id: CONTACT_ID_1,
+									firstName: 'Alice',
+									lastName: 'Smith',
+									relationType: 'knows_about',
+									strength: 0.9,
+									evidenceCount: 2,
+									lastEvidenceAt: evidenceDate,
+									evidence: [
+										{
+											id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+											contactId: CONTACT_ID_1,
+											messageId: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+											relationType: 'knows_about',
+											evidenceKind: 'llm_extracted',
+											claimLabel: 'explicit',
+											confidence: 0.93,
+											snippet: 'Alice talked about DeFi liquidity.',
+											occurredAt: evidenceDate,
+											createdAt: evidenceDate,
+										},
+									],
+								},
+							],
+							evidence: [
+								{
+									id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+									contactId: CONTACT_ID_1,
+									messageId: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+									relationType: 'knows_about',
+									evidenceKind: 'llm_extracted',
+									claimLabel: 'explicit',
+									confidence: 0.93,
+									snippet: 'Alice talked about DeFi liquidity.',
+									occurredAt: evidenceDate,
+									createdAt: evidenceDate,
+								},
+							],
+						},
+					],
+				});
+				const serialized = JSON.stringify(result?.data);
+				expect(serialized).not.toContain(WORKSPACE_ID);
+				expect(serialized).not.toContain('embedding');
+				expect(serialized).not.toContain('secret-bidx');
+				expect(serialized).not.toContain('internal');
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
+		});
+
+		it('returns noConfidentResults for negative searches with no candidates', async () => {
+			mockSearchKnowledgeNodesWithEvidence.mockResolvedValue([]);
+			const originalFetch = globalThis.fetch;
+			globalThis.fetch = vi.fn(() =>
+				Promise.resolve({
+					ok: true,
+					json: () => Promise.resolve({ data: [{ embedding: Array(512).fill(0.1) }] }),
+				}),
+			) as unknown as typeof fetch;
+
+			try {
+				const { searchKnowledgeNodesWithEvidenceAction } = await import('@/app/actions/knowledge');
+				const result = await searchKnowledgeNodesWithEvidenceAction({
+					query: 'totally unrelated query',
+					limit: 10,
+				});
+
+				expect(result?.data?.noConfidentResults).toBe(true);
+				expect(result?.data?.results).toEqual([]);
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
+		});
+
+		it('uses the masked query for message recall instead of the raw normalized query', async () => {
+			mockMaskEntities.mockImplementation((text: string) => ({ maskedText: `masked:${text}` }));
+			mockSearchKnowledgeNodesWithEvidence.mockResolvedValue([]);
+			const originalFetch = globalThis.fetch;
+			globalThis.fetch = vi.fn(() =>
+				Promise.resolve({
+					ok: true,
+					json: () => Promise.resolve({ data: [{ embedding: Array(512).fill(0.1) }] }),
+				}),
+			) as unknown as typeof fetch;
+
+			try {
+				const { searchKnowledgeNodesWithEvidenceAction } = await import('@/app/actions/knowledge');
+				await searchKnowledgeNodesWithEvidenceAction({
+					query: 'who talked about Alice and AI agents',
+					limit: 10,
+				});
+
+				expect(mockSearchKnowledgeNodesWithEvidence).toHaveBeenCalledWith(
+					WORKSPACE_ID,
+					'Alice and AI agents',
+					Array(512).fill(0.1),
+					MOCK_ENVELOPE,
+					expect.objectContaining({
+						messageRecallQueryText: 'masked:Alice and AI agents',
+					}),
+				);
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
+		});
+	});
+
+	describe('local knowledge build actions', () => {
+		it('runs relationship inference through the worker without accepting a client workspace id', async () => {
+			const originalFetch = globalThis.fetch;
+			globalThis.fetch = vi.fn(() =>
+				Promise.resolve({
+					ok: true,
+					json: () =>
+						Promise.resolve({
+							status: 'complete',
+							nodesProcessed: 7,
+							coOccurrenceLinks: 2,
+							similarityLinks: 3,
+							totalLinks: 5,
+						}),
+				}),
+			) as unknown as typeof fetch;
+
+			try {
+				const { runLocalKnowledgeInferenceAction } = await import('@/app/actions/knowledge');
+				const result = await runLocalKnowledgeInferenceAction({});
+
+				expect(result?.data).toEqual({
+					status: 'complete',
+					nodesProcessed: 7,
+					coOccurrenceLinks: 2,
+					similarityLinks: 3,
+					totalLinks: 5,
+					skippedReason: null,
+				});
+				expect(globalThis.fetch).toHaveBeenCalledWith(
+					'http://localhost:3001/admin/infer-knowledge',
+					expect.objectContaining({
+						method: 'POST',
+						headers: expect.objectContaining({
+							'X-Internal-Secret': 'test-secret',
+						}),
+						body: JSON.stringify({ workspaceId: WORKSPACE_ID }),
+					}),
+				);
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
+		});
+
+		it('does not run relationship inference when AI analysis consent is disabled', async () => {
+			mockGetCalibration.mockResolvedValueOnce({ consentAiAnalysis: false });
+			const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+			const { runLocalKnowledgeInferenceAction } = await import('@/app/actions/knowledge');
+			const result = await runLocalKnowledgeInferenceAction({});
+
+			expect(result?.data).toEqual({
+				status: 'skipped',
+				error: 'AI analysis consent is not enabled',
+				nodesProcessed: 0,
+				coOccurrenceLinks: 0,
+				similarityLinks: 0,
+				totalLinks: 0,
+			});
+			expect(fetchSpy).not.toHaveBeenCalled();
+			fetchSpy.mockRestore();
+		});
+
+		it('creates a manual local knowledge node and runs targeted message evidence build', async () => {
+			vi.stubEnv('KNOWLEDGE_EMBEDDING_PROVIDER', 'local');
+			vi.stubEnv('KNOWLEDGE_EMBEDDING_MODEL', 'nomic-embed-text');
+			const manualNode = {
+				...mockNode,
+				id: NODE_ID_2,
+				type: 'project' as const,
+				name: 'berachain',
+				displayName: 'Berachain',
+				description: 'Ecosystem context',
+				mentionCount: 1,
+			};
+			mockCreateKnowledgeNode.mockResolvedValue(manualNode);
+			mockCreateKnowledgeEvidence.mockResolvedValue({
+				id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+				workspaceId: WORKSPACE_ID,
+			});
+			const originalFetch = globalThis.fetch;
+			globalThis.fetch = vi.fn((input: RequestInfo | URL) => {
+				const url = String(input);
+				if (url === 'http://localhost:11434/v1/embeddings') {
+					return Promise.resolve({
+						ok: true,
+						json: () => Promise.resolve({ data: [{ embedding: Array(512).fill(0.2) }] }),
+					});
+				}
+				if (url === 'http://localhost:3001/admin/build-manual-knowledge-evidence') {
+					return Promise.resolve({
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								status: 'complete',
+								workspaceId: WORKSPACE_ID,
+								nodeId: NODE_ID_2,
+								manualEvidence: {
+									workspaceId: WORKSPACE_ID,
+									nodeId: NODE_ID_2,
+									contactsScanned: 13,
+									messagesScanned: 1200,
+									evidenceCreated: 2,
+									contactsLinked: 2,
+									totalEvidenceRows: 7,
+									totalEvidenceContacts: 3,
+									totalEvidenceMessages: 6,
+									elapsedMs: 1200,
+								},
+								inference: {
+									workspaceId: WORKSPACE_ID,
+									nodesProcessed: 8,
+									coOccurrenceLinks: 4,
+									similarityLinks: 15,
+									totalLinks: 19,
+								},
+							}),
+					});
+				}
+				throw new Error(`Unexpected fetch: ${url}`);
+			}) as unknown as typeof fetch;
+
+			try {
+				const { createManualKnowledgeNodeAction } = await import('@/app/actions/knowledge');
+				const result = await createManualKnowledgeNodeAction({
+					type: 'project',
+					name: 'Berachain',
+					description: 'Ecosystem context',
+					buildNow: true,
+				});
+
+				expect(result?.data).toEqual({
+					created: true,
+					buildQueued: false,
+					buildError: undefined,
+					buildStatus: 'complete',
+					analysis: {
+						mode: 'manual_evidence',
+						workspaceId: WORKSPACE_ID,
+						contactsProcessed: 13,
+						embeddingMatches: 2,
+						batchLinked: 2,
+						elapsedMs: 1200,
+					},
+					manualEvidence: {
+						workspaceId: WORKSPACE_ID,
+						nodeId: NODE_ID_2,
+						contactsScanned: 13,
+						messagesScanned: 1200,
+						evidenceCreated: 2,
+						contactsLinked: 2,
+						totalEvidenceRows: 7,
+						totalEvidenceContacts: 3,
+						totalEvidenceMessages: 6,
+						elapsedMs: 1200,
+					},
+					inference: {
+						workspaceId: WORKSPACE_ID,
+						nodesProcessed: 8,
+						coOccurrenceLinks: 4,
+						similarityLinks: 15,
+						totalLinks: 19,
+					},
+					node: {
+						id: NODE_ID_2,
+						type: 'project',
+						name: 'berachain',
+						displayName: 'Berachain',
+						description: 'Ecosystem context',
+						mentionCount: 1,
+						firstSeenAt: null,
+						lastSeenAt: null,
+						createdAt: manualNode.createdAt,
+						reviewStatus: null,
+						reviewedAt: null,
+					},
+				});
+				expect(mockCreateKnowledgeNode).toHaveBeenCalledWith(
+					WORKSPACE_ID,
+					expect.objectContaining({
+						type: 'project',
+						name: 'Berachain',
+						displayName: 'Berachain',
+						description: 'Ecosystem context',
+						embedding: Array(512).fill(0.2),
+						metadata: {
+							source: 'manual',
+							localBuildRequested: true,
+						},
+					}),
+					MOCK_ENVELOPE,
+				);
+				expect(mockCreateKnowledgeEvidence).toHaveBeenCalledWith(
+					WORKSPACE_ID,
+					expect.objectContaining({
+						knowledgeNodeId: NODE_ID_2,
+						relationType: 'manual',
+						evidenceKind: 'manual',
+						confidence: 1,
+					}),
+					MOCK_ENVELOPE,
+				);
+				expect(globalThis.fetch).toHaveBeenCalledWith(
+					'http://localhost:11434/v1/embeddings',
+					expect.objectContaining({
+						body: expect.stringContaining('search_document: Type: project'),
+					}),
+				);
+				expect(globalThis.fetch).toHaveBeenCalledWith(
+					'http://localhost:3001/admin/build-manual-knowledge-evidence',
+					expect.objectContaining({
+						body: JSON.stringify({
+							workspaceId: WORKSPACE_ID,
+							nodeId: NODE_ID_2,
+							limit: 500,
+							maxEvidence: 200,
+							runInference: true,
+							waitForResult: true,
+						}),
+					}),
+				);
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
+		});
+	});
+
+	describe('reviewKnowledgeNodeAction', () => {
+		it('updates safe correction fields, refreshes the local embedding, and stores review metadata', async () => {
+			vi.stubEnv('KNOWLEDGE_EMBEDDING_PROVIDER', 'local');
+			vi.stubEnv('KNOWLEDGE_EMBEDDING_MODEL', 'nomic-embed-text');
+			const updatedNode = {
+				...mockNode,
+				displayName: 'DeFi Networks',
+				description: 'Reviewed decentralized finance context',
+			};
+			mockGetKnowledgeNode.mockResolvedValue({
+				...mockNode,
+				metadata: { source: 'llm_extracted' },
+			});
+			mockUpdateKnowledgeNode.mockResolvedValue(updatedNode);
+			const originalFetch = globalThis.fetch;
+			globalThis.fetch = vi.fn(() =>
+				Promise.resolve({
+					ok: true,
+					json: () => Promise.resolve({ data: [{ embedding: Array(512).fill(0.4) }] }),
+				}),
+			) as unknown as typeof fetch;
+
+			try {
+				const { reviewKnowledgeNodeAction } = await import('@/app/actions/knowledge');
+				const result = await reviewKnowledgeNodeAction({
+					nodeId: NODE_ID_1,
+					type: 'topic',
+					displayName: 'DeFi Networks',
+					description: 'Reviewed decentralized finance context',
+					status: 'reviewed',
+				});
+
+				expect(mockUpdateKnowledgeNode).toHaveBeenCalledWith(
+					WORKSPACE_ID,
+					NODE_ID_1,
+					expect.objectContaining({
+						type: 'topic',
+						name: 'DeFi Networks',
+						displayName: 'DeFi Networks',
+						description: 'Reviewed decentralized finance context',
+						embedding: Array(512).fill(0.4),
+						metadata: expect.objectContaining({
+							source: 'llm_extracted',
+							review: expect.objectContaining({
+								status: 'reviewed',
+								source: 'manual',
+							}),
+						}),
+					}),
+					MOCK_ENVELOPE,
+				);
+				expect(result?.data?.updated).toBe(true);
+				expect(result?.data?.node).toEqual(
+					expect.objectContaining({
+						displayName: 'DeFi Networks',
+						reviewStatus: 'reviewed',
+					}),
+				);
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
+		});
+	});
+
+	describe('getKnowledgeRelationshipExplanationsAction', () => {
+		it('returns safe relationship explanations with decrypted evidence snippets', async () => {
+			const evidenceDate = new Date('2026-05-02T12:00:00Z');
+			mockGetKnowledgeNode.mockResolvedValue(mockNode);
+			mockGetKnowledgeNeighbors.mockResolvedValue([
+				{
+					direction: 'outbound',
+					link: {
+						id: '99999999-9999-4999-8999-999999999999',
+						workspaceId: WORKSPACE_ID,
+						sourceNodeId: NODE_ID_1,
+						targetNodeId: NODE_ID_2,
+						linkType: 'related_to',
+						weight: 0.84,
+						createdAt: evidenceDate,
+					},
+					node: mockNodeB,
+				},
+			]);
+			mockListEvidenceForKnowledgeLink.mockResolvedValue([
+				{
+					id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+					contactId: CONTACT_ID_1,
+					messageId: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+					relationType: 'related_to',
+					evidenceKind: 'contact_cooccurrence',
+					confidence: 0.84,
+					snippet: 'Alice connected DeFi and Ethereum in one thread.',
+					occurredAt: evidenceDate,
+					createdAt: evidenceDate,
+				},
+			]);
+
+			const { getKnowledgeRelationshipExplanationsAction } = await import(
+				'@/app/actions/knowledge'
+			);
+			const result = await getKnowledgeRelationshipExplanationsAction({
+				nodeId: NODE_ID_1,
+				limit: 4,
+			});
+
+			expect(mockListEvidenceForKnowledgeLink).toHaveBeenCalledWith(
+				WORKSPACE_ID,
+				NODE_ID_1,
+				NODE_ID_2,
+				MOCK_ENVELOPE,
+				expect.objectContaining({ relationType: 'related_to', limit: 2 }),
+			);
+			expect(result?.data?.explanations).toEqual([
+				expect.objectContaining({
+					direction: 'outbound',
+					linkType: 'related_to',
+					weight: 0.84,
+					neighbor: expect.objectContaining({ displayName: 'Ethereum' }),
+					explanation: 'Connected by related to with 1 supporting evidence row.',
+					evidence: [
+						expect.objectContaining({
+							claimLabel: 'inferred',
+							snippet: 'Alice connected DeFi and Ethereum in one thread.',
+						}),
+					],
+				}),
+			]);
 		});
 	});
 
@@ -292,6 +956,163 @@ describe('knowledge actions', () => {
 			const result = await getKnowledgeNodeAction({ id: 'not-a-uuid' });
 			expect(result?.validationErrors).toBeDefined();
 			expect(mockGetKnowledgeNode).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('knowledge evidence actions', () => {
+		it('returns node evidence with workspace-scoped node verification', async () => {
+			const evidence = [
+				{
+					id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+					workspaceId: WORKSPACE_ID,
+					knowledgeNodeId: NODE_ID_1,
+					contactId: CONTACT_ID_1,
+					relationType: 'knows_about',
+					evidenceKind: 'llm_extracted',
+					confidence: 0.9,
+					snippet: 'We talked about DeFi liquidity.',
+					occurredAt: new Date(),
+					createdAt: new Date(),
+				},
+			];
+			mockGetKnowledgeNode.mockResolvedValue(mockNode);
+			mockListEvidenceForKnowledgeNode.mockResolvedValue(evidence);
+
+			const { getKnowledgeEvidenceAction } = await import('@/app/actions/knowledge');
+			const result = await getKnowledgeEvidenceAction({ nodeId: NODE_ID_1, limit: 10 });
+
+			expect(result?.data).toEqual([
+				{
+					id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+					knowledgeNodeId: NODE_ID_1,
+					relatedKnowledgeNodeId: undefined,
+					contactId: CONTACT_ID_1,
+					messageId: undefined,
+					relationType: 'knows_about',
+					evidenceKind: 'llm_extracted',
+					claimLabel: 'explicit',
+					confidence: 0.9,
+					snippet: 'We talked about DeFi liquidity.',
+					occurredAt: evidence[0]?.occurredAt,
+					createdAt: evidence[0]?.createdAt,
+					metadata: undefined,
+				},
+			]);
+			expect(JSON.stringify(result?.data)).not.toContain(WORKSPACE_ID);
+			expect(mockGetKnowledgeNode).toHaveBeenCalledWith(WORKSPACE_ID, NODE_ID_1, MOCK_ENVELOPE);
+			expect(mockListEvidenceForKnowledgeNode).toHaveBeenCalledWith(
+				WORKSPACE_ID,
+				NODE_ID_1,
+				MOCK_ENVELOPE,
+				{ limit: 10 },
+			);
+		});
+
+		it('returns node/contact evidence when contactId is provided', async () => {
+			mockGetKnowledgeNode.mockResolvedValue(mockNode);
+			mockListEvidenceForKnowledgeContact.mockResolvedValue([]);
+
+			const { getKnowledgeEvidenceAction } = await import('@/app/actions/knowledge');
+			await getKnowledgeEvidenceAction({
+				nodeId: NODE_ID_1,
+				contactId: CONTACT_ID_1,
+				limit: 5,
+			});
+
+			expect(mockListEvidenceForKnowledgeContact).toHaveBeenCalledWith(
+				WORKSPACE_ID,
+				NODE_ID_1,
+				CONTACT_ID_1,
+				MOCK_ENVELOPE,
+				{ limit: 5 },
+			);
+		});
+
+		it('does not read evidence when node is outside the workspace', async () => {
+			mockGetKnowledgeNode.mockResolvedValue(null);
+
+			const { getKnowledgeEvidenceAction } = await import('@/app/actions/knowledge');
+			const result = await getKnowledgeEvidenceAction({ nodeId: NODE_ID_1 });
+
+			expect(result?.data).toEqual([]);
+			expect(mockListEvidenceForKnowledgeNode).not.toHaveBeenCalled();
+			expect(mockListEvidenceForKnowledgeContact).not.toHaveBeenCalled();
+		});
+
+		it('returns contacts with projected evidence fields', async () => {
+			const evidenceDate = new Date('2026-05-01T00:00:00Z');
+			mockGetKnowledgeNode.mockResolvedValue(mockNode);
+			mockListContactsWithEvidenceForKnowledgeNode.mockResolvedValue([
+				{
+					contact: {
+						id: CONTACT_ID_1,
+						workspaceId: WORKSPACE_ID,
+						firstName: 'Alice',
+						lastName: 'Smith',
+						phone: '+15555555555',
+					},
+					link: {
+						relationType: 'knows_about',
+						strength: 0.9,
+						evidenceCount: 1,
+						lastEvidenceAt: evidenceDate,
+					},
+					evidence: [
+						{
+							id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+							messageId: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+							relationType: 'knows_about',
+							evidenceKind: 'llm_extracted',
+							claimLabel: 'explicit',
+							confidence: 0.9,
+							snippet: 'Alice mentioned DeFi liquidity.',
+							occurredAt: evidenceDate,
+							createdAt: evidenceDate,
+							metadata: { source: 'test' },
+						},
+					],
+				},
+			]);
+
+			const { getKnowledgeContactsWithEvidenceAction } = await import('@/app/actions/knowledge');
+			const result = await getKnowledgeContactsWithEvidenceAction({ nodeId: NODE_ID_1 });
+
+			expect(result?.data).toEqual([
+				{
+					contact: { id: CONTACT_ID_1, firstName: 'Alice', lastName: 'Smith' },
+					relationType: 'knows_about',
+					strength: 0.9,
+					evidenceCount: 1,
+					lastEvidenceAt: evidenceDate,
+					evidence: [
+						{
+							id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+							messageId: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+							relationType: 'knows_about',
+							evidenceKind: 'llm_extracted',
+							claimLabel: 'explicit',
+							confidence: 0.9,
+							snippet: 'Alice mentioned DeFi liquidity.',
+							occurredAt: evidenceDate,
+							createdAt: evidenceDate,
+							metadata: { source: 'test' },
+						},
+					],
+				},
+			]);
+			expect(JSON.stringify(result?.data)).not.toContain('+15555555555');
+			expect(JSON.stringify(result?.data)).not.toContain('workspaceId');
+			expect(JSON.stringify(result?.data)).not.toContain('embedding');
+		});
+
+		it('does not read contacts with evidence when node is outside the workspace', async () => {
+			mockGetKnowledgeNode.mockResolvedValue(null);
+
+			const { getKnowledgeContactsWithEvidenceAction } = await import('@/app/actions/knowledge');
+			const result = await getKnowledgeContactsWithEvidenceAction({ nodeId: NODE_ID_1 });
+
+			expect(result?.data).toEqual([]);
+			expect(mockListContactsWithEvidenceForKnowledgeNode).not.toHaveBeenCalled();
 		});
 	});
 

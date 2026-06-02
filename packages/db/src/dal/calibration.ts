@@ -40,6 +40,10 @@ export interface CalibrationContext {
 
 export type UserCalibration = typeof userCalibrations.$inferSelect;
 
+export interface CalibrationCompletionStatus {
+	completedAt: Date | null;
+}
+
 const COMMUNICATION_STYLE_LABELS: Record<string, string> = {
 	formal: 'formal and professional',
 	casual: 'casual and approachable',
@@ -99,6 +103,18 @@ export async function getCalibration(
 			.limit(1);
 		return rows[0] ?? null;
 	});
+}
+
+export async function getCalibrationCompletionStatus(
+	userId: string,
+	workspaceId: string,
+): Promise<CalibrationCompletionStatus | null> {
+	const rows = await db
+		.select({ completedAt: userCalibrations.completedAt })
+		.from(userCalibrations)
+		.where(and(eq(userCalibrations.userId, userId), eq(userCalibrations.workspaceId, workspaceId)))
+		.limit(1);
+	return rows[0] ?? null;
 }
 
 /**
@@ -315,6 +331,7 @@ export interface ConsentInput {
 	consentDataProcessing: boolean;
 	consentAiAnalysis: boolean;
 	consentTelegramAccess: boolean;
+	consentVersion?: number;
 }
 
 /**
@@ -327,6 +344,7 @@ export async function saveConsent(
 	data: ConsentInput,
 ): Promise<void> {
 	const now = new Date();
+	const consentVersion = data.consentVersion ?? 1;
 
 	const existing = await db
 		.select({ id: userCalibrations.id })
@@ -342,6 +360,7 @@ export async function saveConsent(
 				consentAiAnalysis: data.consentAiAnalysis,
 				consentTelegramAccess: data.consentTelegramAccess,
 				consentTimestamp: now,
+				consentVersion,
 				updatedAt: now,
 			})
 			.where(eq(userCalibrations.id, existing[0].id));
@@ -353,6 +372,7 @@ export async function saveConsent(
 			consentAiAnalysis: data.consentAiAnalysis,
 			consentTelegramAccess: data.consentTelegramAccess,
 			consentTimestamp: now,
+			consentVersion,
 		});
 	}
 }
@@ -372,6 +392,39 @@ export async function hasAnalyticsConsent(userId: string, workspaceId: string): 
 	// No calibration row yet = pre-consent onboarding, allow tracking
 	if (!row[0]) return true;
 	return row[0].consent;
+}
+
+/**
+ * Check whether any user in a workspace has explicitly enabled AI analysis.
+ * Used by worker-side jobs that only know workspaceId, not the initiating user.
+ */
+export async function hasWorkspaceAiAnalysisConsent(workspaceId: string): Promise<boolean> {
+	const row = await db
+		.select({ consent: userCalibrations.consentAiAnalysis })
+		.from(userCalibrations)
+		.where(
+			and(
+				eq(userCalibrations.workspaceId, workspaceId),
+				eq(userCalibrations.consentAiAnalysis, true),
+			),
+		)
+		.limit(1);
+
+	return row[0]?.consent === true;
+}
+
+/** Check whether this specific user has explicitly enabled AI analysis in the workspace. */
+export async function hasUserAiAnalysisConsent(
+	userId: string,
+	workspaceId: string,
+): Promise<boolean> {
+	const row = await db
+		.select({ consent: userCalibrations.consentAiAnalysis })
+		.from(userCalibrations)
+		.where(and(eq(userCalibrations.userId, userId), eq(userCalibrations.workspaceId, workspaceId)))
+		.limit(1);
+
+	return row[0]?.consent === true;
 }
 
 // ─── Priority Contact Suggestions ───────────────────────────────────────────

@@ -1,5 +1,5 @@
 import { saveBrief } from '@repo/db';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { selectPromptVariant } from '../bandit';
 import { inferWithCache } from '../cached-inference';
 import { generateEmbedding } from '../embeddings';
@@ -14,11 +14,13 @@ const mockBroadcastUpdate = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 const mockDbSelect = vi.hoisted(() => vi.fn());
 
 vi.mock('bullmq', () => ({
-	Worker: vi.fn(function MockWorker(name: string, processor: (job: unknown) => Promise<unknown>) {
+	// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
+	Worker: vi.fn(function (name: string, processor: (job: unknown) => Promise<unknown>) {
 		if (name === 'briefs') processorStore.fn = processor;
 		return { on: vi.fn() };
 	}),
-	Queue: vi.fn(function MockQueue() {
+	// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
+	Queue: vi.fn(function () {
 		return { add: vi.fn(() => Promise.resolve()), on: vi.fn() };
 	}),
 }));
@@ -76,6 +78,15 @@ vi.mock('../../../redis', () => ({ connection: {} }));
 vi.mock('../bandit', () => ({ selectPromptVariant: vi.fn() }));
 vi.mock('../cached-inference', () => ({ inferWithCache: vi.fn() }));
 vi.mock('../embeddings', () => ({ generateEmbedding: vi.fn() }));
+
+beforeEach(() => {
+	vi.unstubAllEnvs();
+	mockDbSelect.mockReset();
+});
+
+afterEach(() => {
+	vi.unstubAllEnvs();
+});
 
 /** Build a chainable db.select mock result */
 function chainResult(rows: unknown[]) {
@@ -209,6 +220,7 @@ describe('briefWorker — bandit switch and saveBrief', () => {
 
 	beforeEach(async () => {
 		vi.clearAllMocks();
+		vi.stubEnv('TELEGRAM_SEND_ENABLED', 'true');
 		// Ensure module is loaded and processorStore.fn is populated
 		await import('../morning-brief');
 
@@ -298,6 +310,7 @@ describe('briefWorker — bandit switch and saveBrief', () => {
 describe('briefWorker — preferences guard', () => {
 	beforeEach(async () => {
 		vi.clearAllMocks();
+		vi.stubEnv('TELEGRAM_SEND_ENABLED', 'true');
 		await import('../morning-brief');
 	});
 
@@ -328,6 +341,7 @@ describe('briefWorker — Telegram push', () => {
 
 	beforeEach(async () => {
 		vi.clearAllMocks();
+		vi.stubEnv('TELEGRAM_SEND_ENABLED', 'true');
 		await import('../morning-brief');
 
 		// Re-set getPreferences — the "preferences guard" test leaks briefEnabled:false
@@ -361,6 +375,25 @@ describe('briefWorker — Telegram push', () => {
 			expect.stringContaining('Good morning!'),
 			{ parse_mode: 'HTML' },
 		);
+	});
+
+	it('skips Telegram push when TELEGRAM_SEND_ENABLED is false', async () => {
+		vi.stubEnv('TELEGRAM_SEND_ENABLED', 'false');
+		mockDbSelect.mockReturnValueOnce(
+			chainResult([
+				{
+					encryptedWrk: Buffer.from('test-wrk-key').toString('base64'),
+					kmsContext: { workspaceId: 'ws-1' },
+					wrkVersion: 1,
+				},
+			]),
+		);
+
+		await processorStore.fn?.(fakeJob);
+
+		expect(mockSendMessage).not.toHaveBeenCalled();
+		expect(saveBrief).toHaveBeenCalled();
+		expect(mockBroadcastUpdate).toHaveBeenCalled();
 	});
 
 	it('skips Telegram push when user has no Telegram account', async () => {

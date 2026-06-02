@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // ─── Hoisted mocks ────────────────────────────────────────────────────────────
 
 const mockIsFeatureEnabled = vi.hoisted(() => vi.fn());
+const mockHasWorkspaceAiAnalysisConsent = vi.hoisted(() => vi.fn());
 const mockGetContactsNeedingExtraction = vi.hoisted(() => vi.fn());
+const mockGetKnowledgeAnalysisContactCandidates = vi.hoisted(() => vi.fn());
 const mockGetMessagesByContact = vi.hoisted(() => vi.fn());
 const mockDbSelect = vi.hoisted(() => vi.fn());
 
@@ -13,7 +15,9 @@ vi.mock('@repo/db', () => ({
 	},
 	eq: vi.fn(),
 	isFeatureEnabled: mockIsFeatureEnabled,
+	hasWorkspaceAiAnalysisConsent: mockHasWorkspaceAiAnalysisConsent,
 	getContactsNeedingExtraction: mockGetContactsNeedingExtraction,
+	getKnowledgeAnalysisContactCandidates: mockGetKnowledgeAnalysisContactCandidates,
 	getMessagesByContact: mockGetMessagesByContact,
 	workspaces: {
 		id: 'id',
@@ -40,7 +44,7 @@ vi.mock('@repo/crypto', () => ({
 }));
 
 const mockExtractKnowledgeForContact = vi.hoisted(() => vi.fn());
-const mockKeywordPreFilter = vi.hoisted(() => vi.fn(() => true));
+const mockKeywordPreFilter = vi.hoisted(() => vi.fn((_texts: string[]) => true));
 
 vi.mock('../../ai/knowledge-extraction', () => ({
 	extractKnowledgeForContact: mockExtractKnowledgeForContact,
@@ -88,9 +92,19 @@ function makeEnvelopeRow(wsId: string) {
 describe('knowledge-cron — P6 per-workspace budget', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.unstubAllEnvs();
 		vi.resetModules();
 		mockIsFeatureEnabled.mockResolvedValue(true);
+		mockHasWorkspaceAiAnalysisConsent.mockResolvedValue(true);
+		mockGetKnowledgeAnalysisContactCandidates.mockResolvedValue([]);
 		mockGetMessagesByContact.mockResolvedValue([{ text: 'Hello world', role: 'contact' }]);
+		mockDbSelect.mockImplementation(() => ({
+			from: vi.fn(() => ({
+				where: vi.fn(() => ({
+					limit: vi.fn(() => [makeEnvelopeRow(WS_A)]),
+				})),
+			})),
+		}));
 		mockExtractKnowledgeForContact.mockResolvedValue({
 			embeddingMatches: 1,
 			llmEntities: 1,
@@ -222,5 +236,84 @@ describe('knowledge-cron — P6 per-workspace budget', () => {
 
 		expect(mockGetContactsNeedingExtraction).not.toHaveBeenCalled();
 		expect(mockExtractKnowledgeForContact).not.toHaveBeenCalled();
+	});
+
+	it('reports local LLM estimates without cloud wording', async () => {
+		vi.stubEnv('KNOWLEDGE_LLM_PROVIDER', 'local');
+		mockGetKnowledgeAnalysisContactCandidates.mockResolvedValue([
+			{ id: 'contact-1', messageCount: 10, stale: true },
+			{ id: 'contact-2', messageCount: 3, stale: true },
+		]);
+
+		const { estimateKnowledgeAnalysis } = await import('../knowledge-cron');
+		const estimate = await estimateKnowledgeAnalysis(WS_A, {
+			mode: 'incremental',
+			limit: 10,
+		});
+
+		expect(estimate.llmRequestsEstimated).toBe(2);
+		expect(estimate.embeddingProviderMode).toBe('cloud');
+		expect(estimate.embeddingProviderLabel).toBe('OpenAI cloud embeddings');
+		expect(estimate.llmProviderMode).toBe('local');
+		expect(estimate.llmProviderLabel).toBe('local LLM');
+	});
+
+	it('uses the keyword filter for LLM estimates so progress does not over-wait', async () => {
+		vi.stubEnv('KNOWLEDGE_LLM_PROVIDER', 'local');
+		mockGetKnowledgeAnalysisContactCandidates.mockResolvedValue([
+			{ id: 'contact-1', messageCount: 10, stale: true },
+			{ id: 'contact-2', messageCount: 7, stale: true },
+			{ id: 'contact-3', messageCount: 4, stale: true },
+		]);
+		mockGetMessagesByContact.mockImplementation(async (_workspaceId, contactId) => {
+			if (contactId === 'contact-2') return [{ text: 'general catch up', role: 'contact' }];
+			return [{ text: 'term sheet diligence next week', role: 'contact' }];
+		});
+		mockKeywordPreFilter.mockImplementation((texts: string[]) =>
+			texts.some((text) => text.includes('term sheet')),
+		);
+
+		const { estimateKnowledgeAnalysis } = await import('../knowledge-cron');
+		const estimate = await estimateKnowledgeAnalysis(WS_A, {
+			mode: 'incremental',
+			limit: 10,
+		});
+
+		expect(estimate.llmRequestsEstimated).toBe(2);
+		expect(mockGetMessagesByContact).toHaveBeenCalledTimes(3);
+	});
+
+	it('reports Nomic local embedding estimates for local KG setup', async () => {
+		vi.stubEnv('KNOWLEDGE_EMBEDDING_PROVIDER', 'local');
+		vi.stubEnv('KNOWLEDGE_EMBEDDING_MODEL', 'nomic-embed-text');
+		mockGetKnowledgeAnalysisContactCandidates.mockResolvedValue([
+			{ id: 'contact-1', messageCount: 10, stale: true },
+		]);
+
+		const { estimateKnowledgeAnalysis } = await import('../knowledge-cron');
+		const estimate = await estimateKnowledgeAnalysis(WS_A, {
+			mode: 'incremental',
+			limit: 10,
+		});
+
+		expect(estimate.embeddingProviderMode).toBe('local');
+		expect(estimate.embeddingProviderLabel).toBe('Nomic local embeddings');
+	});
+
+	it('does not estimate LLM calls when KG LLM extraction is disabled', async () => {
+		vi.stubEnv('KNOWLEDGE_LLM_PROVIDER', 'disabled');
+		mockGetKnowledgeAnalysisContactCandidates.mockResolvedValue([
+			{ id: 'contact-1', messageCount: 10, stale: true },
+		]);
+
+		const { estimateKnowledgeAnalysis } = await import('../knowledge-cron');
+		const estimate = await estimateKnowledgeAnalysis(WS_A, {
+			mode: 'incremental',
+			limit: 10,
+		});
+
+		expect(estimate.llmRequestsEstimated).toBe(0);
+		expect(estimate.llmProviderMode).toBe('disabled');
+		expect(estimate.llmProviderLabel).toBe('LLM disabled');
 	});
 });

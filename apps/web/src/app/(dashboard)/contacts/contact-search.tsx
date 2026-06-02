@@ -11,14 +11,15 @@ export function ContactSearch() {
 
 	function handleSearch(value: string) {
 		setQuery(value);
-		if (value.length < 2) {
+		const searchQuery = value.trim();
+		if (searchQuery.length < 2) {
 			setResults(null);
 			return;
 		}
 
 		startTransition(async () => {
 			const result = await searchContactsAction({
-				query: value,
+				query: searchQuery,
 				field: 'name',
 			});
 			if (result?.data) {

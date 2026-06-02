@@ -59,11 +59,12 @@ briefsComposer.command('sync', async (ctx) => {
 	}
 
 	await ctx.reply(
-		'Starting contact sync...\n\n' + 'This will fetch your latest Telegram contacts and messages.',
+		'Starting contact sync...\n\n' +
+			'Personal-account safety mode imports contacts only. Use the web onboarding flow to opt into message import.',
 	);
 
 	const { syncQueue } = await import('../../queues/sync');
-	await syncQueue.add('sync-contacts', { userId, workspaceId });
+	await syncQueue.add('sync-contacts', { userId, workspaceId, syncScope: 'contacts_only' });
 
 	await ctx.reply("Contact sync queued. You'll be notified when complete.");
 });

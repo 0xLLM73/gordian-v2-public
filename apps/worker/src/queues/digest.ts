@@ -6,6 +6,7 @@ import {
 	failDigest,
 	finalizeDigest,
 	getPreferences,
+	hasUserAiAnalysisConsent,
 	workspaces,
 } from '@repo/db';
 import { Queue, Worker } from 'bullmq';
@@ -13,6 +14,8 @@ import { generateDigest } from '../ai/digest';
 import { withRLS } from '../middleware/rls';
 import { broadcastUpdate } from '../realtime/broadcast';
 import { connection } from '../redis';
+
+const DIGEST_JOB_LOCK_DURATION_MS = 15 * 60 * 1000;
 
 interface DigestJobData {
 	userId: string;
@@ -62,6 +65,13 @@ export const digestWorker = new Worker<DigestJobData>(
 	withRLS(async (job) => {
 		const { userId, workspaceId, period } = job.data;
 		console.log(`[digest] Generating ${period} digest for user=${userId.slice(0, 8)}`);
+
+		if (!(await hasUserAiAnalysisConsent(userId, workspaceId))) {
+			console.warn(
+				`[digest] AI analysis consent missing for workspace=${workspaceId.slice(0, 8)} user=${userId.slice(0, 8)}, skipping`,
+			);
+			return;
+		}
 
 		// Calculate time window
 		const now = new Date();
@@ -168,7 +178,12 @@ export const digestWorker = new Worker<DigestJobData>(
 			throw err;
 		}
 	}),
-	{ connection, prefix: '{ai-flow}', concurrency: 2 },
+	{
+		connection,
+		prefix: '{ai-flow}',
+		concurrency: 2,
+		lockDuration: DIGEST_JOB_LOCK_DURATION_MS,
+	},
 );
 
 digestWorker.on('completed', (job) => {

@@ -8,14 +8,74 @@ import {
 	createGoldenExample,
 	getActiveCommitments as dalGetActive,
 	getCommitmentsByContact as dalGetByContact,
+	getCommitmentsForFirstLook as dalGetFirstLook,
 	snoozeCommitment as dalSnooze,
 	updateCommitmentStatus as dalUpdateStatus,
 	finalizeBanditReward,
 	getCommitmentForFeedback,
 	markCommitmentFulfilled,
 } from '@repo/db';
-import { commitmentStatusSchema } from '@repo/shared';
+import { canRunCloudRationaleExtraction, commitmentStatusSchema } from '@repo/shared';
 import { z } from 'zod';
+
+type CommitmentPreviewRow = {
+	id: string;
+	contactId?: string | null;
+	title?: string | null;
+	commitmentType?: string | null;
+	status?: string | null;
+	assignee?: string | null;
+	confidence?: number | null;
+	dueDate?: Date | string | null;
+	quote?: string | null;
+	fulfilledAt?: Date | string | null;
+	snoozedUntil?: Date | string | null;
+	createdAt?: Date | string | null;
+	contactFirstName?: string | null;
+	contactLastName?: string | null;
+	sourceMessageAgeDays?: number | null;
+};
+
+type CommitmentMutationRow = {
+	id: string;
+	contactId?: string | null;
+	status?: string | null;
+	fulfilledAt?: Date | string | null;
+	snoozedUntil?: Date | string | null;
+	updatedAt?: Date | string | null;
+};
+
+function toCommitmentPreviewDto(c: CommitmentPreviewRow) {
+	return {
+		id: c.id,
+		title: c.title ?? null,
+		commitmentType: c.commitmentType ?? null,
+		status: c.status ?? null,
+		assignee: c.assignee ?? null,
+		confidence: c.confidence ?? null,
+		dueDate: c.dueDate ?? null,
+		contactId: c.contactId ?? null,
+		fulfilledAt: c.fulfilledAt ?? null,
+		snoozedUntil: c.snoozedUntil ?? null,
+		createdAt: c.createdAt ?? null,
+		quote: c.quote ?? null,
+		contactFirstName: c.contactFirstName ?? null,
+		contactLastName: c.contactLastName ?? null,
+		sourceMessageAgeDays: c.sourceMessageAgeDays ?? null,
+	};
+}
+
+function toCommitmentMutationDto(c: CommitmentMutationRow | null | undefined) {
+	if (!c) return null;
+	return {
+		id: c.id,
+		status: c.status ?? null,
+		contactId: c.contactId ?? null,
+		fulfilledAt: c.fulfilledAt ?? null,
+		snoozedUntil: c.snoozedUntil ?? null,
+		updatedAt: c.updatedAt ?? null,
+	};
+}
 
 export const getActiveCommitmentsAction = workspaceAction
 	.schema(
@@ -28,24 +88,23 @@ export const getActiveCommitmentsAction = workspaceAction
 		const raw = await dalGetActive(ctx.workspaceId, ctx.envelope, {
 			limit: parsedInput.limit,
 		});
-		// SEC-PROJ-001: Never send extractionContext, embedding, or banditTraceId to the client.
-		// Quote and contact name are user-facing data (safe for display in review flows).
-		return raw.map((c) => ({
-			id: c.id,
-			title: c.title,
-			commitmentType: c.commitmentType,
-			status: c.status,
-			assignee: c.assignee,
-			confidence: c.confidence,
-			dueDate: c.dueDate,
-			contactId: c.contactId,
-			fulfilledAt: c.fulfilledAt,
-			snoozedUntil: c.snoozedUntil,
-			createdAt: c.createdAt,
-			quote: c.quote,
-			contactFirstName: c.contactFirstName,
-			contactLastName: c.contactLastName,
-		}));
+		return raw.map(toCommitmentPreviewDto);
+	});
+
+export const getFirstLookCommitmentsAction = workspaceAction
+	.schema(
+		z.object({
+			limit: z.number().int().positive().optional(),
+			maxAgeDays: z.number().int().positive().optional(),
+		}),
+	)
+	.action(async ({ parsedInput, ctx }) => {
+		if (!ctx.envelope) throw new Error('Workspace encryption key not found');
+		const raw = await dalGetFirstLook(ctx.workspaceId, ctx.envelope, {
+			limit: parsedInput.limit,
+			maxAgeDays: parsedInput.maxAgeDays,
+		});
+		return raw.map(toCommitmentPreviewDto);
 	});
 
 export const getCommitmentsByContactAction = workspaceAction
@@ -58,10 +117,11 @@ export const getCommitmentsByContactAction = workspaceAction
 	)
 	.action(async ({ parsedInput, ctx }) => {
 		if (!ctx.envelope) throw new Error('Workspace encryption key not found');
-		return dalGetByContact(ctx.workspaceId, parsedInput.contactId, ctx.envelope, {
+		const raw = await dalGetByContact(ctx.workspaceId, parsedInput.contactId, ctx.envelope, {
 			status: parsedInput.status,
 			limit: parsedInput.limit,
 		});
+		return raw.map(toCommitmentPreviewDto);
 	});
 
 export const updateCommitmentStatusAction = workspaceAction
@@ -112,7 +172,7 @@ export const updateCommitmentStatusAction = workspaceAction
 		}
 
 		// DPG Phase 2: Extract rationale when commitment dismissed (fire-and-forget)
-		if (parsedInput.status === 'dismissed' && ctx.envelope) {
+		if (parsedInput.status === 'dismissed' && ctx.envelope && canRunCloudRationaleExtraction()) {
 			const { fireRationaleExtraction } = await import('@/lib/rationale-hook');
 			fireRationaleExtraction({
 				action: 'commitment_dismissed',
@@ -176,7 +236,7 @@ export const updateCommitmentStatusAction = workspaceAction
 			});
 		}
 
-		return result;
+		return toCommitmentMutationDto(result);
 	});
 
 export const snoozeCommitmentAction = workspaceAction
@@ -202,7 +262,7 @@ export const snoozeCommitmentAction = workspaceAction
 			snoozedUntil: parsedInput.snoozedUntil.toISOString(),
 		});
 
-		return result;
+		return toCommitmentMutationDto(result);
 	});
 
 // ─── First Look: Analytics Events ───────────────────────────────────────────

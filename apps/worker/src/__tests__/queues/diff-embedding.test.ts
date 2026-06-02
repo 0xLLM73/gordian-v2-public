@@ -20,12 +20,14 @@ vi.mock('../../redis', () => ({
 }));
 
 vi.mock('bullmq', () => ({
-	Worker: vi.fn(function MockWorker(_name: string, processor: MockProcessor) {
+	// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
+	Worker: vi.fn().mockImplementation(function (_name: string, processor: MockProcessor) {
 		// Store the processor so tests can invoke it directly
 		(Worker as unknown as { __processor: MockProcessor }).__processor = processor;
 		return { on: vi.fn() };
 	}),
-	Queue: vi.fn(function MockQueue() {
+	// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
+	Queue: vi.fn().mockImplementation(function () {
 		return {
 			add: vi.fn(),
 		};

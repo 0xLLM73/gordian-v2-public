@@ -11,7 +11,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 vi.mock('node:worker_threads', () => ({
-	Worker: vi.fn(function MockWorker() {
+	// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
+	Worker: vi.fn().mockImplementation(function () {
 		return {
 			on: vi.fn(),
 			postMessage: vi.fn(),
@@ -25,7 +26,13 @@ vi.mock('../../locks/telegram-session', () => ({
 }));
 
 import { Worker } from 'node:worker_threads';
-import { sendToUser, setAuthPending, terminateUser } from '../../gramjs/thread';
+import {
+	disconnectUser,
+	getMtProtoSessionIdleMs,
+	sendToUser,
+	setAuthPending,
+	terminateAll,
+} from '../../gramjs/thread';
 
 /** Helper: fire a sendToUser call (creates pool entry) without awaiting it. */
 function createPoolEntry(key: string): void {
@@ -48,14 +55,19 @@ describe('setAuthPending eviction guard (ASA-006)', () => {
 
 	afterEach(async () => {
 		// Clean up pool entries so tests are isolated
-		await terminateUser('auth-phone-1');
-		await terminateUser('auth-phone-2');
+		await terminateAll();
 		vi.clearAllMocks();
+		vi.unstubAllEnvs();
 	});
 
 	it('is a no-op for unknown pool keys — no throw', () => {
 		expect(() => setAuthPending('does-not-exist', true)).not.toThrow();
 		expect(() => setAuthPending('does-not-exist', false)).not.toThrow();
+	});
+
+	it('disconnectUser is a no-op for unknown pool keys and does not spawn a worker', async () => {
+		await expect(disconnectUser('does-not-exist')).resolves.toBeUndefined();
+		expect(Worker).not.toHaveBeenCalled();
 	});
 
 	it('after send-code: pool entry created and setAuthPending(key, true) does not terminate worker', () => {
@@ -82,5 +94,35 @@ describe('setAuthPending eviction guard (ASA-006)', () => {
 
 		setAuthPending('auth-phone-1', true);
 		expect(() => setAuthPending('auth-phone-1', true)).not.toThrow();
+	});
+
+	it('does not evict an auth-pending worker when the pool is full', () => {
+		createPoolEntry('auth-phone-1');
+		const protectedWorker = lastWorkerInstance();
+		setAuthPending('auth-phone-1', true);
+
+		for (let i = 0; i < 10; i++) {
+			createPoolEntry(`idle-${i}`);
+		}
+
+		expect(protectedWorker.terminate).not.toHaveBeenCalled();
+	});
+
+	it('defaults the local MTProto worker idle timeout to 30 minutes', () => {
+		expect(getMtProtoSessionIdleMs()).toBe(30 * 60 * 1000);
+	});
+
+	it('allows the local MTProto worker idle timeout to be configured', () => {
+		vi.stubEnv('TELEGRAM_MTPROTO_SESSION_IDLE_MINUTES', '45');
+
+		expect(getMtProtoSessionIdleMs()).toBe(45 * 60 * 1000);
+	});
+
+	it('rejects invalid local MTProto worker idle timeout values', () => {
+		vi.stubEnv('TELEGRAM_MTPROTO_SESSION_IDLE_MINUTES', '0');
+
+		expect(() => getMtProtoSessionIdleMs()).toThrow(
+			/Invalid TELEGRAM_MTPROTO_SESSION_IDLE_MINUTES/,
+		);
 	});
 });

@@ -7,6 +7,12 @@ const mockGetFollowUpPlan = vi.fn();
 const mockGetFollowUpPlanSteps = vi.fn();
 const mockGetVoiceProfile = vi.fn();
 const mockGetContactStyleOverride = vi.fn();
+const mockGetContact = vi.fn();
+const mockUnwrapWrk = vi.fn();
+const mockDeriveKeys = vi.fn();
+const mockGeneratePersonPseudonym = vi.fn();
+const mockMaskEntities = vi.fn();
+const mockPrefilterEntities = vi.fn();
 const mockDb = {
 	select: vi.fn(() => mockDb),
 	from: vi.fn(() => mockDb),
@@ -31,6 +37,7 @@ vi.mock('@repo/db', () => ({
 	getFollowUpPlanSteps: mockGetFollowUpPlanSteps,
 	getVoiceProfile: mockGetVoiceProfile,
 	getContactStyleOverride: mockGetContactStyleOverride,
+	getContact: mockGetContact,
 	db: mockDb,
 	eq: vi.fn(),
 	workspaces: {
@@ -40,6 +47,14 @@ vi.mock('@repo/db', () => ({
 		wrkVersion: 'wrkVersion',
 		ownerId: 'ownerId',
 	},
+}));
+
+vi.mock('@repo/crypto', () => ({
+	unwrapWrk: mockUnwrapWrk,
+	deriveKeys: mockDeriveKeys,
+	generatePersonPseudonym: mockGeneratePersonPseudonym,
+	maskEntities: mockMaskEntities,
+	prefilterEntities: mockPrefilterEntities,
 }));
 
 const mockGenerateDraftWithBandit = vi.fn();
@@ -71,6 +86,19 @@ describe('follow-up-plan-processor', () => {
 		mockGetVoiceProfile.mockResolvedValue(null);
 		mockGetContactStyleOverride.mockResolvedValue(null);
 		mockBuildVoiceModifier.mockReturnValue({ modifier: '', profileVersion: null });
+		mockUnwrapWrk.mockResolvedValue(Buffer.from('mock-wrk'));
+		mockDeriveKeys.mockResolvedValue({ bik: Buffer.from('mock-bik') });
+		mockGeneratePersonPseudonym.mockReturnValue('PERSON_masked');
+		mockPrefilterEntities.mockReturnValue([]);
+		mockMaskEntities.mockImplementation((value: string) => ({
+			maskedText: value.replace(/alice@example\.com/gi, 'EMAIL_masked'),
+			entityMap: [],
+		}));
+		mockGetContact.mockResolvedValue({
+			firstName: 'Alice',
+			lastName: 'Smith',
+			username: 'alice_dev',
+		});
 	});
 
 	it('does nothing when no ready steps', async () => {
@@ -100,10 +128,14 @@ describe('follow-up-plan-processor', () => {
 		]);
 
 		// Encrypted data re-queried per-workspace
-		mockGetFollowUpPlan.mockResolvedValue({ title: 'VC Follow-up' });
-		mockGetFollowUpPlanSteps.mockResolvedValue([{ id: 'step-1', prompt: 'Follow up on meeting' }]);
+		mockGetFollowUpPlan.mockResolvedValue({ title: 'VC Follow-up with Alice Smith' });
+		mockGetFollowUpPlanSteps.mockResolvedValue([
+			{ id: 'step-1', prompt: 'Follow up with Alice Smith at alice@example.com' },
+		]);
 
-		mockGetLatestSummary.mockResolvedValue({ summary: 'Met at conference, discussed AI tools' });
+		mockGetLatestSummary.mockResolvedValue({
+			summary: 'Met Alice Smith at conference, discussed AI tools via alice@example.com',
+		});
 		mockGenerateDraftWithBandit.mockResolvedValue({
 			text: 'Hey, great meeting you at the conference!',
 			armType: 'casual_nudge',
@@ -125,13 +157,19 @@ describe('follow-up-plan-processor', () => {
 
 		// Verify getLatestSummary called with 3 args (workspaceId, contactId, envelope)
 		expect(mockGetLatestSummary).toHaveBeenCalledWith('ws-1', 'contact-1', envelopeMatcher);
-		// 4th arg is voiceModifier — undefined when buildVoiceModifier returns empty string
-		expect(mockGenerateDraftWithBandit).toHaveBeenCalledWith(
-			'Met at conference, discussed AI tools',
-			expect.stringContaining('VC Follow-up'),
-			'owner-1',
-			undefined,
-		);
+		const [contactSummary, context, userId, voiceModifier] =
+			mockGenerateDraftWithBandit.mock.calls[0];
+		expect(contactSummary).toContain('Contact: PERSON_masked');
+		expect(contactSummary).toContain('EMAIL_masked');
+		expect(contactSummary).not.toContain('Alice');
+		expect(contactSummary).not.toContain('alice@example.com');
+		expect(context).toContain('VC Follow-up');
+		expect(context).toContain('PERSON_masked');
+		expect(context).toContain('EMAIL_masked');
+		expect(context).not.toContain('Alice');
+		expect(context).not.toContain('alice@example.com');
+		expect(userId).toBe('owner-1');
+		expect(voiceModifier).toBeUndefined();
 		expect(mockAdvanceStep).toHaveBeenCalledWith(
 			'ws-1',
 			'step-1',
@@ -187,7 +225,7 @@ describe('follow-up-plan-processor', () => {
 
 		// Verify voiceModifier string is passed as 4th argument
 		expect(mockGenerateDraftWithBandit).toHaveBeenCalledWith(
-			'Investor contact',
+			'Contact: PERSON_masked\nInvestor contact',
 			expect.stringContaining('Follow-up'),
 			'owner-1',
 			expect.stringContaining('Voice Profile'),
@@ -228,7 +266,7 @@ describe('follow-up-plan-processor', () => {
 
 		// Draft should still be generated without voiceModifier
 		expect(mockGenerateDraftWithBandit).toHaveBeenCalledWith(
-			'Contact summary',
+			'Contact: PERSON_masked\nContact summary',
 			expect.stringContaining('Follow-up'),
 			'owner-1',
 			undefined,
@@ -267,7 +305,7 @@ describe('follow-up-plan-processor', () => {
 		await processFollowUpPlanSteps();
 
 		expect(mockGenerateDraftWithBandit).toHaveBeenCalledWith(
-			'No summary available',
+			'Contact: PERSON_masked\nNo summary available',
 			expect.stringContaining('Post-Intro'),
 			'owner-1',
 			undefined,

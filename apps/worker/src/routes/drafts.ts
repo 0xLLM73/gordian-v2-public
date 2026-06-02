@@ -23,16 +23,21 @@ draftRoutes.post('/generate', async (c) => {
 		return c.json({ error: 'Unauthorized' }, 401);
 	}
 
-	const { contactSummary, recentMessages, userId, workspaceId, contactId } = await c.req.json<{
-		contactSummary: string;
-		recentMessages: string;
-		userId: string;
-		workspaceId?: string;
-		contactId?: string;
-	}>();
+	const { contactSummary, recentMessages, userId, workspaceId, contactId, contextMasked } =
+		await c.req.json<{
+			contactSummary: string;
+			recentMessages: string;
+			userId: string;
+			workspaceId?: string;
+			contactId?: string;
+			contextMasked?: boolean;
+		}>();
 
 	if (!contactSummary || !userId) {
 		return c.json({ error: 'contactSummary and userId are required' }, 400);
+	}
+	if (contextMasked !== true) {
+		return c.json({ error: 'masked draft context is required' }, 400);
 	}
 
 	try {

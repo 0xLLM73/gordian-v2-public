@@ -35,10 +35,14 @@ vi.mock('@/lib/workspace', () => ({
 
 // Mock DAL functions
 const mockSearchByName = vi.fn(() => Promise.resolve([{ id: '1', firstName: 'John' }]));
-const mockGetContact = vi.fn(() => Promise.resolve({ id: '1', firstName: 'John' }));
+const mockCanAccessContact = vi.fn(() => Promise.resolve(true));
+const mockGetAccessibleContact = vi.fn(
+	(): Promise<{ id: string; firstName: string } | null> =>
+		Promise.resolve({ id: '1', firstName: 'John' }),
+);
 const mockCreateContact = vi.fn(() => Promise.resolve({ id: 'new-1' }));
 const mockUpdateContact = vi.fn(() => Promise.resolve({ id: '1' }));
-const mockListContacts = vi.fn(() => Promise.resolve([{ id: '1' }, { id: '2' }]));
+const mockGetAccessibleContacts = vi.fn(() => Promise.resolve([{ id: '1' }, { id: '2' }]));
 const mockSearchByPhone = vi.fn(() => Promise.resolve([]));
 const mockSearchByEmail = vi.fn(() => Promise.resolve([]));
 
@@ -47,10 +51,11 @@ vi.mock('@repo/db', () => ({
 	searchContactByName: mockSearchByName,
 	searchContactByPhone: mockSearchByPhone,
 	searchContactByEmail: mockSearchByEmail,
-	getContact: mockGetContact,
+	canAccessContact: mockCanAccessContact,
+	getAccessibleContact: mockGetAccessibleContact,
 	createContact: mockCreateContact,
 	updateContact: mockUpdateContact,
-	listContacts: mockListContacts,
+	getAccessibleContacts: mockGetAccessibleContacts,
 	trackBehavior: vi.fn().mockResolvedValue(null),
 }));
 
@@ -64,12 +69,13 @@ describe('contact actions', () => {
 			const { searchContactsAction } = await import('@/app/actions/contacts');
 
 			const result = await searchContactsAction({
-				query: 'John',
+				query: '  John  ',
 				field: 'name',
 			});
 
 			expect(result?.data).toBeDefined();
 			expect(mockSearchByName).toHaveBeenCalledWith(WORKSPACE_ID, 'John', expect.any(Object));
+			expect(mockCanAccessContact).toHaveBeenCalledWith(WORKSPACE_ID, 'user-1', '1');
 		});
 
 		it('rejects empty query', async () => {
@@ -92,7 +98,23 @@ describe('contact actions', () => {
 			});
 
 			expect(result?.data).toBeDefined();
-			expect(mockGetContact).toHaveBeenCalled();
+			expect(mockGetAccessibleContact).toHaveBeenCalledWith(
+				WORKSPACE_ID,
+				'user-1',
+				'550e8400-e29b-41d4-a716-446655440001',
+				expect.any(Object),
+			);
+		});
+
+		it('denies inaccessible contacts', async () => {
+			const { getContactAction } = await import('@/app/actions/contacts');
+			mockGetAccessibleContact.mockResolvedValueOnce(null);
+
+			const result = await getContactAction({
+				contactId: '550e8400-e29b-41d4-a716-446655440001',
+			});
+
+			expect(result?.serverError).toBe('Not found');
 		});
 	});
 
@@ -101,17 +123,34 @@ describe('contact actions', () => {
 			const { createContactAction } = await import('@/app/actions/contacts');
 
 			const result = await createContactAction({
-				firstName: 'Jane',
-				lastName: 'Doe',
+				firstName: '  Jane  ',
+				lastName: '  Doe  ',
 				phone: '+1234567890',
+				notes: '  Warm intro  ',
 			});
 
 			expect(result?.data).toBeDefined();
 			expect(mockCreateContact).toHaveBeenCalledWith(
 				WORKSPACE_ID,
-				expect.objectContaining({ firstName: 'Jane', lastName: 'Doe' }),
+				expect.objectContaining({
+					firstName: 'Jane',
+					lastName: 'Doe',
+					notes: 'Warm intro',
+				}),
 				expect.any(Object),
 			);
+		});
+
+		it('rejects blank names after trimming', async () => {
+			const { createContactAction } = await import('@/app/actions/contacts');
+
+			const result = await createContactAction({
+				firstName: '   ',
+				lastName: '   ',
+			});
+
+			expect(result?.validationErrors).toBeDefined();
+			expect(mockCreateContact).not.toHaveBeenCalled();
 		});
 
 		it('rejects invalid email', async () => {
@@ -125,6 +164,31 @@ describe('contact actions', () => {
 		});
 	});
 
+	describe('updateContactAction', () => {
+		it('trims changed fields and clears blank notes', async () => {
+			const { updateContactAction } = await import('@/app/actions/contacts');
+
+			const result = await updateContactAction({
+				contactId: '550e8400-e29b-41d4-a716-446655440001',
+				firstName: '  Jane  ',
+				email: '  jane@example.com  ',
+				notes: '   ',
+			});
+
+			expect(result?.data).toBeDefined();
+			expect(mockUpdateContact).toHaveBeenCalledWith(
+				WORKSPACE_ID,
+				'550e8400-e29b-41d4-a716-446655440001',
+				expect.objectContaining({
+					firstName: 'Jane',
+					email: 'jane@example.com',
+					notes: null,
+				}),
+				expect.any(Object),
+			);
+		});
+	});
+
 	describe('listContactsAction', () => {
 		it('lists contacts with pagination', async () => {
 			const { listContactsAction } = await import('@/app/actions/contacts');
@@ -135,10 +199,15 @@ describe('contact actions', () => {
 			});
 
 			expect(result?.data).toBeDefined();
-			expect(mockListContacts).toHaveBeenCalledWith(WORKSPACE_ID, expect.any(Object), {
-				limit: 10,
-				offset: 0,
-			});
+			expect(mockGetAccessibleContacts).toHaveBeenCalledWith(
+				WORKSPACE_ID,
+				'user-1',
+				expect.any(Object),
+				{
+					limit: 10,
+					offset: 0,
+				},
+			);
 		});
 	});
 });

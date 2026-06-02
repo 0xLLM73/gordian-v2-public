@@ -16,6 +16,7 @@ export * from './golden-dataset';
 export * from './chats';
 export * from './messages';
 export * from './chat-participants';
+export * from './telegram-imports';
 export * from './summaries';
 export * from './user-preferences';
 export * from './digests';

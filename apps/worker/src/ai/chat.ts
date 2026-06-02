@@ -1,7 +1,9 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import type { SealedEnvelope } from '@repo/crypto';
+import { redactSensitive } from '@repo/shared';
 import { inferWithCache } from './cached-inference';
 import { CHAT_TOOLS, TOOL_EXECUTORS } from './chat-tools';
+import { runLocalChat, shouldUseLocalChat } from './local-chat';
 
 const MAX_ITERATIONS = 5;
 const MAX_MESSAGES = 50;
@@ -39,6 +41,16 @@ export async function chat(
 	// Trim to most recent messages if over limit
 	const trimmed =
 		messages.length > MAX_MESSAGES ? messages.slice(messages.length - MAX_MESSAGES) : messages;
+
+	if (shouldUseLocalChat()) {
+		return runLocalChat({
+			workspaceId,
+			envelope,
+			messages: trimmed,
+			systemPrompt: CHAT_SYSTEM_KERNEL,
+			maxIterations: MAX_ITERATIONS,
+		});
+	}
 
 	// Build Anthropic message format
 	const anthropicMessages: Anthropic.Messages.MessageParam[] = trimmed.map((m) => ({
@@ -98,7 +110,7 @@ export async function chat(
 							content: result,
 						});
 					} catch (err) {
-						console.error(`[chat] Tool ${block.name} error:`, (err as Error).message);
+						console.error(`[chat] Tool ${block.name} error:`, redactSensitive(err));
 						toolResults.push({
 							type: 'tool_result',
 							tool_use_id: block.id,

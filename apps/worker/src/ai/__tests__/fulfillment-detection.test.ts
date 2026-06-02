@@ -24,7 +24,8 @@ const createSpy = vi.fn().mockResolvedValue({
 });
 
 vi.mock('@anthropic-ai/sdk', () => ({
-	default: vi.fn(function MockAnthropic() {
+	// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
+	default: vi.fn().mockImplementation(function () {
 		return {
 			messages: { create: createSpy },
 		};

@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { assertAiProcessingEnabled } from '@repo/shared';
 
 /**
  * Gemini Flash Inference Adapter (KG-3):
@@ -29,6 +30,8 @@ export async function inferWithGemini(params: {
 	userPrompt: string;
 	model?: string;
 }): Promise<string> {
+	assertAiProcessingEnabled('Gemini inference');
+
 	const client = getClient();
 	const model = client.getGenerativeModel({
 		model: params.model ?? DEFAULT_MODEL,

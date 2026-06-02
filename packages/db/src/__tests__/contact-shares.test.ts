@@ -13,6 +13,11 @@ const mockInsert = vi.fn(() => ({ values: mockInsertValues }));
 const mockDeleteWhere = vi.fn(() => Promise.resolve());
 const mockDelete = vi.fn(() => ({ where: mockDeleteWhere }));
 
+const mockUpdateReturning = vi.fn();
+const mockUpdateWhere = vi.fn(() => ({ returning: mockUpdateReturning }));
+const mockUpdateSet = vi.fn(() => ({ where: mockUpdateWhere }));
+const mockUpdate = vi.fn(() => ({ set: mockUpdateSet }));
+
 const mockSelectFrom = vi.fn();
 const mockSelect = vi.fn(() => ({ from: mockSelectFrom }));
 
@@ -20,6 +25,7 @@ vi.mock('../client', () => ({
 	db: {
 		select: mockSelect,
 		insert: mockInsert,
+		update: mockUpdate,
 		delete: mockDelete,
 	},
 }));
@@ -54,7 +60,18 @@ const mockShare = {
 
 /** from() chain for queries that end at .where() (awaitable directly) */
 const makeSimpleChain = (rows: unknown[]) => ({
-	where: vi.fn().mockResolvedValue(rows),
+	where: vi.fn(() =>
+		Object.assign(Promise.resolve(rows), {
+			orderBy: vi.fn().mockResolvedValue(rows),
+		}),
+	),
+});
+
+/** from() chain for queries that end at .where().limit() */
+const makeLimitChain = (rows: unknown[]) => ({
+	where: vi.fn().mockReturnValue({
+		limit: vi.fn().mockResolvedValue(rows),
+	}),
 });
 
 /** from() chain for contacts select: .where().limit().offset().orderBy() */
@@ -78,20 +95,25 @@ describe('contact-shares DAL', () => {
 	// ─── createContact stores sourceAccountId ──────────────────────────────
 
 	describe('createContact', () => {
-		it('stores sourceAccountId when provided', async () => {
-			mockInsertReturning.mockResolvedValue([mockContact]);
+		it('stores sourceAccountId and username fields when provided', async () => {
+			mockInsertReturning.mockResolvedValue([{ ...mockContact, username: 'alice_dev' }]);
 
 			const { createContact } = await import('../dal/contacts');
 			const result = await createContact(
 				WORKSPACE_ID,
-				{ firstName: 'Alice', sourceAccountId: TG_ACCOUNT },
+				{ firstName: 'Alice', username: 'alice_dev', sourceAccountId: TG_ACCOUNT },
 				mockEnvelope,
 			);
 
 			expect(mockInsertValues).toHaveBeenCalledWith(
-				expect.objectContaining({ sourceAccountId: TG_ACCOUNT }),
+				expect.objectContaining({
+					sourceAccountId: TG_ACCOUNT,
+					username: 'alice_dev',
+					usernameBidx: 'alice_dev',
+				}),
 			);
 			expect(result?.sourceAccountId).toBe(TG_ACCOUNT);
+			expect(result?.username).toBe('alice_dev');
 		});
 
 		it('stores null sourceAccountId when not provided (legacy)', async () => {
@@ -104,6 +126,29 @@ describe('contact-shares DAL', () => {
 			expect(mockInsertValues).toHaveBeenCalledWith(
 				expect.objectContaining({ sourceAccountId: null }),
 			);
+		});
+	});
+
+	describe('updateContact', () => {
+		it('updates username and username blind index together', async () => {
+			mockUpdateReturning.mockResolvedValue([{ ...mockContact, username: 'alice_new' }]);
+
+			const { updateContact } = await import('../dal/contacts');
+			const result = await updateContact(
+				WORKSPACE_ID,
+				CONTACT_ID,
+				{ username: 'alice_new' },
+				mockEnvelope,
+			);
+
+			expect(mockUpdateSet).toHaveBeenCalledWith(
+				expect.objectContaining({
+					username: 'alice_new',
+					usernameBidx: 'alice_new',
+				}),
+			);
+			expect(mockUpdateWhere).toHaveBeenCalled();
+			expect(result?.username).toBe('alice_new');
 		});
 	});
 
@@ -130,6 +175,23 @@ describe('contact-shares DAL', () => {
 			const result = await listContacts(WORKSPACE_ID, mockEnvelope);
 
 			expect(result).toHaveLength(2);
+		});
+	});
+
+	describe('listContactMaskingAliases', () => {
+		it('returns decrypted name and username aliases for masking', async () => {
+			const aliasContact = {
+				id: CONTACT_ID,
+				firstName: 'Alice',
+				lastName: 'Ng',
+				username: 'alice_dev',
+			};
+			mockSelectFrom.mockReturnValue(makeContactsChain([aliasContact]));
+
+			const { listContactMaskingAliases } = await import('../dal/contacts');
+			const result = await listContactMaskingAliases(WORKSPACE_ID, mockEnvelope);
+
+			expect(result).toEqual([aliasContact]);
 		});
 	});
 
@@ -192,6 +254,33 @@ describe('contact-shares DAL', () => {
 			const result = await getAccessibleContacts(WORKSPACE_ID, USER_ID, mockEnvelope);
 
 			expect(result).toHaveLength(0);
+		});
+	});
+
+	describe('canManageContact', () => {
+		it('allows users to manage legacy contacts', async () => {
+			mockSelectFrom.mockReturnValueOnce(
+				makeLimitChain([{ ...mockContact, sourceAccountId: null }]),
+			);
+
+			const { canManageContact } = await import('../dal/contacts');
+			await expect(canManageContact(WORKSPACE_ID, USER_ID, CONTACT_ID)).resolves.toBe(true);
+		});
+
+		it('allows users to manage contacts sourced from their Telegram account', async () => {
+			mockSelectFrom.mockReturnValueOnce(makeLimitChain([mockContact]));
+			mockSelectFrom.mockReturnValueOnce(makeLimitChain([{ id: 'account-1' }]));
+
+			const { canManageContact } = await import('../dal/contacts');
+			await expect(canManageContact(WORKSPACE_ID, USER_ID, CONTACT_ID)).resolves.toBe(true);
+		});
+
+		it('does not allow shared-only contacts to be managed', async () => {
+			mockSelectFrom.mockReturnValueOnce(makeLimitChain([mockContact]));
+			mockSelectFrom.mockReturnValueOnce(makeLimitChain([]));
+
+			const { canManageContact } = await import('../dal/contacts');
+			await expect(canManageContact(WORKSPACE_ID, USER_ID, CONTACT_ID)).resolves.toBe(false);
 		});
 	});
 

@@ -1,4 +1,5 @@
 import { parentPort, workerData } from 'node:worker_threads';
+import { redactSensitive } from '@repo/shared';
 import bigInt from 'big-integer';
 import { TelegramClient } from 'telegram';
 import { computeCheck } from 'telegram/Password';
@@ -22,12 +23,69 @@ const { apiId, apiHash } = workerData as {
 // GramJS client — initialized without session, session set per-user on demand
 let client: TelegramClient | null = null;
 
+function toTelegramBigInt(value: { toString(): string } | string) {
+	return bigInt(value.toString());
+}
+
+async function resolveHistoryPeer(peerId: string, peerType: unknown) {
+	if (peerType === 'group') {
+		return new Api.InputPeerChat({ chatId: bigInt(peerId) });
+	}
+
+	if (!client || (peerType !== 'private' && peerType !== 'supergroup' && peerType !== 'channel')) {
+		return peerId;
+	}
+
+	const dialogs = await client.invoke(
+		new Api.messages.GetDialogs({
+			offsetDate: 0,
+			offsetId: 0,
+			offsetPeer: new Api.InputPeerEmpty(),
+			limit: 500,
+			hash: bigInt(0),
+		}),
+	);
+
+	if (peerType === 'private' && 'users' in dialogs) {
+		const user = (
+			dialogs.users as Array<{
+				id: { toString(): string };
+				accessHash?: { toString(): string };
+			}>
+		).find((u) => u.id.toString() === peerId && u.accessHash);
+		if (user?.accessHash) {
+			return new Api.InputPeerUser({
+				userId: toTelegramBigInt(user.id),
+				accessHash: toTelegramBigInt(user.accessHash),
+			});
+		}
+	}
+
+	if ((peerType === 'supergroup' || peerType === 'channel') && 'chats' in dialogs) {
+		const channel = (
+			dialogs.chats as Array<{
+				id: { toString(): string };
+				accessHash?: { toString(): string };
+			}>
+		).find((c) => c.id.toString() === peerId && c.accessHash);
+		if (channel?.accessHash) {
+			return new Api.InputPeerChannel({
+				channelId: toTelegramBigInt(channel.id),
+				accessHash: toTelegramBigInt(channel.accessHash),
+			});
+		}
+	}
+
+	return peerId;
+}
+
 async function initClient(sessionString: string): Promise<void> {
-	// Disconnect any existing client before creating a new one (SEC-010).
-	// Prevents AUTH_KEY_DUPLICATED if connect is called twice on the same thread.
+	// Destroy any existing client before creating a new one (SEC-010).
+	// This prevents AUTH_KEY_DUPLICATED and stops GramJS update loops from
+	// logging after we drop the MTProto client/session reference.
 	if (client) {
 		try {
-			await client.disconnect();
+			await client.destroy();
 		} catch {
 			// Stale client — ignore disconnect errors
 		}
@@ -186,18 +244,28 @@ async function handleMessage(msg: {
 				if ('dialogs' in dialogs && 'chats' in dialogs && 'users' in dialogs) {
 					const chatMap = new Map<
 						string,
-						{ title?: string; username?: string; participantCount?: number }
+						{
+							title?: string;
+							username?: string;
+							participantCount?: number;
+							megagroup?: boolean;
+							broadcast?: boolean;
+						}
 					>();
 					for (const c of dialogs.chats as Array<{
 						id: { toString(): string };
 						title?: string;
 						username?: string;
 						participantsCount?: number;
+						megagroup?: boolean;
+						broadcast?: boolean;
 					}>) {
 						chatMap.set(c.id.toString(), {
 							title: c.title,
 							username: c.username,
 							participantCount: c.participantsCount,
+							megagroup: c.megagroup,
+							broadcast: c.broadcast,
 						});
 					}
 					const userMap = new Map<
@@ -267,7 +335,8 @@ async function handleMessage(msg: {
 							title = chat?.title;
 							username = chat?.username;
 							participantCount = chat?.participantCount;
-							type = (chat?.participantCount ?? 0) > 0 ? 'supergroup' : 'channel';
+							type =
+								chat?.megagroup === true && chat?.broadcast !== true ? 'supergroup' : 'channel';
 						}
 
 						return {
@@ -311,22 +380,40 @@ async function handleMessage(msg: {
 				const offsetId = (msg.offsetId as number) || 0;
 				const minDate = (msg.minDate as number) || 0;
 				const maxDate = (msg.maxDate as number) || 0;
+				const minId = (msg.minId as number) || 0;
+				const maxId = (msg.maxId as number) || 0;
+				const peer = await resolveHistoryPeer(peerId, msg.peerType);
 
 				const historyResult = await client.invoke(
 					new Api.messages.GetHistory({
-						peer: peerId,
+						peer,
 						limit: (msg.limit as number) || 50,
 						offsetId,
 						offsetDate: maxDate,
 						addOffset: 0,
-						maxId: 0,
-						minId: 0,
+						maxId,
+						minId,
 						hash: bigInt(0),
 					}),
 				);
 
 				if ('messages' in historyResult && 'users' in historyResult) {
 					const meId = (await client.getMe()).id.toString();
+					const users = (
+						historyResult.users as Array<{
+							id: { toString(): string };
+							firstName?: string;
+							lastName?: string;
+							username?: string;
+							bot?: boolean;
+						}>
+					).map((u) => ({
+						telegramId: u.id.toString(),
+						firstName: u.firstName ?? '',
+						lastName: u.lastName ?? '',
+						username: u.username ?? '',
+						isBot: u.bot ?? false,
+					}));
 
 					const formatted = (
 						historyResult.messages as Array<{
@@ -342,6 +429,7 @@ async function handleMessage(msg: {
 					)
 						.filter((m) => {
 							if (minDate && m.date && m.date < minDate) return false;
+							if (minId && m.id <= minId) return false;
 							return true;
 						})
 						.map((m) => {
@@ -363,6 +451,7 @@ async function handleMessage(msg: {
 						type: 'messages-result',
 						id: msg.id,
 						messages: formatted,
+						users,
 					});
 				} else {
 					parentPort?.postMessage({
@@ -389,7 +478,7 @@ async function handleMessage(msg: {
 
 			case 'disconnect': {
 				if (client) {
-					await client.disconnect();
+					await client.destroy();
 					client = null; // SEC-032: null ref so V8 can GC the session object + MTProto state
 				}
 				parentPort?.postMessage({ type: 'disconnected', id: msg.id });
@@ -481,7 +570,7 @@ async function handleMessage(msg: {
 	} catch (err) {
 		const error = err as Error;
 		// SEC-LOG-003: Sanitize error messages — GramJS errors may contain PII or internal state
-		const safeMsg = error.message.replace(/\+?\d{7,15}/g, '[phone]');
+		const safeMsg = redactSensitive(error);
 		parentPort?.postMessage({
 			type: 'error',
 			id: msg.id,
@@ -492,14 +581,13 @@ async function handleMessage(msg: {
 
 // Catch unhandled errors so the thread doesn't silently crash with code 1
 process.on('uncaughtException', (err) => {
-	const safeMsg = err.message.replace(/\+?\d{7,15}/g, '[phone]');
+	const safeMsg = redactSensitive(err);
 	console.error('[gramjs-worker] Uncaught exception:', safeMsg);
 	parentPort?.postMessage({ type: 'fatal-error', error: safeMsg });
 	process.exit(1);
 });
 process.on('unhandledRejection', (reason) => {
-	const raw = reason instanceof Error ? reason.message : String(reason);
-	const safeMsg = raw.replace(/\+?\d{7,15}/g, '[phone]');
+	const safeMsg = redactSensitive(reason);
 	console.error('[gramjs-worker] Unhandled rejection:', safeMsg);
 	parentPort?.postMessage({ type: 'fatal-error', error: safeMsg });
 	process.exit(1);
@@ -513,7 +601,7 @@ process.on('exit', (code) => {
 // Listen for messages from main thread — guard async handler
 parentPort?.on('message', (msg) => {
 	handleMessage(msg).catch((err) => {
-		const safeMsg = ((err as Error).message ?? '').replace(/\+?\d{7,15}/g, '[phone]');
+		const safeMsg = redactSensitive(err);
 		console.error('[gramjs-worker] Unhandled error in handleMessage:', safeMsg);
 		parentPort?.postMessage({
 			type: 'error',

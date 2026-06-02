@@ -12,6 +12,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { contacts } from './contacts';
 import { blindIndex, encryptedText, halfvec } from './custom-types';
+import { messages } from './messages';
 import { workspaces } from './workspaces';
 
 export const knowledgeNodeTypeEnum = pgEnum('knowledge_node_type', [
@@ -49,6 +50,14 @@ export const knowledgeLinkTypeEnum = pgEnum('knowledge_link_type', [
 	'led_to',
 	'preceded_by',
 	'contradicts',
+]);
+
+export const knowledgeEvidenceKindEnum = pgEnum('knowledge_evidence_kind', [
+	'llm_extracted',
+	'embedding_match',
+	'contact_cooccurrence',
+	'manual',
+	'inferred_weak',
 ]);
 
 /**
@@ -195,5 +204,52 @@ export const knowledgeLinks = pgTable(
 		),
 		index('knowledge_links_source_idx').on(table.sourceNodeId, table.workspaceId),
 		index('knowledge_links_target_idx').on(table.targetNodeId, table.workspaceId),
+	],
+);
+
+/**
+ * Evidence/provenance rows for knowledge graph claims.
+ *
+ * The first production-beta use case is contact-topic evidence:
+ * "Contact X is connected to topic Y because message Z said ...".
+ *
+ * A row can also describe node-node evidence through relatedKnowledgeNodeId.
+ * Snippets may contain Telegram message text, so they stay encrypted at rest.
+ */
+export const knowledgeEvidence = pgTable(
+	'knowledge_evidence',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		knowledgeNodeId: uuid('knowledge_node_id')
+			.notNull()
+			.references(() => knowledgeNodes.id, { onDelete: 'cascade' }),
+		relatedKnowledgeNodeId: uuid('related_knowledge_node_id').references(() => knowledgeNodes.id, {
+			onDelete: 'set null',
+		}),
+		contactId: uuid('contact_id').references(() => contacts.id, { onDelete: 'set null' }),
+		messageId: uuid('message_id').references(() => messages.id, { onDelete: 'set null' }),
+		/** Relation/contact/link label at the time this evidence was written. */
+		relationType: text('relation_type').notNull(),
+		evidenceKind: knowledgeEvidenceKindEnum('evidence_kind').notNull(),
+		confidence: real('confidence'),
+		/** Encrypted message snippet or preview supporting the claim. */
+		snippet: encryptedText('snippet'),
+		occurredAt: timestamp('occurred_at', { withTimezone: true }),
+		metadata: jsonb('metadata').$type<Record<string, unknown>>(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(table) => [
+		index('knowledge_evidence_workspace_idx').on(table.workspaceId),
+		index('knowledge_evidence_node_idx').on(table.workspaceId, table.knowledgeNodeId),
+		index('knowledge_evidence_contact_idx').on(table.workspaceId, table.contactId),
+		index('knowledge_evidence_message_idx').on(table.workspaceId, table.messageId),
+		index('knowledge_evidence_occurred_at_idx').on(table.workspaceId, table.occurredAt),
+		index('knowledge_evidence_related_node_idx').on(
+			table.workspaceId,
+			table.relatedKnowledgeNodeId,
+		),
 	],
 );

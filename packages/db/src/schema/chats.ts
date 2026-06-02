@@ -1,4 +1,14 @@
-import { boolean, integer, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import {
+	boolean,
+	index,
+	integer,
+	pgTable,
+	text,
+	timestamp,
+	uniqueIndex,
+	uuid,
+} from 'drizzle-orm/pg-core';
 import { encryptedText } from './custom-types';
 import { chatTypeEnum } from './enums';
 
@@ -8,6 +18,7 @@ export const chats = pgTable(
 		id: uuid('id').defaultRandom().primaryKey(),
 		workspaceId: uuid('workspace_id').notNull(),
 		telegramChatId: text('telegram_chat_id').notNull(),
+		sourceAccountId: text('source_account_id'),
 		type: chatTypeEnum('type').notNull().default('private'),
 		title: encryptedText('title'),
 		username: encryptedText('username'),
@@ -18,6 +29,12 @@ export const chats = pgTable(
 		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 	},
 	(table) => [
-		uniqueIndex('chats_workspace_telegram_idx').on(table.workspaceId, table.telegramChatId),
+		index('chats_workspace_source_account_idx').on(table.workspaceId, table.sourceAccountId),
+		uniqueIndex('chats_workspace_telegram_legacy_idx')
+			.on(table.workspaceId, table.telegramChatId)
+			.where(sql`${table.sourceAccountId} IS NULL`),
+		uniqueIndex('chats_workspace_source_telegram_idx')
+			.on(table.workspaceId, table.sourceAccountId, table.telegramChatId)
+			.where(sql`${table.sourceAccountId} IS NOT NULL`),
 	],
 );

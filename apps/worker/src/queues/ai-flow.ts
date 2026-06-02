@@ -4,15 +4,24 @@ import {
 	createCommitment,
 	createGoalProposal,
 	createMemory,
+	hasUserAiAnalysisConsent,
 	isDuplicateGoal,
 	upsertSummary,
 } from '@repo/db';
+import {
+	canRunCloudCommitmentIntelligence,
+	canRunCommitmentExtraction,
+	canRunEmbeddingGeneration,
+	getCommitmentLlmRuntime,
+	isVendorAiEgressEnabled,
+	redactSensitive,
+} from '@repo/shared';
 import { FlowProducer, Worker } from 'bullmq';
 import { extractCommitmentsWithBandit } from '../ai/commitment-extraction';
 import { type CommitmentSensitivity, getConfidenceThresholds } from '../ai/confidence-thresholds';
 import { generateContactSummary } from '../ai/contact-summary';
 import { deduplicateCommitment } from '../ai/dedup';
-import { generateEmbedding } from '../ai/embeddings';
+import { generateEmbedding, generateEmbeddingsCached } from '../ai/embeddings';
 import { recordExtractionFeedback } from '../ai/feedback-signals';
 import { extractGoals } from '../ai/goal-extraction';
 import { prefilterEntities } from '../ai/prefilter';
@@ -33,22 +42,56 @@ export const aiFlowProducer = new FlowProducer({
 	prefix: '{ai-flow}',
 });
 
+export interface PipelineMessage {
+	id?: string;
+	role: string;
+	content: string;
+	timestamp: string;
+	sourceMessageId?: string;
+	chatId?: string;
+	contactId?: string;
+}
+
 interface JobData {
 	userId: string;
 	contactId: string;
 	workspaceId: string;
+	sourceAccountId?: string;
 	/** Encrypted key envelope — NEVER plaintext keys in job payloads */
 	keyEnvelope?: {
 		encryptedWrk: string;
 		kmsContext: Record<string, string>;
 		wrkVersion: number;
 	};
-	/** Messages to process (already decrypted by caller) */
-	messages?: Array<{ role: string; content: string; timestamp: string }>;
+	/** Messages to process (encrypted before entering BullMQ) */
+	messages?: PipelineMessage[];
 	/** Workspace salt for entity masking (hex-encoded) */
 	workspaceSalt?: string;
 	/** User's Coffee Test answer — drives dynamic confidence thresholds */
 	commitmentSensitivity?: CommitmentSensitivity;
+}
+
+const SENSITIVE_AI_FLOW_JOB_OPTS = {
+	attempts: 2,
+	backoff: { type: 'exponential' as const, delay: 5000 },
+	removeOnComplete: true,
+	removeOnFail: { count: 50, age: 3600 },
+};
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isValidUuid(value: string): boolean {
+	return UUID_RE.test(value);
+}
+
+function commitmentStorageRoute(
+	confidence: number,
+	storageThreshold: number,
+	localCommitmentMode: boolean,
+): 'active' | 'draft' | 'discard' {
+	if (confidence < storageThreshold) return 'discard';
+	if (localCommitmentMode) return 'draft';
+	return confidence > 0.9 ? 'active' : 'draft';
 }
 
 /**
@@ -64,6 +107,14 @@ function envelopeFromJob(data: JobData): SealedEnvelope | null {
 	};
 }
 
+async function requirePersistedAiConsent(data: JobData, stage: string): Promise<boolean> {
+	if (await hasUserAiAnalysisConsent(data.userId, data.workspaceId)) return true;
+	console.log(
+		`[${stage}] AI consent no longer persisted for workspace=${data.workspaceId.slice(0, 8)} user=${data.userId.slice(0, 8)}, skipping`,
+	);
+	return false;
+}
+
 /**
  * Schedule the full AI pipeline for a contact.
  * Creates a parent "orchestrator" job with child jobs for
@@ -77,81 +128,137 @@ export async function scheduleAIPipeline(
 	messages?: JobData['messages'],
 	workspaceSalt?: string,
 	commitmentSensitivity?: CommitmentSensitivity,
+	sourceAccountId?: string,
 ) {
+	if (!(await hasUserAiAnalysisConsent(userId, workspaceId))) {
+		throw new Error('AI analysis consent is required before scheduling the AI pipeline');
+	}
+
 	const data: JobData = {
 		userId,
 		contactId,
 		workspaceId,
+		sourceAccountId,
 		keyEnvelope,
 		messages,
 		workspaceSalt,
 		commitmentSensitivity,
 	};
+	const cloudCommitmentEnabled = canRunCloudCommitmentIntelligence();
+	const commitmentExtractionEnabled = canRunCommitmentExtraction();
+	const embeddingGenerationEnabled = canRunEmbeddingGeneration();
+	const vendorAiEnabled = isVendorAiEgressEnabled();
 
 	return aiFlowProducer.add({
 		name: 'ai-pipeline',
 		queueName: 'orchestrator',
 		data,
 		prefix: '{ai-flow}',
+		opts: SENSITIVE_AI_FLOW_JOB_OPTS,
 		children: [
-			{
-				name: 'extract-commitments',
-				queueName: 'extraction',
-				data,
-				prefix: '{ai-flow}',
-			},
-			{
-				name: 'generate-embeddings',
-				queueName: 'embeddings',
-				data,
-				prefix: '{ai-flow}',
-			},
-			{
-				name: 'generate-summary',
-				queueName: 'summaries',
-				data,
-				prefix: '{ai-flow}',
-			},
-			{
-				name: 'check-fulfillment',
-				queueName: 'fulfillment',
-				data,
-				prefix: '{ai-flow}',
-			},
-			{
-				name: 'extract-knowledge',
-				queueName: 'knowledge-extraction',
-				data,
-				prefix: '{ai-flow}',
-			},
-			{
-				name: 'extract-relationships',
-				queueName: 'relationship-extraction',
-				data: {
-					workspaceId: data.workspaceId,
-					contactId: data.contactId,
-					keyEnvelope: data.keyEnvelope,
-				},
-				prefix: '{ai-flow}',
-			},
+			...(commitmentExtractionEnabled
+				? [
+						{
+							name: 'extract-commitments',
+							queueName: 'extraction',
+							data,
+							prefix: '{ai-flow}',
+							opts: SENSITIVE_AI_FLOW_JOB_OPTS,
+						},
+					]
+				: []),
+			...(embeddingGenerationEnabled
+				? [
+						{
+							name: 'generate-embeddings',
+							queueName: 'embeddings',
+							data,
+							prefix: '{ai-flow}',
+							opts: SENSITIVE_AI_FLOW_JOB_OPTS,
+						},
+					]
+				: []),
+			...(vendorAiEnabled
+				? [
+						{
+							name: 'generate-summary',
+							queueName: 'summaries',
+							data,
+							prefix: '{ai-flow}',
+							opts: SENSITIVE_AI_FLOW_JOB_OPTS,
+						},
+					]
+				: []),
+			...(cloudCommitmentEnabled
+				? [
+						{
+							name: 'check-fulfillment',
+							queueName: 'fulfillment',
+							data,
+							prefix: '{ai-flow}',
+							opts: SENSITIVE_AI_FLOW_JOB_OPTS,
+						},
+					]
+				: []),
+			...(embeddingGenerationEnabled
+				? [
+						{
+							name: 'extract-knowledge',
+							queueName: 'knowledge-extraction',
+							data,
+							prefix: '{ai-flow}',
+							opts: SENSITIVE_AI_FLOW_JOB_OPTS,
+						},
+					]
+				: []),
+			...(vendorAiEnabled
+				? [
+						{
+							name: 'extract-relationships',
+							queueName: 'relationship-extraction',
+							data: {
+								workspaceId: data.workspaceId,
+								userId: data.userId,
+								...(data.sourceAccountId ? { sourceAccountId: data.sourceAccountId } : {}),
+								contactId: data.contactId,
+								keyEnvelope: data.keyEnvelope,
+								messages: data.messages,
+								workspaceSalt: data.workspaceSalt,
+							},
+							prefix: '{ai-flow}',
+							opts: SENSITIVE_AI_FLOW_JOB_OPTS,
+						},
+					]
+				: []),
 			{
 				name: 'analyze-style',
 				queueName: 'style-analysis',
 				data,
 				prefix: '{ai-flow}',
+				opts: SENSITIVE_AI_FLOW_JOB_OPTS,
 			},
-			{
-				name: 'record-decisions',
-				queueName: 'decision-recording',
-				data,
-				prefix: '{ai-flow}',
-			},
-			{
-				name: 'extract-goals',
-				queueName: 'goal-extraction',
-				data,
-				prefix: '{ai-flow}',
-			},
+			...(embeddingGenerationEnabled
+				? [
+						{
+							name: 'record-decisions',
+							queueName: 'decision-recording',
+							data,
+							prefix: '{ai-flow}',
+							opts: SENSITIVE_AI_FLOW_JOB_OPTS,
+						},
+					]
+				: []),
+			...(vendorAiEnabled
+				? [
+						{
+							name: 'extract-goals',
+							queueName: 'goal-extraction',
+							data,
+							prefix: '{ai-flow}',
+							opts: SENSITIVE_AI_FLOW_JOB_OPTS,
+						},
+					]
+				: []),
 		],
 	});
 }
@@ -165,6 +272,11 @@ export const orchestratorWorker = new Worker(
 	withRLS(async (job) => {
 		const { contactId, workspaceId, userId } = job.data as JobData;
 		const pipelineStart = Date.now();
+		const data = job.data as JobData;
+
+		if (!(await requirePersistedAiConsent(data, 'ai-orchestrator'))) {
+			return { skipped: true, reason: 'no_ai_consent' };
+		}
 
 		trackAnalyticsEvent(workspaceId, userId, 'ai_pipeline.started');
 
@@ -191,7 +303,7 @@ export const orchestratorWorker = new Worker(
 		} catch (err) {
 			console.error(
 				'[ai-orchestrator] Failed to derive group-chat relationships:',
-				(err as Error).message,
+				redactSensitive(err),
 			);
 		}
 
@@ -217,6 +329,17 @@ export const extractionWorker = new Worker(
 		const data = job.data as JobData;
 		const { userId, contactId, workspaceId } = data;
 
+		if (!canRunCommitmentExtraction()) {
+			console.log(
+				`[ai-extraction] Commitment extraction disabled for workspace=${workspaceId.slice(0, 8)}, skipping`,
+			);
+			return { skipped: true, reason: 'commitment_extraction_disabled' };
+		}
+
+		if (!(await requirePersistedAiConsent(data, 'ai-extraction'))) {
+			return { skipped: true, reason: 'no_ai_consent' };
+		}
+
 		if (!data.messages || data.messages.length === 0) {
 			console.log(`[ai-extraction] No messages to process for contact=${contactId.slice(0, 8)}`);
 			return;
@@ -232,10 +355,14 @@ export const extractionWorker = new Worker(
 		const wrk = await unwrapWrk(envelope);
 		const keys = await deriveKeys(wrk, workspaceId, envelope.wrkVersion);
 		const messages = data.messages.map((m) => ({
+			id: m.id,
+			sourceMessageId: m.sourceMessageId,
 			role: m.role,
 			content: decrypt(m.content, keys.dek),
 			timestamp: m.timestamp,
 		}));
+		const commitmentRuntime = getCommitmentLlmRuntime(process.env);
+		const localCommitmentMode = commitmentRuntime.mode === 'local';
 
 		console.log(
 			`[ai-extraction] Extracting commitments from ${messages.length} messages for contact=${contactId.slice(0, 8)}`,
@@ -244,7 +371,10 @@ export const extractionWorker = new Worker(
 		// Build extraction context transcript (last 10 messages the model sees)
 		const extractionContext = messages
 			.slice(-10)
-			.map((m) => `[${m.role}] ${m.content}`)
+			.map((m, index) => {
+				const sourceId = m.sourceMessageId ?? m.id ?? `m${index + 1}`;
+				return `[source:${sourceId}] [${m.role}] ${m.content}`;
+			})
 			.join('\n');
 
 		// 1. Extract commitments via bandit-integrated LLM tool use
@@ -258,6 +388,7 @@ export const extractionWorker = new Worker(
 		} = await extractCommitmentsWithBandit(messages, referenceTime, userId, workspaceId, {
 			extractionThreshold: thresholds.extraction,
 			commitmentSensitivity: data.commitmentSensitivity,
+			workspaceSalt: keys.bik,
 		});
 
 		if (extracted.length === 0) {
@@ -279,12 +410,11 @@ export const extractionWorker = new Worker(
 		let stored = 0;
 		for (const commitment of extracted) {
 			// Route by confidence (analytics)
-			const route =
-				commitment.confidence > 0.9
-					? 'active'
-					: commitment.confidence > thresholds.storage
-						? 'draft'
-						: 'discard';
+			const route = commitmentStorageRoute(
+				commitment.confidence,
+				thresholds.storage,
+				localCommitmentMode,
+			);
 			trackAnalyticsEvent(workspaceId, userId, 'commitment.confidence_routed', {
 				confidence: commitment.confidence,
 				route,
@@ -343,10 +473,12 @@ export const extractionWorker = new Worker(
 					confidence: commitment.confidence,
 					dueDate: commitment.due_date ? new Date(commitment.due_date) : undefined,
 					quote: commitment.quote,
+					sourceMessageIds: commitment.source_message_ids?.filter(isValidUuid),
 					extractionContext,
 					embedding,
 					sourceMessageAgeDays,
 					banditTraceId: traceId,
+					status: localCommitmentMode ? 'draft' : undefined,
 				},
 				envelope,
 			);
@@ -384,7 +516,7 @@ export const extractionWorker = new Worker(
 		} catch (err) {
 			console.error(
 				'[ai-extraction] Feedback signal recording failed (non-fatal):',
-				(err as Error).message,
+				redactSensitive(err),
 			);
 		}
 
@@ -405,6 +537,10 @@ export const embeddingsWorker = new Worker(
 	withRLS(async (job) => {
 		const data = job.data as JobData;
 		const { contactId, workspaceId } = data;
+
+		if (!(await requirePersistedAiConsent(data, 'ai-embeddings'))) {
+			return { skipped: true, reason: 'no_ai_consent' };
+		}
 
 		if (!data.messages || data.messages.length === 0) {
 			console.log(`[ai-embeddings] No messages to embed for contact=${contactId.slice(0, 8)}`);
@@ -429,6 +565,7 @@ export const embeddingsWorker = new Worker(
 		const embWrk = await unwrapWrk(envelope);
 		const embKeys = await deriveKeys(embWrk, workspaceId, envelope.wrkVersion);
 		const messages = data.messages.map((m) => ({
+			id: m.id,
 			role: m.role,
 			content: decrypt(m.content, embKeys.dek),
 			timestamp: m.timestamp,
@@ -438,15 +575,19 @@ export const embeddingsWorker = new Worker(
 			`[ai-embeddings] Generating embeddings for ${messages.length} messages for contact=${contactId.slice(0, 8)}`,
 		);
 
-		for (const msg of messages) {
-			// 1. Detect entities via heuristic prefilter
+		const maskedMessages = messages.map((msg) => {
 			const detectedEntities = prefilterEntities(msg.content);
-
-			// 2. Mask entities — CRITICAL: must happen BEFORE embedding
 			const { maskedText } = maskEntities(msg.content, salt, detectedEntities);
+			return { msg, maskedText };
+		});
+		const embeddings = await generateEmbeddingsCached(
+			maskedMessages.map((item) => item.maskedText),
+		);
 
-			// 3. Generate embedding from sanitized text
-			const embedding = await generateEmbedding(maskedText);
+		for (const result of embeddings) {
+			const item = maskedMessages[result.index];
+			if (!item) continue;
+			const { msg, maskedText } = item;
 
 			// 4. Store as memory
 			await createMemory(
@@ -456,7 +597,15 @@ export const embeddingsWorker = new Worker(
 					category: 'general',
 					content: msg.content,
 					contentSanitized: maskedText,
-					embedding,
+					embedding: result.embedding,
+					metadata: msg.id
+						? {
+								messageId: msg.id,
+								source: 'ai_embeddings_worker',
+							}
+						: {
+								source: 'ai_embeddings_worker',
+							},
 				},
 				envelope,
 			);
@@ -479,6 +628,10 @@ export const summaryWorker = new Worker(
 	withRLS(async (job) => {
 		const data = job.data as JobData;
 		const { userId, contactId, workspaceId } = data;
+
+		if (!(await requirePersistedAiConsent(data, 'ai-summary'))) {
+			return { skipped: true, reason: 'no_ai_consent' };
+		}
 
 		if (!data.messages || data.messages.length === 0) {
 			console.log(`[ai-summary] No messages to summarize for contact=${contactId.slice(0, 8)}`);
@@ -573,12 +726,12 @@ orchestratorWorker.on('completed', (job) => {
 	console.log(`[ai-orchestrator] Job ${job.id} completed`);
 });
 orchestratorWorker.on('failed', (job, err) => {
-	console.error(`[ai-orchestrator] Job ${job?.id} failed:`, err.message);
+	console.error(`[ai-orchestrator] Job ${job?.id} failed:`, redactSensitive(err));
 	if (job?.data) {
 		const d = job.data as JobData;
 		trackAnalyticsEvent(d.workspaceId, d.userId, 'ai_pipeline.failed', {
 			queue: 'orchestrator',
-			error_type: err.message?.split(':')[0] || 'unknown',
+			error_type: redactSensitive(err.message?.split(':')[0] || 'unknown'),
 		});
 	}
 });
@@ -587,12 +740,12 @@ extractionWorker.on('completed', (job) => {
 	console.log(`[ai-extraction] Job ${job.id} completed`);
 });
 extractionWorker.on('failed', (job, err) => {
-	console.error(`[ai-extraction] Job ${job?.id} failed:`, err.message);
+	console.error(`[ai-extraction] Job ${job?.id} failed:`, redactSensitive(err));
 	if (job?.data) {
 		const d = job.data as JobData;
 		trackAnalyticsEvent(d.workspaceId, d.userId, 'ai_pipeline.failed', {
 			queue: 'extraction',
-			error_type: err.message?.split(':')[0] || 'unknown',
+			error_type: redactSensitive(err.message?.split(':')[0] || 'unknown'),
 		});
 	}
 });
@@ -601,14 +754,14 @@ embeddingsWorker.on('completed', (job) => {
 	console.log(`[ai-embeddings] Job ${job.id} completed`);
 });
 embeddingsWorker.on('failed', (job, err) => {
-	console.error(`[ai-embeddings] Job ${job?.id} failed:`, err.message);
+	console.error(`[ai-embeddings] Job ${job?.id} failed:`, redactSensitive(err));
 });
 
 summaryWorker.on('completed', (job) => {
 	console.log(`[ai-summary] Job ${job.id} completed`);
 });
 summaryWorker.on('failed', (job, err) => {
-	console.error(`[ai-summary] Job ${job?.id} failed:`, err.message);
+	console.error(`[ai-summary] Job ${job?.id} failed:`, redactSensitive(err));
 });
 
 /**
@@ -626,6 +779,10 @@ export const goalExtractionWorker = new Worker(
 	withRLS(async (job) => {
 		const data = job.data as JobData;
 		const { userId, contactId, workspaceId } = data;
+
+		if (!(await requirePersistedAiConsent(data, 'goal-extraction'))) {
+			return { skipped: true, reason: 'no_ai_consent' };
+		}
 
 		if (!data.messages || data.messages.length === 0) {
 			console.log(`[goal-extraction] No messages for contact=${contactId.slice(0, 8)}`);
@@ -655,7 +812,7 @@ export const goalExtractionWorker = new Worker(
 
 		// Extract goals via Haiku
 		const referenceTime = new Date().toISOString();
-		const { goals: extracted } = await extractGoals(messages, referenceTime);
+		const { goals: extracted } = await extractGoals(messages, referenceTime, keys.bik);
 
 		if (extracted.length === 0) {
 			console.log(`[goal-extraction] No goals found for contact=${contactId.slice(0, 8)}`);
@@ -724,5 +881,5 @@ goalExtractionWorker.on('completed', (job) => {
 	console.log(`[goal-extraction] Job ${job.id} completed`);
 });
 goalExtractionWorker.on('failed', (job, err) => {
-	console.error(`[goal-extraction] Job ${job?.id} failed:`, err.message);
+	console.error(`[goal-extraction] Job ${job?.id} failed:`, redactSensitive(err));
 });

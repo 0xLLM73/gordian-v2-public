@@ -1,5 +1,5 @@
-import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
-import { getCommitmentsByWorkspace, listContacts } from '@repo/db';
+import { getUserWorkspaceId, requireSession } from '@/lib/workspace';
+import { getDashboardAnalyticsStats } from '@repo/db';
 
 export default async function AnalyticsPanel() {
 	try {
@@ -10,40 +10,21 @@ export default async function AnalyticsPanel() {
 			return <AnalyticsFallback />;
 		}
 
-		const envelope = await getWorkspaceEnvelope(workspaceId);
-		if (!envelope) {
-			return <AnalyticsFallback />;
-		}
-
-		const [contacts, commitments] = await Promise.all([
-			listContacts(workspaceId, envelope, { limit: 100 }),
-			getCommitmentsByWorkspace(workspaceId, envelope, { limit: 100 }),
-		]);
-
-		const contactCount = Array.isArray(contacts) ? contacts.length : 0;
-		const commitmentCount = Array.isArray(commitments) ? commitments.length : 0;
-
-		const statusCounts: Record<string, number> = {};
-		if (Array.isArray(commitments)) {
-			for (const c of commitments) {
-				const status = (c as Record<string, unknown>).status as string;
-				statusCounts[status] = (statusCounts[status] || 0) + 1;
-			}
-		}
+		const stats = await getDashboardAnalyticsStats(workspaceId);
 
 		return (
 			<div>
 				<h3 className="mb-4 text-sm font-semibold text-foreground">Analytics</h3>
 
 				<div className="space-y-4">
-					<MetricCard label="Contacts" value={contactCount} />
-					<MetricCard label="Commitments" value={commitmentCount} />
+					<MetricCard label="Contacts" value={stats.contactCount} />
+					<MetricCard label="Commitments" value={stats.commitmentCount} />
 
-					{Object.keys(statusCounts).length > 0 && (
+					{Object.keys(stats.commitmentStatusCounts).length > 0 && (
 						<div className="rounded-lg border border-border bg-card p-4">
 							<p className="mb-2 text-xs font-medium text-muted-foreground">By Status</p>
 							<div className="space-y-1">
-								{Object.entries(statusCounts).map(([status, count]) => (
+								{Object.entries(stats.commitmentStatusCounts).map(([status, count]) => (
 									<div key={status} className="flex items-center justify-between text-sm">
 										<span className="capitalize text-muted-foreground">{status}</span>
 										<span className="font-medium text-foreground">{count}</span>

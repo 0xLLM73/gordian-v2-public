@@ -2,8 +2,33 @@ import { CommitmentActions } from '@/components/commitment-actions';
 import { COMMITMENT_STATUS_COLORS } from '@/lib/colors';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
 import { getCommitmentsByWorkspace } from '@repo/db';
+import { canRunCloudCommitmentIntelligence, isLocalOnlyMode } from '@repo/shared';
 import { Suspense } from 'react';
 import { CommitmentsFilter } from './commitments-filter';
+import { normalizeCommitmentStatusFilter } from './status-filter';
+
+function commitmentModeCopy() {
+	if (canRunCloudCommitmentIntelligence()) {
+		return {
+			heading: 'Track short-term promises, tasks, and follow-ups from your workspace.',
+			empty:
+				'No commitments yet. Automatic extraction will appear here after permitted conversations are analyzed.',
+		};
+	}
+
+	if (isLocalOnlyMode()) {
+		return {
+			heading: 'Track short-term promises, tasks, and follow-ups without sending them to cloud AI.',
+			empty:
+				'No commitments yet. Local-only mode keeps cloud extraction off; this page shows commitments you create, import, or explicitly enable for analysis.',
+		};
+	}
+
+	return {
+		heading: 'Track short-term promises, tasks, and follow-ups from your workspace.',
+		empty: 'No commitments yet. Automatic commitment extraction is currently disabled.',
+	};
+}
 
 export default async function CommitmentsPage({
 	searchParams,
@@ -13,12 +38,16 @@ export default async function CommitmentsPage({
 	const session = await requireSession();
 	const workspaceId = await getUserWorkspaceId(session.user.id);
 	const resolvedParams = await searchParams;
-	const status = resolvedParams?.status || 'all';
+	const status = normalizeCommitmentStatusFilter(resolvedParams?.status);
+	const copy = commitmentModeCopy();
 
 	return (
 		<div>
 			<div className="mb-6 flex items-center justify-between">
-				<h1 className="text-2xl font-bold text-foreground">Commitments</h1>
+				<div>
+					<h1 className="text-2xl font-bold text-foreground">Commitments</h1>
+					<p className="mt-1 max-w-2xl text-sm text-muted-foreground">{copy.heading}</p>
+				</div>
 			</div>
 
 			{workspaceId ? <CommitmentsFilter workspaceId={workspaceId} /> : null}
@@ -28,7 +57,7 @@ export default async function CommitmentsPage({
 					<CommitmentsList workspaceId={workspaceId} status={status} />
 				) : (
 					<div className="mt-4 rounded-lg border border-border bg-muted p-8 text-center text-sm text-muted-foreground">
-						No commitments yet. Commitments are extracted automatically from Telegram messages.
+						{copy.empty}
 					</div>
 				)}
 			</Suspense>
@@ -37,11 +66,12 @@ export default async function CommitmentsPage({
 }
 
 async function CommitmentsList({ workspaceId, status }: { workspaceId: string; status: string }) {
+	const copy = commitmentModeCopy();
 	const envelope = await getWorkspaceEnvelope(workspaceId);
 	if (!envelope) {
 		return (
 			<div className="mt-4 rounded-lg border border-border bg-muted p-8 text-center text-sm text-muted-foreground">
-				No commitments yet. Commitments are extracted automatically from Telegram messages.
+				{copy.empty}
 			</div>
 		);
 	}
@@ -50,7 +80,7 @@ async function CommitmentsList({ workspaceId, status }: { workspaceId: string; s
 	if (!commitments || commitments.length === 0) {
 		return (
 			<div className="mt-4 rounded-lg border border-border bg-muted p-8 text-center text-sm text-muted-foreground">
-				No commitments yet. Commitments are extracted automatically from Telegram messages.
+				{copy.empty}
 			</div>
 		);
 	}

@@ -7,16 +7,27 @@ import {
 	getActiveGoalsByType,
 	getCalibration,
 	getStaleContacts,
+	updateContact,
 	updateContactRecency,
 	updateGoalProgress,
 } from '@repo/db';
-import { updateChatLastSync, upsertChat, upsertMessages } from '@repo/db';
+import {
+	linkMessagesToContact,
+	linkMessagesToContactsByTelegramIds,
+	listMessageIdsByTelegramIds,
+	updateChatLastSync,
+	upsertChat,
+	upsertMessages,
+} from '@repo/db';
+import { type TelegramSyncScope, redactSensitive, resolveTelegramSyncScope } from '@repo/shared';
 import { Queue, Worker } from 'bullmq';
 import { connectUser, sendToUser } from '../gramjs/thread';
 import { trackWorkerEvent as trackAnalyticsEvent } from '../lib/track';
 import { withRLS } from '../middleware/rls';
 import { broadcastSyncComplete, broadcastSyncProgress } from '../realtime/broadcast';
 import { connection } from '../redis';
+import { isTelegramFullBackfillEnabled, isTelegramPeriodicSyncEnabled } from '../telegram-config';
+import type { PipelineMessage } from './ai-flow';
 import { bufferMessage } from './message-buffer';
 
 export interface SyncJobData {
@@ -24,6 +35,8 @@ export interface SyncJobData {
 	workspaceId: string;
 	contactIds?: string[];
 	sourceAccountId?: string; // Telegram account ID being synced
+	syncScope?: TelegramSyncScope;
+	enableAiProcessing?: boolean;
 }
 
 function jobIdPart(value: string | undefined): string {
@@ -36,15 +49,28 @@ function periodicSyncJobId(data: Pick<SyncJobData, 'workspaceId' | 'userId' | 's
 	)}`;
 }
 
+function assertStoredSessionUnwrapAllowedForSync(): void {
+	if (process.env.NODE_ENV === 'test') return;
+	if (process.env.TELEGRAM_ALLOW_SESSION_UNWRAP_OUTSIDE_IMPORTS?.trim() === 'true') return;
+	throw new Error(
+		'Stored Telegram session unwrap is restricted to history imports. Use the Telegram history import flow, or explicitly set TELEGRAM_ALLOW_SESSION_UNWRAP_OUTSIDE_IMPORTS=true for legacy sync.',
+	);
+}
+
 /**
  * Look up the Telegram session raw ciphertext from the accounts table.
  * Runs OUTSIDE withKeys() context — accessToken returns raw ciphertext for KEK decrypt.
  */
-async function getTelegramAccount(userId: string): Promise<{
+async function getTelegramAccount(
+	userId: string,
+	sourceAccountId?: string,
+): Promise<{
 	rawCiphertext: string;
 	telegramUserId: string;
 	sessionKekEncrypted: Buffer;
 } | null> {
+	const conditions = [eq(accounts.userId, userId), eq(accounts.providerId, 'telegram')];
+	if (sourceAccountId) conditions.push(eq(accounts.accountId, sourceAccountId));
 	const result = await db
 		.select({
 			accessToken: accounts.accessToken,
@@ -52,7 +78,7 @@ async function getTelegramAccount(userId: string): Promise<{
 			sessionKekEncrypted: accounts.sessionKekEncrypted,
 		})
 		.from(accounts)
-		.where(and(eq(accounts.userId, userId), eq(accounts.providerId, 'telegram')))
+		.where(and(...conditions))
 		.limit(1);
 
 	if (!result[0]?.accessToken) return null;
@@ -74,8 +100,13 @@ async function getTelegramAccount(userId: string): Promise<{
  *
  * Decrypts session using per-user KMS KEK (sessionKekEncrypted).
  */
-async function ensureGramJSConnected(userId: string, _envelope: SealedEnvelope): Promise<string> {
-	const account = await getTelegramAccount(userId);
+async function ensureGramJSConnected(
+	userId: string,
+	_envelope: SealedEnvelope,
+	sourceAccountId?: string,
+): Promise<string> {
+	assertStoredSessionUnwrapAllowedForSync();
+	const account = await getTelegramAccount(userId, sourceAccountId);
 	if (!account) {
 		throw new Error(
 			'No Telegram session found for user — re-authenticate via /onboarding/telegram-link',
@@ -114,6 +145,113 @@ interface GramJSMessage {
 	isOutgoing: boolean;
 }
 
+interface GramJSSenderUser {
+	telegramId: string;
+	firstName: string;
+	lastName: string;
+	username: string;
+	isBot: boolean;
+}
+
+type CreateContactWithUsernameInput = Parameters<typeof createContact>[1] & {
+	username?: string;
+};
+
+type UpdateContactWithUsernameInput = Parameters<typeof updateContact>[2] & {
+	username?: string;
+};
+
+type SourcedPipelineMessage = PipelineMessage & {
+	sourceMessageId: string;
+	chatId: string;
+};
+
+interface GroupMessageBatch {
+	chatId: string;
+	chatType: 'group' | 'supergroup';
+	messages: SourcedPipelineMessage[];
+}
+
+function isSourcedPipelineMessage(
+	message: SourcedPipelineMessage | null,
+): message is SourcedPipelineMessage {
+	return message !== null;
+}
+
+function normalizeTelegramUsername(username: string | undefined): string | undefined {
+	const trimmed = username?.trim();
+	return trimmed || undefined;
+}
+
+function contactDalSupportsUsername(): boolean {
+	return 'username' in contacts;
+}
+
+function withTelegramUsername<T extends object>(
+	input: T,
+	username: string | undefined,
+): T & { username?: string } {
+	const normalized = normalizeTelegramUsername(username);
+	return normalized ? { ...input, username: normalized } : input;
+}
+
+async function updateExistingContactUsername(
+	workspaceId: string,
+	contactId: string,
+	username: string | undefined,
+	envelope: SealedEnvelope,
+) {
+	const normalized = normalizeTelegramUsername(username);
+	if (!normalized || !contactDalSupportsUsername()) return;
+
+	try {
+		const input: UpdateContactWithUsernameInput = { username: normalized };
+		await updateContact(workspaceId, contactId, input, envelope);
+	} catch (err) {
+		console.warn('[sync] Failed to update contact username:', (err as Error).message);
+	}
+}
+
+async function createMissingSenderContacts(
+	workspaceId: string,
+	sourceAccountId: string,
+	senderUsers: GramJSSenderUser[],
+	senderIds: Set<string>,
+	contactMap: Map<string, string>,
+	envelope: SealedEnvelope,
+): Promise<number> {
+	let createdCount = 0;
+	const uniqueUsers = new Map<string, GramJSSenderUser>();
+	for (const user of senderUsers) {
+		if (!user.telegramId || user.isBot || user.telegramId === sourceAccountId) continue;
+		if (!senderIds.has(user.telegramId) || contactMap.has(user.telegramId)) continue;
+		uniqueUsers.set(user.telegramId, user);
+	}
+
+	for (const user of uniqueUsers.values()) {
+		try {
+			const input: CreateContactWithUsernameInput = withTelegramUsername(
+				{
+					firstName: user.firstName || undefined,
+					lastName: user.lastName || undefined,
+					telegramId: user.telegramId,
+					sourceAccountId,
+				},
+				user.username,
+			);
+			const created = await createContact(workspaceId, input, envelope);
+			if (created) {
+				contactMap.set(user.telegramId, created.id);
+				createdCount++;
+			}
+		} catch (err) {
+			console.warn('[sync] Failed to create contact from message sender:', redactSensitive(err));
+		}
+	}
+
+	return createdCount;
+}
+
 /** Max dialogs for Tier 1 quick sync */
 const QUICK_SYNC_DIALOGS = 20;
 /** Max messages per dialog for Tier 1 quick sync */
@@ -136,8 +274,8 @@ export const syncQueue = new Queue<SyncJobData>('sync', {
 	defaultJobOptions: {
 		attempts: 3,
 		backoff: { type: 'exponential', delay: 5000 },
-		removeOnComplete: { count: 1000 },
-		removeOnFail: { count: 5000 },
+		removeOnComplete: true,
+		removeOnFail: { count: 50, age: 3600 },
 	},
 });
 
@@ -195,12 +333,18 @@ export const syncWorker = new Worker<SyncJobData>(
 	'sync',
 	withRLS(async (job) => {
 		const { userId, workspaceId, contactIds } = job.data;
+		const syncScope = resolveTelegramSyncScope(job.data.syncScope);
+		const enableAiProcessing = job.data.enableAiProcessing === true;
 		const syncStartTime = Date.now();
 
-		console.log(`[sync] Processing sync for user=${short(userId)} workspace=${short(workspaceId)}`);
+		console.log(
+			`[sync] Processing sync for user=${short(userId)} workspace=${short(workspaceId)} scope=${syncScope}`,
+		);
 
 		trackAnalyticsEvent(workspaceId, userId, 'sync.started', {
 			is_full_sync: !contactIds,
+			sync_scope: syncScope,
+			ai_processing_enabled: enableAiProcessing,
 		});
 
 		// 0. Fetch workspace envelope first — needed to decrypt the Telegram session
@@ -221,10 +365,38 @@ export const syncWorker = new Worker<SyncJobData>(
 			return;
 		}
 
+		let aiConsentContextPromise: Promise<{
+			granted: boolean;
+			commitmentSensitivity?: 'everything' | 'specific' | 'tasks_only';
+			priorityContactIds?: Set<string>;
+		}> | null = null;
+		const getAiConsentContext = () => {
+			aiConsentContextPromise ??= (async () => {
+				if (!enableAiProcessing) return { granted: false };
+				try {
+					const calibration = await getCalibration(userId, workspaceId, envelope);
+					return {
+						granted: calibration?.consentAiAnalysis === true,
+						commitmentSensitivity: calibration?.commitmentSensitivity ?? undefined,
+						priorityContactIds: calibration?.priorityContactIds?.length
+							? new Set(calibration.priorityContactIds)
+							: undefined,
+					};
+				} catch (err) {
+					console.warn(
+						'[sync] Failed to fetch calibration, skipping AI analysis:',
+						redactSensitive(err),
+					);
+					return { granted: false };
+				}
+			})();
+			return aiConsentContextPromise;
+		};
+
 		// 1. Ensure GramJS is connected with the user's Telegram session
 		let myTelegramId: string;
 		try {
-			myTelegramId = await ensureGramJSConnected(userId, envelope);
+			myTelegramId = await ensureGramJSConnected(userId, envelope, job.data.sourceAccountId);
 		} catch (connErr) {
 			const e = connErr as Error & { name?: string; code?: string };
 			console.error(`[sync] ensureGramJSConnected failed: name=${e.name} code=${e.code}`);
@@ -241,6 +413,7 @@ export const syncWorker = new Worker<SyncJobData>(
 				firstName: string;
 				lastName: string;
 				phone: string;
+				username?: string;
 			}>;
 		}>(userId, { type: 'get-contacts' });
 
@@ -260,14 +433,14 @@ export const syncWorker = new Worker<SyncJobData>(
 		// 4. Upsert contacts into the database
 		let newContactCount = 0;
 		for (const tc of telegramContacts) {
-			if (contactMap.has(tc.telegramId)) {
-				// Already exists — skip (update logic can be added later)
+			const existingContactId = contactMap.get(tc.telegramId);
+			if (existingContactId) {
+				await updateExistingContactUsername(workspaceId, existingContactId, tc.username, envelope);
 				continue;
 			}
 
 			try {
-				const created = await createContact(
-					workspaceId,
+				const input: CreateContactWithUsernameInput = withTelegramUsername(
 					{
 						firstName: tc.firstName || undefined,
 						lastName: tc.lastName || undefined,
@@ -275,8 +448,9 @@ export const syncWorker = new Worker<SyncJobData>(
 						telegramId: tc.telegramId,
 						sourceAccountId,
 					},
-					envelope,
+					tc.username,
 				);
+				const created = await createContact(workspaceId, input, envelope);
 
 				if (created) {
 					contactMap.set(tc.telegramId, created.id);
@@ -306,18 +480,51 @@ export const syncWorker = new Worker<SyncJobData>(
 			`[sync] Contacts: ${newContactCount} new, ${telegramContacts.length - newContactCount} existing`,
 		);
 
+		if (syncScope === 'contacts_only') {
+			broadcastSyncProgress(workspaceId, {
+				contacts: newContactCount,
+				messages: 0,
+				stage: 'contacts',
+			}).catch(() => {});
+
+			await broadcastSyncComplete(workspaceId, {
+				newMessages: 0,
+				newContacts: newContactCount,
+			});
+
+			trackAnalyticsEvent(workspaceId, userId, 'sync.completed', {
+				duration_ms: Date.now() - syncStartTime,
+				contacts_synced: newContactCount,
+				messages_synced: 0,
+				dialogs_processed: 0,
+				sync_scope: syncScope,
+				ai_processing_enabled: false,
+			});
+
+			console.log(
+				`[sync] Contacts-only sync complete for user=${short(userId)}: ${newContactCount} new contacts`,
+			);
+			return;
+		}
+
 		// 5. Get dialogs from Telegram
 		const dialogsResult = await sendToUser<{
 			type: string;
 			dialogs: GramJSDialog[];
 		}>(userId, { type: 'get-dialogs', limit: 100 });
+		const includeGroupDialogs = syncScope === 'private_recent_with_groups';
 
-		// Sort by most recent activity (topMessage ID as proxy for recency)
-		// Filter out bots, prioritize private chats
+		// Sort private chats by most recent activity. Group/channel import stays
+		// off unless the user explicitly selected the group import scope.
 		const dialogs = dialogsResult.dialogs
-			.filter((d) => !d.isBot)
+			.filter(
+				(d) =>
+					!d.isBot &&
+					(d.type === 'private' ||
+						(includeGroupDialogs && (d.type === 'group' || d.type === 'supergroup'))),
+			)
 			.sort((a, b) => {
-				// Private chats first, then by topMessage descending
+				if (includeGroupDialogs) return b.topMessage - a.topMessage;
 				if (a.type === 'private' && b.type !== 'private') return -1;
 				if (a.type !== 'private' && b.type === 'private') return 1;
 				return b.topMessage - a.topMessage;
@@ -333,19 +540,28 @@ export const syncWorker = new Worker<SyncJobData>(
 			(d) => d.type === 'private' && !d.isBot && d.chatId,
 		);
 		for (const peer of privatePeers) {
-			if (contactMap.has(peer.chatId)) continue;
+			const existingContactId = contactMap.get(peer.chatId);
+			if (existingContactId) {
+				await updateExistingContactUsername(
+					workspaceId,
+					existingContactId,
+					peer.username,
+					envelope,
+				);
+				continue;
+			}
 
 			try {
-				const created = await createContact(
-					workspaceId,
+				const input: CreateContactWithUsernameInput = withTelegramUsername(
 					{
 						firstName: peer.firstName || undefined,
 						lastName: peer.lastName || undefined,
 						telegramId: peer.chatId,
 						sourceAccountId,
 					},
-					envelope,
+					peer.username,
 				);
+				const created = await createContact(workspaceId, input, envelope);
 
 				if (created) {
 					contactMap.set(peer.chatId, created.id);
@@ -371,13 +587,16 @@ export const syncWorker = new Worker<SyncJobData>(
 			}
 		}
 
-		// 7. Extract participants from small groups as contacts
-		const smallGroups = dialogsResult.dialogs.filter(
-			(d) =>
-				(d.type === 'group' || d.type === 'supergroup') &&
-				d.participantCount &&
-				d.participantCount <= GROUP_PARTICIPANT_THRESHOLD,
-		);
+		// 7. Extract participants from small groups only when the user explicitly
+		// selects group sync. Personal-account mode defaults to private chats.
+		const smallGroups = includeGroupDialogs
+			? dialogs.filter(
+					(d) =>
+						(d.type === 'group' || d.type === 'supergroup') &&
+						d.participantCount &&
+						d.participantCount <= GROUP_PARTICIPANT_THRESHOLD,
+				)
+			: [];
 
 		for (const group of smallGroups) {
 			try {
@@ -398,21 +617,31 @@ export const syncWorker = new Worker<SyncJobData>(
 
 				let groupNew = 0;
 				for (const p of result.participants) {
-					if (p.isBot || p.telegramId === myTelegramId || contactMap.has(p.telegramId)) {
+					if (p.isBot || p.telegramId === myTelegramId) {
+						continue;
+					}
+					const existingContactId = contactMap.get(p.telegramId);
+					if (existingContactId) {
+						await updateExistingContactUsername(
+							workspaceId,
+							existingContactId,
+							p.username,
+							envelope,
+						);
 						continue;
 					}
 
 					try {
-						const created = await createContact(
-							workspaceId,
+						const input: CreateContactWithUsernameInput = withTelegramUsername(
 							{
 								firstName: p.firstName || undefined,
 								lastName: p.lastName || undefined,
 								telegramId: p.telegramId,
 								sourceAccountId,
 							},
-							envelope,
+							p.username,
 						);
+						const created = await createContact(workspaceId, input, envelope);
 
 						if (created) {
 							contactMap.set(p.telegramId, created.id);
@@ -448,10 +677,8 @@ export const syncWorker = new Worker<SyncJobData>(
 
 		let totalNewMessages = 0;
 		/** Collect messages per contact for AI pipeline trigger */
-		const contactMessagesMap = new Map<
-			string,
-			Array<{ role: string; content: string; timestamp: string }>
-		>();
+		const contactMessagesMap = new Map<string, PipelineMessage[]>();
+		const groupMessageBatches: GroupMessageBatch[] = [];
 
 		for (const dialog of dialogs) {
 			try {
@@ -460,6 +687,7 @@ export const syncWorker = new Worker<SyncJobData>(
 					workspaceId,
 					{
 						telegramChatId: dialog.chatId,
+						sourceAccountId,
 						type: dialog.type,
 						title: dialog.title,
 						username: dialog.username,
@@ -489,9 +717,11 @@ export const syncWorker = new Worker<SyncJobData>(
 				const messagesResult = await sendToUser<{
 					type: string;
 					messages: GramJSMessage[];
+					users?: GramJSSenderUser[];
 				}>(userId, {
 					type: 'get-messages',
 					peerId: dialog.chatId,
+					peerType: dialog.type,
 					limit,
 					minDate,
 				});
@@ -501,28 +731,87 @@ export const syncWorker = new Worker<SyncJobData>(
 					continue;
 				}
 
-				// d. Map senders to contacts and prepare for insert
+				const senderIds = new Set(
+					messagesResult.messages
+						.map((message) => message.senderId)
+						.filter((id): id is string => Boolean(id)),
+				);
+				if (senderIds.size > 0) {
+					await createMissingSenderContacts(
+						workspaceId,
+						sourceAccountId,
+						messagesResult.users ?? [],
+						senderIds,
+						contactMap,
+						envelope,
+					);
+				}
+
+				const peerContactId = dialog.type === 'private' ? contactMap.get(dialog.chatId) : undefined;
+
+				// d. Map senders to contacts and prepare for insert. Telegram private-chat
+				// history can omit fromId on outgoing/service-shaped messages; in that
+				// case the dialog peer is still the contact this message belongs to.
 				const messagesToInsert = messagesResult.messages.map((m) => ({
 					telegramMessageId: String(m.id),
-					contactId: m.senderId ? (contactMap.get(m.senderId) ?? undefined) : undefined,
+					contactId: (m.senderId ? contactMap.get(m.senderId) : undefined) ?? peerContactId,
 					text: m.text || undefined,
 					isOutgoing: m.isOutgoing,
 					sentAt: new Date(m.date * 1000),
 				}));
+				const messageContactLinks = messagesToInsert.flatMap((message) =>
+					message.contactId
+						? [{ telegramMessageId: message.telegramMessageId, contactId: message.contactId }]
+						: [],
+				);
 
 				// e. Bulk insert messages via DAL (dedup via ON CONFLICT DO NOTHING)
 				const inserted = await upsertMessages(workspaceId, chat.id, messagesToInsert, envelope);
+				if (messageContactLinks.length > 0) {
+					await linkMessagesToContactsByTelegramIds(workspaceId, chat.id, messageContactLinks);
+				}
+				if (peerContactId) {
+					const linked = await linkMessagesToContact(workspaceId, chat.id, peerContactId);
+					if (linked > 0) {
+						console.log(
+							`[sync] Linked ${linked} existing private message(s) to contact=${short(peerContactId)}`,
+						);
+					}
+				}
+				const messageIdentityRows = await listMessageIdsByTelegramIds(
+					workspaceId,
+					chat.id,
+					messagesToInsert.map((m) => m.telegramMessageId),
+				);
+				const messageIdByTelegramId = new Map(
+					messageIdentityRows.map((m) => [m.telegramMessageId, m.id]),
+				);
 
 				totalNewMessages += inserted;
 
-				// Deal detection: run GC2 regex sieve on new messages, queue survivors
-				if (inserted > 0) {
+				// Deal detection can enqueue downstream AI work, so it is opt-in for
+				// personal Telegram accounts.
+				const previousLastSyncAt = chat.lastSyncAt;
+				const messagesForAiPipeline = previousLastSyncAt
+					? messagesToInsert.filter((m) => m.sentAt > previousLastSyncAt)
+					: messagesToInsert;
+				const aiTelegramMessageIds = new Set(messagesForAiPipeline.map((m) => m.telegramMessageId));
+				const sourceMessageIdByTelegramId = new Map(
+					messageIdentityRows
+						.filter((m) => aiTelegramMessageIds.has(m.telegramMessageId))
+						.map((m) => [m.telegramMessageId, m.id]),
+				);
+
+				if (inserted > 0 && enableAiProcessing && (await getAiConsentContext()).granted) {
 					try {
 						const { detectDealSignals } = await import('../ai/deal-detection');
 						const { dealDetectionQueue } = await import('./deal-detection');
 
 						const dealMessages = messagesResult.messages.filter(
-							(m) => m.text && detectDealSignals(m.text).passed,
+							(m) =>
+								m.text &&
+								aiTelegramMessageIds.has(String(m.id)) &&
+								detectDealSignals(m.text).passed,
 						);
 
 						if (dealMessages.length > 0) {
@@ -544,11 +833,17 @@ export const syncWorker = new Worker<SyncJobData>(
 										encryptedText: encrypt(m.text, ddKeys.dek),
 										chatId: chat.id,
 										sourceMessageId: String(m.id),
+										userId,
 										workspaceId,
 										contactId: msgContactId,
 										keyEnvelope,
 									},
-									{ attempts: 2, backoff: { type: 'exponential', delay: 5000 } },
+									{
+										attempts: 2,
+										backoff: { type: 'exponential', delay: 5000 },
+										removeOnComplete: true,
+										removeOnFail: { count: 25, age: 3600 },
+									},
 								);
 							}
 
@@ -557,7 +852,10 @@ export const syncWorker = new Worker<SyncJobData>(
 							);
 						}
 					} catch (err) {
-						console.warn('[deal-detection] Failed to queue deal detection jobs', err);
+						console.warn(
+							'[deal-detection] Failed to queue deal detection jobs',
+							redactSensitive(err),
+						);
 					}
 				}
 
@@ -566,7 +864,6 @@ export const syncWorker = new Worker<SyncJobData>(
 
 				// g. Update inline recency counters (Feature 6)
 				if (inserted > 0 && dialog.type === 'private') {
-					const peerContactId = contactMap.get(dialog.chatId);
 					if (peerContactId) {
 						const latestSentAt = messagesToInsert.reduce(
 							(max, m) => (m.sentAt > max ? m.sentAt : max),
@@ -589,12 +886,20 @@ export const syncWorker = new Worker<SyncJobData>(
 						}).catch(() => {});
 
 						const aiMessages = messagesResult.messages
-							.filter((m) => m.text)
-							.map((m) => ({
-								role: m.isOutgoing ? 'user' : 'assistant',
-								content: m.text,
-								timestamp: new Date(m.date * 1000).toISOString(),
-							}));
+							.filter((m) => m.text && aiTelegramMessageIds.has(String(m.id)))
+							.map((m) => {
+								const sourceMessageId = sourceMessageIdByTelegramId.get(String(m.id));
+								const aiMessage: PipelineMessage = {
+									id: messageIdByTelegramId.get(String(m.id)),
+									role: m.isOutgoing ? 'user' : 'assistant',
+									content: m.text,
+									timestamp: new Date(m.date * 1000).toISOString(),
+									sourceMessageId,
+									chatId: chat.id,
+									contactId: (m.senderId ? contactMap.get(m.senderId) : undefined) ?? peerContactId,
+								};
+								return aiMessage;
+							});
 						if (aiMessages.length > 0) {
 							const existing = contactMessagesMap.get(peerContactId) ?? [];
 							existing.push(...aiMessages);
@@ -632,6 +937,33 @@ export const syncWorker = new Worker<SyncJobData>(
 					}
 				}
 
+				if (inserted > 0 && (dialog.type === 'group' || dialog.type === 'supergroup')) {
+					const aiMessages = messagesResult.messages
+						.filter((m) => m.text)
+						.map((m) => {
+							const sourceMessageId = sourceMessageIdByTelegramId.get(String(m.id));
+							if (!sourceMessageId) return null;
+							const aiMessage: SourcedPipelineMessage = {
+								role: m.isOutgoing ? 'user' : 'assistant',
+								content: m.text,
+								timestamp: new Date(m.date * 1000).toISOString(),
+								sourceMessageId,
+								chatId: chat.id,
+								contactId: m.senderId ? contactMap.get(m.senderId) : undefined,
+							};
+							return aiMessage;
+						})
+						.filter(isSourcedPipelineMessage);
+
+					if (aiMessages.length > 0) {
+						groupMessageBatches.push({
+							chatId: chat.id,
+							chatType: dialog.type,
+							messages: aiMessages,
+						});
+					}
+				}
+
 				// Broadcast message progress to onboarding UI
 				broadcastSyncProgress(workspaceId, {
 					contacts: newContactCount,
@@ -645,7 +977,7 @@ export const syncWorker = new Worker<SyncJobData>(
 					console.warn('[sync] Flood wait, skipping chat');
 					continue;
 				}
-				console.error('[sync] Error syncing chat:', error.message);
+				console.error('[sync] Error syncing chat:', redactSensitive(error.message));
 			}
 		}
 
@@ -679,7 +1011,11 @@ export const syncWorker = new Worker<SyncJobData>(
 		}
 
 		// 5. Fire-and-forget token detection on synced messages
-		if (contactMessagesMap.size > 0) {
+		if (
+			contactMessagesMap.size > 0 &&
+			enableAiProcessing &&
+			(await getAiConsentContext()).granted
+		) {
 			(async () => {
 				try {
 					// Derive workspace salt for entity masking before sending text to LLM (SEC-102)
@@ -709,13 +1045,13 @@ export const syncWorker = new Worker<SyncJobData>(
 						}
 					}
 				} catch (err) {
-					console.error('[sync] Token detection failed:', (err as Error).message);
+					console.error('[sync] Token detection failed:', redactSensitive(err));
 				}
 			})().catch(() => {});
 		}
 
-		// 6. Trigger AI pipeline for contacts with new messages
-		if (contactMessagesMap.size > 0) {
+		// 6. Trigger AI pipeline for contacts and intro extraction for group batches
+		if ((contactMessagesMap.size > 0 || groupMessageBatches.length > 0) && enableAiProcessing) {
 			try {
 				// Derive workspace masking salt from WRK via BIK (Blind Index Key)
 				const wrk = await unwrapWrk(envelope);
@@ -728,55 +1064,90 @@ export const syncWorker = new Worker<SyncJobData>(
 					wrkVersion: envelope.wrkVersion,
 				};
 
-				// Fetch user calibration for dynamic thresholds + priority ordering
-				let commitmentSensitivity: 'everything' | 'specific' | 'tasks_only' | undefined;
-				let priorityContactIds: Set<string> | undefined;
-				try {
-					const calibration = await getCalibration(userId, workspaceId, envelope);
-					commitmentSensitivity = calibration?.commitmentSensitivity ?? undefined;
-					if (calibration?.priorityContactIds?.length) {
-						priorityContactIds = new Set(calibration.priorityContactIds);
-					}
-				} catch (err) {
-					console.warn(
-						'[sync] Failed to fetch calibration, using defaults:',
-						(err as Error).message,
-					);
-				}
+				const aiConsentContext = await getAiConsentContext();
 
-				// Feature 7: buffer priority contacts first — BullMQ processes in insertion order
-				const orderedContacts = [...contactMessagesMap.entries()];
-				if (priorityContactIds) {
-					const priorityIds = priorityContactIds;
-					orderedContacts.sort((a, b) => {
-						const aPriority = priorityIds.has(a[0]) ? 0 : 1;
-						const bPriority = priorityIds.has(b[0]) ? 0 : 1;
-						return aPriority - bPriority;
-					});
-				}
-
-				for (const [contactId, messages] of orderedContacts) {
-					// Encrypt message content before placing in BullMQ payload (SEC-006)
-					const encryptedMessages = messages.map((m) => ({
-						role: m.role,
-						content: encrypt(m.content, keys.dek),
-						timestamp: m.timestamp,
-					}));
-					bufferMessage(
-						userId,
-						contactId,
-						workspaceId,
-						encryptedMessages,
-						keyEnvelope,
-						workspaceSalt,
-						commitmentSensitivity,
-					);
+				if (!aiConsentContext.granted) {
 					console.log(
-						`[sync] Buffered ${messages.length} messages for contact=${short(contactId)}`,
+						`[sync] AI processing requested but consent is not persisted for workspace=${short(workspaceId)}, skipping AI pipeline`,
 					);
+				} else {
+					// Feature 7: buffer priority contacts first — BullMQ processes in insertion order
+					const orderedContacts = [...contactMessagesMap.entries()];
+					if (aiConsentContext.priorityContactIds) {
+						const priorityIds = aiConsentContext.priorityContactIds;
+						orderedContacts.sort((a, b) => {
+							const aPriority = priorityIds.has(a[0]) ? 0 : 1;
+							const bPriority = priorityIds.has(b[0]) ? 0 : 1;
+							return aPriority - bPriority;
+						});
+					}
+
+					for (const [contactId, messages] of orderedContacts) {
+						// Encrypt message content before placing in BullMQ payload (SEC-006)
+						const encryptedMessages = messages.map((m) => ({
+							id: m.id,
+							role: m.role,
+							content: encrypt(m.content, keys.dek),
+							timestamp: m.timestamp,
+							sourceMessageId: m.sourceMessageId,
+							chatId: m.chatId,
+							contactId: m.contactId,
+						}));
+						bufferMessage(
+							userId,
+							contactId,
+							workspaceId,
+							encryptedMessages,
+							keyEnvelope,
+							workspaceSalt,
+							aiConsentContext.commitmentSensitivity,
+							sourceAccountId,
+						);
+						console.log(
+							`[sync] Buffered ${messages.length} messages for contact=${short(contactId)}`,
+						);
+					}
+
+					if (groupMessageBatches.length > 0) {
+						const { relationshipExtractionQueue } = await import('./relationship-extraction');
+
+						for (const batch of groupMessageBatches) {
+							const encryptedMessages = batch.messages.map((m) => ({
+								role: m.role,
+								content: encrypt(m.content, keys.dek),
+								timestamp: m.timestamp,
+								sourceMessageId: m.sourceMessageId,
+								chatId: m.chatId,
+								contactId: m.contactId,
+							}));
+
+							await relationshipExtractionQueue.add(
+								'extract-relationships',
+								{
+									workspaceId,
+									userId,
+									sourceAccountId,
+									chatId: batch.chatId,
+									chatType: batch.chatType,
+									messages: encryptedMessages,
+									keyEnvelope,
+									workspaceSalt,
+								},
+								{
+									attempts: 2,
+									backoff: { type: 'exponential', delay: 10000 },
+									removeOnComplete: true,
+									removeOnFail: { count: 50, age: 3600 },
+								},
+							);
+							console.log(
+								`[sync] Queued ${batch.messages.length} group messages for relationship extraction in chat=${short(batch.chatId)}`,
+							);
+						}
+					}
 				}
 			} catch (err) {
-				console.error('[sync] Failed to schedule AI pipeline:', (err as Error).message);
+				console.error('[sync] Failed to schedule AI pipeline:', redactSensitive(err));
 			}
 		}
 
@@ -786,32 +1157,40 @@ export const syncWorker = new Worker<SyncJobData>(
 			newContacts: newContactCount,
 		});
 
-		// 7. Enqueue Tier 2 full backfill (imported dynamically to avoid circular deps)
-		try {
-			const { backfillQueue } = await import('./backfill');
-			await backfillQueue.add('full-backfill', {
-				userId,
-				workspaceId,
-			});
-			console.log(`[sync] Enqueued Tier 2 full backfill for workspace=${short(workspaceId)}`);
-		} catch (err) {
-			console.error('[sync] Failed to enqueue backfill:', (err as Error).message);
+		// 7. Full-history backfill is intentionally opt-in. A normal personal-account
+		// connection should not start deep history import as a side effect of setup.
+		if (isTelegramFullBackfillEnabled()) {
+			try {
+				const { backfillQueue } = await import('./backfill');
+				await backfillQueue.add('full-backfill', {
+					userId,
+					workspaceId,
+					enableAiProcessing,
+				});
+				console.log(`[sync] Enqueued Tier 2 full backfill for workspace=${short(workspaceId)}`);
+			} catch (err) {
+				console.error('[sync] Failed to enqueue backfill:', (err as Error).message);
+			}
 		}
 
-		// 8. Self-reschedule Tier 1 sync in 15 minutes
-		// Uses BullMQ delay instead of repeat (DragonflyDB cmsgpack compat)
-		await syncQueue.add(
-			'periodic-sync',
-			{ userId, workspaceId },
-			{ delay: 15 * 60 * 1000, jobId: periodicSyncJobId(job.data) },
-		);
-		console.log(`[sync] Scheduled next sync in 15 minutes for workspace=${short(workspaceId)}`);
+		// 8. Recurring Telegram sync is also opt-in. Local-first personal mode runs
+		// only the sync the user explicitly started.
+		if (isTelegramPeriodicSyncEnabled()) {
+			await syncQueue.add(
+				'periodic-sync',
+				{ userId, workspaceId, syncScope, enableAiProcessing },
+				{ delay: 15 * 60 * 1000, jobId: periodicSyncJobId(job.data) },
+			);
+			console.log(`[sync] Scheduled next sync in 15 minutes for workspace=${short(workspaceId)}`);
+		}
 
 		trackAnalyticsEvent(workspaceId, userId, 'sync.completed', {
 			duration_ms: Date.now() - syncStartTime,
 			contacts_synced: newContactCount,
 			messages_synced: totalNewMessages,
 			dialogs_processed: dialogs.length,
+			sync_scope: syncScope,
+			ai_processing_enabled: enableAiProcessing,
 		});
 
 		console.log(
@@ -834,18 +1213,18 @@ syncWorker.on('completed', (job) => {
 });
 
 syncWorker.on('failed', (job, err) => {
-	console.error(`[sync] Job ${job?.id} failed:`, err.message || String(err), err.stack);
+	console.error(`[sync] Job ${job?.id} failed:`, redactSensitive(err));
 
 	if (job?.data) {
 		trackAnalyticsEvent(job.data.workspaceId, job.data.userId, 'sync.failed', {
-			error_type: err.message?.split(':')[0] || 'unknown',
+			error_type: redactSensitive(err.message?.split(':')[0] || 'unknown'),
 			attempt: job.attemptsMade,
 		});
 	}
 
-	// Resilience: if a sync job fails before self-rescheduling, re-enqueue
-	// so the periodic chain doesn't break.
-	if (job?.data) {
+	// Resilience for deployments that explicitly enable periodic Telegram sync.
+	// Local personal-account mode must not retry in the background by default.
+	if (job?.data && isTelegramPeriodicSyncEnabled()) {
 		syncQueue
 			.add('periodic-sync', job.data, { delay: 15 * 60 * 1000, jobId: periodicSyncJobId(job.data) })
 			.catch(() => {});
@@ -860,6 +1239,11 @@ syncWorker.on('failed', (job, err) => {
  * Uses short 5s delay so GramJS thread pool is ready before first sync.
  */
 export async function schedulePeriodicSync(): Promise<void> {
+	if (!isTelegramPeriodicSyncEnabled()) {
+		console.log('[sync] Periodic Telegram sync disabled');
+		return;
+	}
+
 	try {
 		const dbMod = await import('@repo/db');
 		const members = await dbMod.db
@@ -872,7 +1256,7 @@ export async function schedulePeriodicSync(): Promise<void> {
 		for (const member of members) {
 			await syncQueue.add(
 				'periodic-sync',
-				{ userId: member.userId, workspaceId: member.workspaceId },
+				{ userId: member.userId, workspaceId: member.workspaceId, syncScope: 'contacts_only' },
 				{
 					delay: 5000,
 					jobId: periodicSyncJobId({

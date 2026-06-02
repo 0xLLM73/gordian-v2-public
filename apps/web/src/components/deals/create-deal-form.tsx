@@ -50,6 +50,8 @@ export function CreateDealForm() {
 			router.refresh();
 		},
 	});
+	const trimmedTitle = title.trim();
+	const trimmedNotes = notes.trim();
 
 	useEffect(() => {
 		const params = new URLSearchParams(window.location.search);
@@ -116,14 +118,14 @@ export function CreateDealForm() {
 					<Button
 						onClick={() =>
 							create({
-								title,
+								title: trimmedTitle,
 								contactId,
 								dealType: dealType as 'investment' | 'advisory' | 'partnership' | 'token' | 'other',
 								value: Math.round(Number(value) * 100) || 0,
-								notes: notes || undefined,
+								notes: trimmedNotes || undefined,
 							})
 						}
-						disabled={isExecuting || !title || !contactId}
+						disabled={isExecuting || !trimmedTitle || !contactId}
 					>
 						{isExecuting ? 'Creating...' : 'Create Deal'}
 					</Button>

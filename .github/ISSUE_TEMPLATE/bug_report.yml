@@ -46,6 +46,7 @@ body:
       description: Paste command results without secrets.
       placeholder: |
         pnpm audit:open-source
+        pnpm audit
         pnpm lint
         pnpm typecheck
         pnpm test

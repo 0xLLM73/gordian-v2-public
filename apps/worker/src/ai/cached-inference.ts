@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { assertAiProcessingEnabled, getHeliconeApiKey, isHeliconeEnabled } from '@repo/shared';
 
 /**
  * Prompt Caching Strategy — Inverted Pyramid Architecture (Phase 6).
@@ -17,12 +18,11 @@ import Anthropic from '@anthropic-ai/sdk';
 let _anthropic: Anthropic | null = null;
 function getAnthropicClient(): Anthropic {
 	if (!_anthropic) {
+		const heliconeApiKey = getHeliconeApiKey();
 		_anthropic = new Anthropic({
-			// Route through Helicone if configured (opt-in via HELICONE_API_KEY)
-			baseURL: process.env.HELICONE_API_KEY ? 'https://anthropic.helicone.ai' : undefined,
-			defaultHeaders: process.env.HELICONE_API_KEY
-				? { 'Helicone-Auth': `Bearer ${process.env.HELICONE_API_KEY}` }
-				: undefined,
+			// Route through Helicone only when explicitly enabled.
+			baseURL: heliconeApiKey ? 'https://anthropic.helicone.ai' : undefined,
+			defaultHeaders: heliconeApiKey ? { 'Helicone-Auth': `Bearer ${heliconeApiKey}` } : undefined,
 		});
 	}
 	return _anthropic;
@@ -47,7 +47,7 @@ export interface HeliconeMetadata {
  * Returns empty object if Helicone is not configured.
  */
 export function getHeliconeHeaders(meta: HeliconeMetadata): Record<string, string> {
-	if (!process.env.HELICONE_API_KEY) return {};
+	if (!isHeliconeEnabled()) return {};
 	return {
 		'Helicone-Property-Feature': meta.feature,
 		'Helicone-Property-Prompt-Version': process.env.PROMPT_VERSION ?? 'v1',
@@ -84,6 +84,8 @@ export async function inferWithCache(
 	userMessages: Anthropic.Messages.MessageParam[],
 	options?: CacheInferenceOptions,
 ): Promise<Anthropic.Messages.Message> {
+	assertAiProcessingEnabled('Claude inference');
+
 	// Build system array with cache breakpoints at Layers 1 and 2
 	const system: Anthropic.Messages.TextBlockParam[] = [
 		{
@@ -158,6 +160,8 @@ export function streamInfer(
 	userMessages: Anthropic.Messages.MessageParam[],
 	options?: StreamInferenceOptions,
 ) {
+	assertAiProcessingEnabled('Claude streaming inference');
+
 	const system: Anthropic.Messages.TextBlockParam[] = [
 		{
 			type: 'text' as const,

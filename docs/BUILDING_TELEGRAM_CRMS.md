@@ -75,7 +75,22 @@ TELEGRAM_BOT_ENABLED="true"
 TELEGRAM_MTPROTO_ENABLED="true"
 TELEGRAM_SEND_ENABLED="false"
 NEXT_PUBLIC_TELEGRAM_LINKING_ENABLED="true"
+TELEGRAM_SESSION_KEY_PROVIDER="os-keychain"
+TELEGRAM_KEYCHAIN_REQUIRE_USER_PRESENCE="false"
+TELEGRAM_KEYCHAIN_USER_PRESENCE_MODE="compat"
+TELEGRAM_MTPROTO_PER_INTERACTION_UNLOCK="false"
+TELEGRAM_MTPROTO_SESSION_IDLE_MINUTES="5"
+TELEGRAM_ALLOW_SESSION_UNWRAP_OUTSIDE_IMPORTS="false"
+TELEGRAM_API_CREDENTIAL_PROVIDER="os-keychain"
+TELEGRAM_API_KEYCHAIN_ACCOUNT="telegram-api-credentials"
 ```
+
+Use `TELEGRAM_SESSION_KEY_PROVIDER=os-keychain` for local macOS users. Run `pnpm telegram:keychain:harden` for existing local links so their Keychain items use `WhenUnlockedThisDeviceOnly`. `TELEGRAM_KEYCHAIN_REQUIRE_USER_PRESENCE=true` with `TELEGRAM_KEYCHAIN_USER_PRESENCE_MODE=strict` enables macOS `SecAccessControl.userPresence`; verify it with `pnpm telegram:touchid:probe`. Keep `TELEGRAM_MTPROTO_PER_INTERACTION_UNLOCK=false` for one user-presence unlock per import run; completed, paused, cancelled, and finally failed imports disconnect the local Telegram client while the helper thread can remain alive until the idle timeout to avoid repeated Telegram API credential prompts. If the client closes unexpectedly during a run, resume the import to approve another explicit unlock instead of prompting mid-run. Set it to `true` only if you want per-read prompts. Use `aws-kms` when you have configured AWS KMS. Do not use `dev-insecure` with real Telegram accounts.
+
+Use `TELEGRAM_MTPROTO_SESSION_IDLE_MINUTES=5` to terminate idle local GramJS helper threads without revoking the linked Telegram session. Completed, cancelled, and finally failed history imports disconnect the Telegram client first; idle eviction terminates the helper thread afterward. Idle eviction or a closed client stops the active run rather than silently unwrapping the session key again. Keep `TELEGRAM_ALLOW_SESSION_UNWRAP_OUTSIDE_IMPORTS=false` so only the explicit history import flow can unlock the stored MTProto session.
+
+Use `pnpm telegram:setup` to keep Telegram API app credentials in macOS Keychain
+instead of `.env.local` for normal local use.
 
 Only enable `TELEGRAM_SEND_ENABLED=true` after reviewing:
 
@@ -116,6 +131,7 @@ Before publishing your fork:
 - rotate all credentials used while developing privately;
 - run a full-history secret scan;
 - run `pnpm audit:open-source`;
+- run `pnpm audit`;
 - run `pnpm audit --prod`;
 - run `pnpm lint`, `pnpm typecheck`, and `pnpm test`;
 - document which Telegram features your fork supports and which remain disabled.

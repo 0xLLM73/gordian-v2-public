@@ -21,16 +21,17 @@ vi.mock('@repo/db', () => ({
 	},
 }));
 
+const MOCK_ENVELOPE = { encryptedWrk: Buffer.from('test'), kmsContext: {}, wrkVersion: 1 };
+
 vi.mock('grammy', () => ({
-	Composer: vi.fn(function MockComposer() {
+	// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
+	Composer: vi.fn(function () {
 		return {
 			command: vi.fn(),
 			on: vi.fn(() => ({ filter: vi.fn() })),
 		};
 	}),
 }));
-
-const MOCK_ENVELOPE = { encryptedWrk: Buffer.from('test'), kmsContext: {}, wrkVersion: 1 };
 
 describe('goals bot feature', () => {
 	beforeEach(() => {

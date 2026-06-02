@@ -10,6 +10,7 @@ const mockMaskEntities = vi.hoisted(() => vi.fn());
 const mockPrefilterEntities = vi.hoisted(() => vi.fn());
 const mockClassifyDealIntent = vi.hoisted(() => vi.fn());
 const mockExtractDealCandidate = vi.hoisted(() => vi.fn());
+const mockHasUserAiAnalysisConsent = vi.hoisted(() => vi.fn());
 
 vi.mock('@repo/crypto', () => ({
 	unwrapWrk: mockUnwrapWrk,
@@ -30,12 +31,18 @@ vi.mock('../../ai/prefilter', () => ({
 	prefilterEntities: mockPrefilterEntities,
 }));
 
+vi.mock('@repo/db', () => ({
+	hasUserAiAnalysisConsent: mockHasUserAiAnalysisConsent,
+}));
+
 // Mock BullMQ — must be before import
 vi.mock('bullmq', () => ({
-	Queue: vi.fn(function MockQueue() {
+	// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
+	Queue: vi.fn().mockImplementation(function () {
 		return { add: vi.fn() };
 	}),
-	Worker: vi.fn(function MockWorker(_name: string, processor: unknown) {
+	// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
+	Worker: vi.fn().mockImplementation(function (_name: string, processor: unknown) {
 		// Expose processor for testing
 		(Worker as unknown as { __processor: unknown }).__processor = processor;
 		return { on: vi.fn() };
@@ -51,6 +58,7 @@ import { Worker } from 'bullmq';
 // ─── Fixtures ────────────────────────────────────────────────────────────────────
 
 const WS = 'ws-00000000-0000-0000-0000-000000000001';
+const USER = 'user-00000000-0000-0000-0000-000000000001';
 const CHAT = 'chat-123';
 const MSG = 'msg-456';
 const CONTACT = 'contact-789';
@@ -62,6 +70,7 @@ const JOB_DATA = {
 	encryptedText: 'encrypted-message-text',
 	chatId: CHAT,
 	sourceMessageId: MSG,
+	userId: USER,
 	workspaceId: WS,
 	contactId: CONTACT,
 	keyEnvelope: {
@@ -101,11 +110,16 @@ async function getProcessor() {
 	vi.doMock('../../ai/prefilter', () => ({
 		prefilterEntities: mockPrefilterEntities,
 	}));
+	vi.doMock('@repo/db', () => ({
+		hasUserAiAnalysisConsent: mockHasUserAiAnalysisConsent,
+	}));
 	vi.doMock('bullmq', () => ({
-		Queue: vi.fn(function MockQueue() {
+		// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
+		Queue: vi.fn().mockImplementation(function () {
 			return { add: vi.fn() };
 		}),
-		Worker: vi.fn(function MockWorker(_name: string, processor: unknown) {
+		// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
+		Worker: vi.fn().mockImplementation(function (_name: string, processor: unknown) {
 			(Worker as unknown as { __processor: unknown }).__processor = processor;
 			return { on: vi.fn() };
 		}),
@@ -136,6 +150,7 @@ describe('deal-detection queue worker', () => {
 		mockMaskEntities.mockReturnValue({ maskedText: '[MASKED] SAFT allocation is $2M USDC' });
 		mockClassifyDealIntent.mockResolvedValue({ isInvestmentDiscussion: true, confidence: 0.95 });
 		mockExtractDealCandidate.mockResolvedValue(FAKE_CANDIDATE);
+		mockHasUserAiAnalysisConsent.mockResolvedValue(true);
 
 		processor = await getProcessor();
 	});

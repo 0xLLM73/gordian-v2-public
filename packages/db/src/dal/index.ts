@@ -4,10 +4,16 @@ export {
 	searchContactByName,
 	searchContactByPhone,
 	searchContactByEmail,
+	searchContactByUsername,
 	createContact,
 	updateContact,
 	listContacts,
+	listContactMaskingAliases,
+	canAccessContact,
+	canManageContact,
+	getAccessibleContact,
 	getAccessibleContacts,
+	getAccessibleContactTelegramId,
 	getUserTelegramAccountIds,
 	shareContact,
 	unshareContact,
@@ -16,7 +22,7 @@ export {
 	getStaleContacts,
 	dismissGhostingAlert,
 } from './contacts';
-export type { CreateContactInput, UpdateContactInput } from './contacts';
+export type { ContactMaskingAlias, CreateContactInput, UpdateContactInput } from './contacts';
 
 export {
 	getContactTag,
@@ -30,11 +36,23 @@ export {
 	createMemory,
 	getMemoriesByContact,
 	getUnembeddedMemories,
+	backfillMemoryMessageMetadata,
+	mergeMemoryMessageBackfillMetadata,
 	hybridSearch,
 	textSearch,
 	updateMemoryEmbedding,
 } from './memories';
-export type { CreateMemoryInput, HybridSearchResult, UnembeddedMemory } from './memories';
+export type {
+	CreateMemoryInput,
+	HybridSearchResult,
+	MemoryMessageBackfillCandidate,
+	MemoryMessageBackfillContactSummary,
+	MemoryMessageBackfillOptions,
+	MemoryMessageBackfillReport,
+	MemoryMessageBackfillSkipReason,
+	MemoryMessageBackfillWorkspaceSummary,
+	UnembeddedMemory,
+} from './memories';
 
 export {
 	createCommitment,
@@ -113,17 +131,61 @@ export {
 	upsertChat,
 	updateChatLastSync,
 	getChatByTelegramId,
+	getChatsByIds,
 	listChats,
 	upsertMessages,
+	linkMessagesToContact,
+	linkMessagesToContactsByTelegramIds,
+	listMessageIdsByTelegramIds,
 	getMessagesByChat,
+	getMessagesByTelegramIds,
 	getMessagesByContact,
+	getMessagesByIds,
 	getRecentMessages,
 	getMessageCount,
+	getMessageTimeRangeStats,
 	getLastMessageDate,
 	getLatestMessageTimestamp,
 	getMessagesByTimeRange,
 } from './messages';
-export type { UpsertChatInput, UpsertMessageInput } from './messages';
+export type { MessageIdentity, UpsertChatInput, UpsertMessageInput } from './messages';
+
+export {
+	TELEGRAM_IMPORT_ACTIVE_STATUSES,
+	TELEGRAM_IMPORT_CHAT_TERMINAL_STATUSES,
+	TELEGRAM_IMPORT_TERMINAL_STATUSES,
+	createTelegramImportRun,
+	failTelegramImportRunChat,
+	findActiveTelegramImportRun,
+	getLatestTelegramImportProgress,
+	getLatestTelegramImportProgressWithHistory,
+	getLatestTelegramImportRun,
+	getOldestTelegramMessageId,
+	getTelegramChatImportState,
+	getTelegramImportRun,
+	getTelegramImportRunChat,
+	hasCurrentTelegramConsent,
+	hasOpenTelegramImportChats,
+	listQueuedTelegramImportRunChats,
+	recordTelegramImportPage,
+	requestTelegramImportCancel,
+	requestTelegramImportPause,
+	resumeTelegramImportRun,
+	updateTelegramImportDiscoveryCounts,
+	updateTelegramImportRunChatStatus,
+	updateTelegramImportRunStatus,
+	upsertTelegramImportRunChat,
+} from './telegram-imports';
+export type {
+	CreateTelegramImportRunInput,
+	TelegramChatImportState,
+	TelegramImportChatStatus,
+	TelegramImportProgress,
+	TelegramImportProgressWithHistory,
+	TelegramImportRun,
+	TelegramImportRunChat,
+	TelegramImportRunStatus,
+} from './telegram-imports';
 
 export {
 	createRelationship,
@@ -152,8 +214,18 @@ export type { CreateDigestInput } from './digests';
 export { unifiedSearch } from './search';
 export type { UnifiedSearchResult } from './search';
 
-export { getDashboardStats, getUpcomingCommitments, getRecentActivity } from './dashboard';
-export type { DashboardStats, UpcomingCommitment, RecentActivityItem } from './dashboard';
+export {
+	getDashboardAnalyticsStats,
+	getDashboardStats,
+	getUpcomingCommitments,
+	getRecentActivity,
+} from './dashboard';
+export type {
+	DashboardAnalyticsStats,
+	DashboardStats,
+	UpcomingCommitment,
+	RecentActivityItem,
+} from './dashboard';
 
 export {
 	upsertHealthScore,
@@ -296,16 +368,20 @@ export type { AppendAuditLogInput, AuditLogFilters } from './audit-log';
 
 export {
 	getCalibration,
+	getCalibrationCompletionStatus,
 	upsertCalibration,
 	getCalibrationForAI,
 	saveWhatMatters,
 	saveConsent,
 	hasAnalyticsConsent,
+	hasWorkspaceAiAnalysisConsent,
+	hasUserAiAnalysisConsent,
 	getMostActiveContacts,
 	getMostNeglectedContacts,
 } from './calibration';
 export type {
 	CalibrationInput,
+	CalibrationCompletionStatus,
 	UserCalibration,
 	CalibrationContext,
 	WhatMattersInput,
@@ -319,8 +395,20 @@ export {
 	incrementNodeMentionCount,
 	getKnowledgeNode,
 	listKnowledgeNodes,
+	normalizeKnowledgeSearchQuery,
+	DEFAULT_KNOWLEDGE_MESSAGE_RECALL_LIMIT,
+	DEFAULT_KNOWLEDGE_MESSAGE_RECALL_MIN_SCORE,
+	DEFAULT_KNOWLEDGE_MESSAGE_RECALL_NODE_LIMIT,
+	DEFAULT_KNOWLEDGE_SEARCH_MIN_SIMILARITY,
 	searchKnowledgeNodes,
+	searchKnowledgeNodesWithEvidence,
+	getLegacyKnowledgeEvidenceReport,
+	createKnowledgeEvidence,
+	listEvidenceForKnowledgeNode,
+	listEvidenceForKnowledgeContact,
+	listEvidenceForKnowledgeLink,
 	linkContactToKnowledge,
+	listContactsWithEvidenceForKnowledgeNode,
 	listContactsByKnowledge,
 	listContactIdsByKnowledge,
 	listKnowledgeByContact,
@@ -338,13 +426,30 @@ export {
 	upsertExtractionLog,
 	getExtractionLog,
 	getContactsNeedingExtraction,
+	getKnowledgeAnalysisContactCandidates,
 } from './knowledge';
 export type {
 	KnowledgeNode,
 	KnowledgeNodePublic,
 	KnowledgeSearchResult,
+	KnowledgeSearchResultWithEvidence,
+	KnowledgeSearchEvidenceItem,
+	KnowledgeSearchContactItem,
+	SearchKnowledgeNodesWithEvidenceOptions,
 	KnowledgeContact,
+	KnowledgeEvidence,
+	KnowledgeEvidenceKind,
+	CreateKnowledgeEvidenceInput,
+	KnowledgeContactEvidenceInput,
+	KnowledgeLinkEvidenceInput,
+	KnowledgeContactWithEvidence,
+	LegacyKnowledgeEvidenceReport,
+	LegacyKnowledgeEvidenceWorkspaceSummary,
+	LegacyKnowledgeEvidenceNodeTypeSummary,
+	LegacyKnowledgeEvidenceNodeGap,
+	LegacyKnowledgeEvidenceContactGap,
 	KnowledgeExtractionLogEntry,
+	KnowledgeAnalysisContactCandidate,
 	CreateKnowledgeNodeInput,
 	UpdateKnowledgeNodeInput,
 	ListKnowledgeNodesOptions,
@@ -446,10 +551,12 @@ export {
 } from './invites';
 export type { CreateInviteInput, InviteWithWorkspace } from './invites';
 
+export { isWorkspaceMember, isWorkspaceOwner } from './workspace-access';
+
 export { checkCache, storeCache, invalidateCache, cleanupExpiredCache } from './semantic-cache';
 export type { CacheHit } from './semantic-cache';
 
-export { deleteAccountData } from './delete-account';
+export { deleteAccountData, deleteUserAccountOnly } from './delete-account';
 
 export {
 	createDealCandidate,

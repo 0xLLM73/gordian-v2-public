@@ -21,6 +21,7 @@ import { useState, useTransition } from 'react';
 
 export function DeleteAccount() {
 	const [confirmText, setConfirmText] = useState('');
+	const [error, setError] = useState<string | null>(null);
 	const [isPending, startTransition] = useTransition();
 	const [open, setOpen] = useState(false);
 	const router = useRouter();
@@ -29,10 +30,13 @@ export function DeleteAccount() {
 
 	function handleDelete() {
 		startTransition(async () => {
+			setError(null);
 			const result = await deleteAccountAction({ confirmation: 'DELETE' });
 			if (result?.data?.deleted) {
 				await authClient.signOut();
 				router.push('/');
+			} else if (result?.serverError) {
+				setError(result.serverError);
 			}
 		});
 	}
@@ -47,12 +51,13 @@ export function DeleteAccount() {
 					<AlertDialogTitle>Delete your account?</AlertDialogTitle>
 					<AlertDialogDescription className="space-y-2">
 						<span className="block">
-							This will permanently delete all your data including messages, contacts, commitments,
-							deals, and encryption keys. This action cannot be undone.
+							This will delete your user account, login sessions, and linked Telegram session keys.
+							Workspace owners must delete the workspace separately before deleting their account.
 						</span>
 						<span className="block font-medium text-foreground">Type DELETE to confirm.</span>
 					</AlertDialogDescription>
 				</AlertDialogHeader>
+				{error ? <p className="text-sm text-destructive">{error}</p> : null}
 				<Input
 					value={confirmText}
 					onChange={(e: React.ChangeEvent<HTMLInputElement>) => setConfirmText(e.target.value)}
@@ -69,7 +74,7 @@ export function DeleteAccount() {
 						onClick={handleDelete}
 						className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 					>
-						{isPending ? 'Deleting...' : 'Delete Everything'}
+						{isPending ? 'Deleting...' : 'Delete Account'}
 					</AlertDialogAction>
 				</AlertDialogFooter>
 			</AlertDialogContent>

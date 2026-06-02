@@ -1,4 +1,5 @@
 import { KnowledgeBrowser } from '@/app/(dashboard)/knowledge/knowledge-browser';
+import { LocalAiStatusPanel } from '@/components/local-ai-status-panel';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
 import { getContactsByIds, listContactIdsByKnowledge, listKnowledgeNodes } from '@repo/db';
 import { Suspense } from 'react';
@@ -17,6 +18,8 @@ export default async function KnowledgePage() {
 					Topics, projects, organizations, and concepts extracted from your conversations.
 				</p>
 			</div>
+
+			<LocalAiStatusPanel />
 
 			{workspaceId ? (
 				<Suspense fallback={<KnowledgeSkeleton />}>
@@ -63,7 +66,19 @@ async function KnowledgeBrowserSection({ workspaceId }: { workspaceId: string })
 		const contactPreviews = contactIds
 			.slice(0, 3)
 			.map((cid) => contactNameMap.get(cid) ?? 'Someone');
-		return { ...n, contactCount: contactIds.length, contactPreviews };
+		return {
+			id: n.id,
+			type: n.type,
+			name: n.name,
+			displayName: n.displayName,
+			description: n.description ?? null,
+			mentionCount: n.mentionCount ?? 0,
+			firstSeenAt: n.firstSeenAt ?? null,
+			lastSeenAt: n.lastSeenAt ?? null,
+			createdAt: n.createdAt ?? null,
+			contactCount: contactIds.length,
+			contactPreviews,
+		};
 	});
 
 	return <KnowledgeBrowser initialNodes={enrichedNodes} />;

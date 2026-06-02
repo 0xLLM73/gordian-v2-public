@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Hoist mocks before any imports
@@ -6,6 +7,7 @@ vi.mock('../../redis', () => ({
 		eval: vi.fn(),
 		ttl: vi.fn(),
 		set: vi.fn().mockResolvedValue('OK'),
+		expire: vi.fn().mockResolvedValue(1),
 		del: vi.fn().mockResolvedValue(1),
 		get: vi.fn(),
 	},
@@ -19,6 +21,10 @@ vi.mock('../../gramjs/thread', () => ({
 
 vi.mock('../../queues/sync', () => ({
 	syncQueue: { add: vi.fn() },
+}));
+
+vi.mock('../../queues/telegram-history-import', () => ({
+	enqueueTelegramHistoryImport: vi.fn(),
 }));
 
 vi.mock('@repo/shared/handoff-token', async (importOriginal) => {
@@ -37,6 +43,8 @@ vi.mock('@repo/crypto', () => ({
 // ASA-002 fix: telegram.ts now queries @repo/db to look up userId from telegramUserId
 vi.mock('@repo/db', () => ({
 	appendAuditLog: vi.fn(),
+	isWorkspaceMember: vi.fn().mockResolvedValue(true),
+	getUserTelegramAccountIds: vi.fn().mockResolvedValue(['123456789', '987654321']),
 	db: {
 		query: {
 			accounts: {
@@ -51,11 +59,14 @@ vi.mock('@repo/db', () => ({
 }));
 
 import { generateSessionKek } from '@repo/crypto';
+import { getUserTelegramAccountIds, isWorkspaceMember } from '@repo/db';
 import { sendToUser, setAuthPending } from '../../gramjs/thread';
+import { syncQueue } from '../../queues/sync';
 import { connection } from '../../redis';
 import { telegram } from '../../routes/telegram';
 
 process.env.INTERNAL_AUTH_SECRET = 'test-secret';
+process.env.WORKER_INTERNAL_SECRET = 'test-secret';
 
 const SECRET = 'test-secret';
 // Normalized form of these phones is 11111111111 and 22222222222
@@ -63,6 +74,19 @@ const PHONE_A = '+11111111111';
 const PHONE_B = '+22222222222';
 // SEC-022: verify-code now requires userId as UUID
 const USER_ID = '00000000-0000-4000-8000-000000000001';
+const WORKSPACE_ID = '11111111-1111-4111-8111-111111111111';
+
+function expectedPhoneKey(phone: string): string {
+	return `v1:${createHmac('sha256', SECRET).update(phone).digest('hex').slice(0, 32)}`;
+}
+
+function expectedAuthKey(phone: string): string {
+	return `auth:phone:${expectedPhoneKey(phone)}`;
+}
+
+function expectedPoolKey(phone: string): string {
+	return `telegram-auth:${expectedPhoneKey(phone)}`;
+}
 
 function post(path: string, body: object) {
 	return telegram.request(path, {
@@ -79,6 +103,7 @@ beforeEach(() => {
 	vi.stubEnv('TELEGRAM_MTPROTO_ENABLED', 'true');
 	vi.stubEnv('TELEGRAM_SEND_ENABLED', 'true');
 	vi.stubEnv('TELEGRAM_BOT_ENABLED', 'true');
+	vi.stubEnv('AI_PROCESSING_ENABLED', 'true');
 });
 
 describe('/send-code rate limiting (SEC-021)', () => {
@@ -141,8 +166,11 @@ describe('/send-code rate limiting (SEC-021)', () => {
 		expect(connection.eval).toHaveBeenCalledWith(
 			expect.stringContaining('INCR'),
 			1,
-			expect.stringContaining('11111111111'), // normalized — digits only (W1)
+			`rate:send-code:${expectedPhoneKey(PHONE_A)}`,
 			900,
+		);
+		expect(String((connection.eval as ReturnType<typeof vi.fn>).mock.calls[0][2])).not.toContain(
+			'11111111111',
 		);
 	});
 
@@ -170,7 +198,7 @@ describe('ASA-003 — send-code stores hash server-side, never returns it', () =
 		(connection.ttl as ReturnType<typeof vi.fn>).mockResolvedValue(900);
 	});
 
-	it('stores phoneCodeHash in Redis under auth:phone:{phone}', async () => {
+	it('stores phoneCodeHash in Redis under an opaque auth:phone key', async () => {
 		(sendToUser as ReturnType<typeof vi.fn>).mockResolvedValue({
 			phoneCodeHash: 'secret-hash-abc',
 		});
@@ -178,10 +206,13 @@ describe('ASA-003 — send-code stores hash server-side, never returns it', () =
 		await post('/send-code', { phone: PHONE_A });
 
 		expect(connection.set).toHaveBeenCalledWith(
-			`auth:phone:${PHONE_A}`,
+			expectedAuthKey(PHONE_A),
 			'secret-hash-abc',
 			'EX',
-			180,
+			300,
+		);
+		expect(String((connection.set as ReturnType<typeof vi.fn>).mock.calls[0][0])).not.toContain(
+			PHONE_A,
 		);
 	});
 
@@ -203,7 +234,7 @@ describe('ASA-003 — send-code stores hash server-side, never returns it', () =
 
 		await post('/send-code', { phone: PHONE_A });
 
-		expect(setAuthPending).toHaveBeenCalledWith(PHONE_A, true);
+		expect(setAuthPending).toHaveBeenCalledWith(expectedPoolKey(PHONE_A), true);
 	});
 });
 
@@ -220,16 +251,16 @@ describe('ASA-003 — verify-code retrieves hash from Redis, one-time use', () =
 		});
 	});
 
-	it('retrieves phoneCodeHash from Redis using auth:phone:{phone}', async () => {
+	it('retrieves phoneCodeHash from Redis using an opaque auth:phone key', async () => {
 		await post('/verify-code', { phone: PHONE_A, code: '12345', userId: USER_ID });
 
-		expect(connection.get).toHaveBeenCalledWith(`auth:phone:${PHONE_A}`);
+		expect(connection.get).toHaveBeenCalledWith(expectedAuthKey(PHONE_A));
 	});
 
 	it('deletes the Redis key immediately after retrieval (one-time use)', async () => {
 		await post('/verify-code', { phone: PHONE_A, code: '12345', userId: USER_ID });
 
-		expect(connection.del).toHaveBeenCalledWith(`auth:phone:${PHONE_A}`);
+		expect(connection.del).toHaveBeenCalledWith(expectedAuthKey(PHONE_A));
 	});
 
 	it('returns 400 when Redis has no entry for phone (auth session expired)', async () => {
@@ -245,7 +276,7 @@ describe('ASA-003 — verify-code retrieves hash from Redis, one-time use', () =
 	it('clears isAuthPending=false in verify-code (ASA-006)', async () => {
 		await post('/verify-code', { phone: PHONE_A, code: '12345', userId: USER_ID });
 
-		expect(setAuthPending).toHaveBeenCalledWith(PHONE_A, false);
+		expect(setAuthPending).toHaveBeenCalledWith(expectedPoolKey(PHONE_A), false);
 	});
 
 	it('does not send phoneCodeHash in the worker sendToUser call', async () => {
@@ -276,6 +307,191 @@ describe('ASA-003 — verify-code retrieves hash from Redis, one-time use', () =
 
 		expect(res.status).toBe(200);
 		expect(generateSessionKek).toHaveBeenCalledWith(USER_ID);
+	});
+
+	it('keeps auth state alive when Telegram requires 2FA password', async () => {
+		(sendToUser as ReturnType<typeof vi.fn>).mockRejectedValue(
+			new Error('SESSION_PASSWORD_NEEDED'),
+		);
+
+		const res = await post('/verify-code', { phone: PHONE_A, code: '12345', userId: USER_ID });
+		const body = await res.json();
+
+		expect(res.status).toBe(400);
+		expect(body).toEqual({ code: 'SESSION_PASSWORD_NEEDED' });
+		expect(connection.del).not.toHaveBeenCalled();
+		expect(connection.expire).toHaveBeenCalledWith(expectedAuthKey(PHONE_A), 300);
+		expect(setAuthPending).toHaveBeenCalledWith(expectedPoolKey(PHONE_A), true);
+	});
+
+	it('keeps auth state alive after a wrong 2FA password attempt', async () => {
+		(sendToUser as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('PASSWORD_HASH_INVALID'));
+
+		const res = await post('/verify-code', {
+			phone: PHONE_A,
+			code: '12345',
+			password: 'wrong password',
+			userId: USER_ID,
+		});
+		const body = (await res.json()) as { error: string };
+
+		expect(res.status).toBe(400);
+		expect(body.error).toBe('Invalid 2FA password');
+		expect(connection.del).not.toHaveBeenCalled();
+		expect(connection.expire).toHaveBeenCalledWith(expectedAuthKey(PHONE_A), 300);
+		expect(setAuthPending).toHaveBeenCalledWith(expectedPoolKey(PHONE_A), true);
+	});
+});
+
+describe('/sync-contacts personal-account scope', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		(isWorkspaceMember as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+		(getUserTelegramAccountIds as ReturnType<typeof vi.fn>).mockResolvedValue([
+			'123456789',
+			'987654321',
+		]);
+	});
+
+	it('queues contacts-only sync by default', async () => {
+		const res = await post('/sync-contacts', { userId: USER_ID, workspaceId: WORKSPACE_ID });
+
+		expect(res.status).toBe(200);
+		expect(syncQueue.add).toHaveBeenCalledWith('sync-contacts', {
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			syncScope: 'contacts_only',
+			enableAiProcessing: false,
+		});
+	});
+
+	it('queues explicit private-recent sync with AI opt-in', async () => {
+		const res = await post('/sync-contacts', {
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			syncScope: 'private_recent',
+			enableAiProcessing: true,
+		});
+
+		expect(res.status).toBe(200);
+		expect(syncQueue.add).toHaveBeenCalledWith('sync-contacts', {
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			syncScope: 'private_recent',
+			enableAiProcessing: true,
+		});
+	});
+
+	it('queues explicit group sync scope', async () => {
+		const res = await post('/sync-contacts', {
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			syncScope: 'private_recent_with_groups',
+			enableAiProcessing: false,
+		});
+
+		expect(res.status).toBe(200);
+		expect(syncQueue.add).toHaveBeenCalledWith('sync-contacts', {
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			syncScope: 'private_recent_with_groups',
+			enableAiProcessing: false,
+		});
+	});
+
+	it('queues sync for an explicit linked source account', async () => {
+		const res = await post('/sync-contacts', {
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			sourceAccountId: '987654321',
+		});
+
+		expect(res.status).toBe(200);
+		expect(syncQueue.add).toHaveBeenCalledWith('sync-contacts', {
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			syncScope: 'contacts_only',
+			enableAiProcessing: false,
+			sourceAccountId: '987654321',
+		});
+	});
+
+	it('rejects an explicit source account not linked to the user', async () => {
+		const res = await post('/sync-contacts', {
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			sourceAccountId: '555555555',
+		});
+
+		expect(res.status).toBe(403);
+		expect(syncQueue.add).not.toHaveBeenCalled();
+	});
+
+	it('rejects AI sync opt-in unless cloud or local AI analysis is enabled', async () => {
+		vi.stubEnv('NODE_ENV', 'development');
+		vi.stubEnv('AI_PROCESSING_ENABLED', 'false');
+
+		const res = await post('/sync-contacts', {
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			syncScope: 'private_recent',
+			enableAiProcessing: true,
+		});
+
+		expect(res.status).toBe(403);
+		expect(syncQueue.add).not.toHaveBeenCalled();
+	});
+
+	it('allows AI sync opt-in when local Qwen analysis is configured', async () => {
+		vi.stubEnv('NODE_ENV', 'development');
+		vi.stubEnv('AI_PROCESSING_ENABLED', 'false');
+		vi.stubEnv('COMMITMENT_LLM_PROVIDER', 'local');
+		vi.stubEnv('COMMITMENT_LLM_BASE_URL', 'http://localhost:11434/v1');
+		vi.stubEnv('COMMITMENT_LLM_MODEL', 'qwen3:4b-instruct');
+		vi.stubEnv('KNOWLEDGE_EMBEDDING_PROVIDER', 'local');
+		vi.stubEnv('KNOWLEDGE_EMBEDDING_PRESET', 'qwen');
+		vi.stubEnv('KNOWLEDGE_EMBEDDING_MODEL', 'qwen3-embedding:0.6b');
+
+		const res = await post('/sync-contacts', {
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			syncScope: 'private_recent',
+			enableAiProcessing: true,
+		});
+
+		expect(res.status).toBe(200);
+		expect(syncQueue.add).toHaveBeenCalledWith('sync-contacts', {
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			syncScope: 'private_recent',
+			enableAiProcessing: true,
+		});
+	});
+
+	it('falls back to contacts-only for invalid sync scope', async () => {
+		const res = await post('/sync-contacts', {
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			syncScope: 'full_history',
+			enableAiProcessing: true,
+		});
+
+		expect(res.status).toBe(200);
+		expect(syncQueue.add).toHaveBeenCalledWith('sync-contacts', {
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			syncScope: 'contacts_only',
+			enableAiProcessing: false,
+		});
+	});
+
+	it('rejects sync when the user is not a workspace member', async () => {
+		(isWorkspaceMember as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+
+		const res = await post('/sync-contacts', { userId: USER_ID, workspaceId: WORKSPACE_ID });
+
+		expect(res.status).toBe(403);
+		expect(syncQueue.add).not.toHaveBeenCalled();
 	});
 });
 

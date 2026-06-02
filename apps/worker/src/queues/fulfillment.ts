@@ -3,10 +3,12 @@ import type { SealedEnvelope } from '@repo/crypto';
 import {
 	getActiveGoalsByType,
 	getCommitmentsForFulfillmentCheck,
+	hasUserAiAnalysisConsent,
 	markCommitmentFulfilled,
 	updateGoalProgress,
 	updateLastCheckedAt,
 } from '@repo/db';
+import { canRunCloudCommitmentIntelligence, redactSensitive } from '@repo/shared';
 import { Queue, Worker } from 'bullmq';
 import { recordOutcome } from '../ai/bandit';
 import { detectFulfillment } from '../ai/fulfillment-detection';
@@ -43,10 +45,10 @@ export const fulfillmentQueue = new Queue<FulfillmentJobData>('fulfillment', {
 	connection,
 	prefix: '{ai-flow}',
 	defaultJobOptions: {
-		attempts: 3,
+		attempts: 2,
 		backoff: { type: 'exponential', delay: 5000 },
-		removeOnComplete: { count: 1000 },
-		removeOnFail: { count: 5000 },
+		removeOnComplete: true,
+		removeOnFail: { count: 50, age: 3600 },
 	},
 });
 
@@ -54,6 +56,20 @@ export const fulfillmentWorker = new Worker<FulfillmentJobData>(
 	'fulfillment',
 	withRLS(async (job) => {
 		const { userId, contactId, workspaceId } = job.data;
+
+		if (!canRunCloudCommitmentIntelligence()) {
+			console.log(
+				`[fulfillment] Cloud fulfillment detection disabled for workspace=${workspaceId.slice(0, 8)}, skipping`,
+			);
+			return { skipped: true, reason: 'cloud_commitment_intelligence_disabled' };
+		}
+
+		if (!(await hasUserAiAnalysisConsent(userId, workspaceId))) {
+			console.log(
+				`[fulfillment] AI consent no longer persisted for workspace=${workspaceId.slice(0, 8)} user=${userId.slice(0, 8)}, skipping`,
+			);
+			return { skipped: true, reason: 'no_ai_consent' };
+		}
 
 		if (!job.data.messages || job.data.messages.length === 0) {
 			console.log(`[fulfillment] No messages for contact=${contactId.slice(0, 8)}, skipping`);
@@ -137,7 +153,7 @@ export const fulfillmentWorker = new Worker<FulfillmentJobData>(
 					await updateGoalProgress(workspaceId, goal.id, 1, 'habit');
 				}
 			} catch (err) {
-				console.warn('[goal-hook] Failed to increment habit goal', err);
+				console.warn('[goal-hook] Failed to increment habit goal', redactSensitive(err));
 			}
 			// Outcome hook (Phase 35): record fulfilled outcome for precedent search
 			try {
@@ -165,5 +181,5 @@ fulfillmentWorker.on('completed', (job) => {
 	console.log(`[fulfillment] Job ${job.id} completed`);
 });
 fulfillmentWorker.on('failed', (job, err) => {
-	console.error(`[fulfillment] Job ${job?.id} failed:`, err.message);
+	console.error(`[fulfillment] Job ${job?.id} failed:`, redactSensitive(err));
 });

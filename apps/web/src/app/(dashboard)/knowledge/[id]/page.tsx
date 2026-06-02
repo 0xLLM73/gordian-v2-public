@@ -1,4 +1,5 @@
 import { MergeDialog } from '@/components/knowledge/merge-dialog';
+import { PeopleEvidenceSection } from '@/components/knowledge/people-evidence-section';
 import { KNOWLEDGE_LINK_TYPE_COLORS, KNOWLEDGE_TYPE_COLORS } from '@/lib/colors';
 import { formatRelativeDate } from '@/lib/format';
 import { computeDecayedRelevance } from '@/lib/knowledge-utils';
@@ -7,7 +8,7 @@ import {
 	getKnowledgeNeighbors,
 	getKnowledgeNode,
 	getSharedKnowledge,
-	listContactsByKnowledge,
+	listContactsWithEvidenceForKnowledgeNode,
 	searchKnowledgeNodes,
 } from '@repo/db';
 import type { KnowledgeNeighbor, KnowledgeNode } from '@repo/db';
@@ -21,6 +22,11 @@ function LinkTypeBadge({ type }: { type: string }) {
 			{type.replace(/_/g, ' ')}
 		</span>
 	);
+}
+
+function EdgeClaimBadge({ linkType, weight }: { linkType: string; weight?: number | null }) {
+	const label = linkType === 'related_to' && (weight ?? 0) < 0.15 ? 'weak inferred' : 'inferred';
+	return <span className="rounded bg-blue-50 px-2 py-0.5 text-xs text-blue-700">{label}</span>;
 }
 
 function TypeBadge({ type }: { type: string }) {
@@ -67,6 +73,7 @@ function RelatedEntitiesSection({ neighbors }: { neighbors: KnowledgeNeighbor[] 
 									<span className="text-sm font-medium text-foreground">{n.node.displayName}</span>
 									<TypeBadge type={n.node.type} />
 									<LinkTypeBadge type={n.link.linkType} />
+									<EdgeClaimBadge linkType={n.link.linkType} weight={n.link.weight} />
 								</Link>
 							</li>
 						))}
@@ -90,6 +97,7 @@ function RelatedEntitiesSection({ neighbors }: { neighbors: KnowledgeNeighbor[] 
 									<span className="text-sm font-medium text-foreground">{n.node.displayName}</span>
 									<TypeBadge type={n.node.type} />
 									<LinkTypeBadge type={n.link.linkType} />
+									<EdgeClaimBadge linkType={n.link.linkType} weight={n.link.weight} />
 								</Link>
 							</li>
 						))}
@@ -165,7 +173,7 @@ export default async function KnowledgeNodePage({
 
 	// Fetch linked contacts and neighbors in parallel
 	const [contactRows, neighbors] = await Promise.all([
-		listContactsByKnowledge(node.id, workspaceId, envelope),
+		listContactsWithEvidenceForKnowledgeNode(node.id, workspaceId, envelope),
 		getKnowledgeNeighbors(node.id, workspaceId, envelope),
 	]);
 
@@ -174,6 +182,20 @@ export default async function KnowledgeNodePage({
 		id: r.contact.id,
 		firstName: r.contact.firstName,
 		lastName: r.contact.lastName,
+		relationType: r.link.relationType,
+		strength: r.link.strength,
+		evidenceCount: r.link.evidenceCount,
+		lastEvidenceAt: r.link.lastEvidenceAt,
+		evidence: r.evidence.map((e) => ({
+			id: e.id,
+			evidenceKind: e.evidenceKind,
+			confidence: e.confidence,
+			snippet: e.snippet,
+			occurredAt: e.occurredAt,
+			messageId: e.messageId,
+			createdAt: e.createdAt,
+			metadata: e.metadata,
+		})),
 	}));
 
 	// Shared knowledge: if viewing from a contact context, compute shared topics with each linked contact
@@ -236,37 +258,7 @@ export default async function KnowledgeNodePage({
 			{/* Shared Context (Phase 32) — visible when viewing from a contact context */}
 			{fromContactId ? <SharedKnowledgeSection sharedByContact={sharedByContact} /> : null}
 
-			{/* Linked Contacts */}
-			<div className="rounded-lg border border-border bg-card p-6">
-				<h2 className="mb-4 text-lg font-semibold text-foreground">Contacts who know about this</h2>
-				{linkedContacts.length === 0 ? (
-					<p className="text-sm text-muted-foreground">
-						No contacts linked yet. Sync messages to discover connections.
-					</p>
-				) : (
-					<ul className="divide-y divide-gray-100">
-						{linkedContacts.map((contact) => {
-							const displayName =
-								[contact.firstName, contact.lastName].filter(Boolean).join(' ') || 'Unknown';
-							const initials = (contact.firstName || '?')[0].toUpperCase();
-
-							return (
-								<li key={contact.id}>
-									<Link
-										href={`/contacts/${contact.id}`}
-										className="flex items-center gap-3 py-3 transition-colors hover:text-indigo-700"
-									>
-										<div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-medium text-blue-700">
-											{initials}
-										</div>
-										<span className="text-sm font-medium text-foreground">{displayName}</span>
-									</Link>
-								</li>
-							);
-						})}
-					</ul>
-				)}
-			</div>
+			<PeopleEvidenceSection contacts={linkedContacts} />
 
 			{/* Merge Candidates */}
 			{mergeCandidates.length > 0 ? (

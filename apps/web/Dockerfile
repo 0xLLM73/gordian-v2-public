@@ -1,6 +1,6 @@
-FROM node:20-slim AS base
+FROM node:20.19.5-slim AS base
 RUN corepack enable
-RUN npm install -g turbo@^2.8
+RUN npm install -g turbo@2.8.9
 
 FROM base AS builder
 WORKDIR /app
@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt
 WORKDIR /app
 COPY --from=builder /app/out/json/ .
 COPY --from=builder /app/out/pnpm-lock.yaml ./pnpm-lock.yaml
-RUN pnpm install --shamefully-hoist
+RUN pnpm install --frozen-lockfile --shamefully-hoist
 
 COPY --from=builder /app/out/full/ .
 COPY --from=builder /app/tsconfig.base.json ./tsconfig.base.json

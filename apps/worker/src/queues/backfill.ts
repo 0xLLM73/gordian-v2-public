@@ -11,12 +11,14 @@ import { accounts, and, db, eq, workspaces } from '@repo/db';
 import { contacts } from '@repo/db';
 import {
 	getUnembeddedMemories,
+	hasUserAiAnalysisConsent,
 	listChats,
 	updateChatLastSync,
 	updateMemoryEmbedding,
 	upsertChat,
 	upsertMessages,
 } from '@repo/db';
+import { redactSensitive } from '@repo/shared';
 import { Queue, Worker } from 'bullmq';
 import { generateEmbedding } from '../ai/embeddings';
 import { prefilterEntities } from '../ai/prefilter';
@@ -33,6 +35,7 @@ import { connection } from '../redis';
 export interface BackfillJobData {
 	userId: string;
 	workspaceId: string;
+	enableAiProcessing?: boolean;
 	/** Tier 3: specific chat to import (omit for all dialogs) */
 	chatId?: string;
 	/** Tier 3: start of date window (unix timestamp) */
@@ -82,6 +85,14 @@ const INTER_DIALOG_DELAY = 2000;
 /** Messages fetched per page */
 const PAGE_SIZE = 100;
 
+function assertStoredSessionUnwrapAllowedForBackfill(): void {
+	if (process.env.NODE_ENV === 'test') return;
+	if (process.env.TELEGRAM_ALLOW_SESSION_UNWRAP_OUTSIDE_IMPORTS?.trim() === 'true') return;
+	throw new Error(
+		'Stored Telegram session unwrap is restricted to history imports. Use the Telegram history import flow, or explicitly set TELEGRAM_ALLOW_SESSION_UNWRAP_OUTSIDE_IMPORTS=true for legacy backfill.',
+	);
+}
+
 /** Look up Telegram session ciphertext and KEK blob */
 async function getTelegramSession(
 	userId: string,
@@ -108,6 +119,7 @@ async function getTelegramSession(
 
 /** Ensure GramJS is connected with the user's stored session (per-user KEK) */
 async function ensureGramJSConnected(userId: string, _envelope: SealedEnvelope): Promise<void> {
+	assertStoredSessionUnwrapAllowedForBackfill();
 	const account = await getTelegramSession(userId);
 	if (!account) {
 		throw new Error('No Telegram session found for user');
@@ -134,8 +146,8 @@ export const backfillQueue = new Queue<BackfillJobData>('backfill', {
 	defaultJobOptions: {
 		attempts: 3,
 		backoff: { type: 'exponential', delay: 10000 },
-		removeOnComplete: { count: 100 },
-		removeOnFail: { count: 500 },
+		removeOnComplete: true,
+		removeOnFail: { count: 25, age: 3600 },
 	},
 });
 
@@ -149,8 +161,8 @@ export const embeddingBackfillQueue = new Queue<BackfillEmbeddingsJobData>('embe
 	defaultJobOptions: {
 		attempts: 3,
 		backoff: { type: 'exponential', delay: 5000 },
-		removeOnComplete: { count: 50 },
-		removeOnFail: { count: 100 },
+		removeOnComplete: true,
+		removeOnFail: { count: 25, age: 3600 },
 	},
 });
 
@@ -291,6 +303,7 @@ export const backfillWorker = new Worker<BackfillJobData>(
 	'backfill',
 	withRLS(async (job) => {
 		const { userId, workspaceId, chatId, minDate, maxDate } = job.data;
+		const enableAiProcessing = job.data.enableAiProcessing === true;
 		const isDateWindow = minDate !== undefined || maxDate !== undefined;
 		const jobType = isDateWindow ? 'Tier 3 date window' : 'Tier 2 full backfill';
 
@@ -422,38 +435,45 @@ export const backfillWorker = new Worker<BackfillJobData>(
 		}
 
 		// Trigger AI pipeline for contacts with new messages
-		if (contactMessagesMap.size > 0) {
+		if (contactMessagesMap.size > 0 && enableAiProcessing) {
 			try {
-				const wrk = await unwrapWrk(envelope);
-				const keys = await deriveKeys(wrk, workspaceId, envelope.wrkVersion);
-				const workspaceSalt = keys.bik.toString('hex');
-
-				const keyEnvelope = {
-					encryptedWrk: envelope.encryptedWrk.toString('base64'),
-					kmsContext: envelope.kmsContext,
-					wrkVersion: envelope.wrkVersion,
-				};
-
-				for (const [contactId, messages] of contactMessagesMap) {
-					const encryptedMessages = messages.map((m) => ({
-						role: m.role,
-						content: encrypt(m.content, keys.dek),
-						timestamp: m.timestamp,
-					}));
-					await scheduleAIPipeline(
-						userId,
-						contactId,
-						workspaceId,
-						keyEnvelope,
-						encryptedMessages,
-						workspaceSalt,
-					);
+				const hasConsent = await hasUserAiAnalysisConsent(userId, workspaceId);
+				if (!hasConsent) {
 					console.log(
-						`[backfill] Scheduled AI pipeline for contact=${short(contactId)} (${messages.length} messages)`,
+						`[backfill] AI processing requested but consent is not persisted for workspace=${short(workspaceId)}, skipping AI pipeline`,
 					);
+				} else {
+					const wrk = await unwrapWrk(envelope);
+					const keys = await deriveKeys(wrk, workspaceId, envelope.wrkVersion);
+					const workspaceSalt = keys.bik.toString('hex');
+
+					const keyEnvelope = {
+						encryptedWrk: envelope.encryptedWrk.toString('base64'),
+						kmsContext: envelope.kmsContext,
+						wrkVersion: envelope.wrkVersion,
+					};
+
+					for (const [contactId, messages] of contactMessagesMap) {
+						const encryptedMessages = messages.map((m) => ({
+							role: m.role,
+							content: encrypt(m.content, keys.dek),
+							timestamp: m.timestamp,
+						}));
+						await scheduleAIPipeline(
+							userId,
+							contactId,
+							workspaceId,
+							keyEnvelope,
+							encryptedMessages,
+							workspaceSalt,
+						);
+						console.log(
+							`[backfill] Scheduled AI pipeline for contact=${short(contactId)} (${messages.length} messages)`,
+						);
+					}
 				}
 			} catch (err) {
-				console.error('[backfill] Failed to schedule AI pipeline:', (err as Error).message);
+				console.error('[backfill] Failed to schedule AI pipeline:', redactSensitive(err));
 			}
 		}
 
@@ -481,7 +501,7 @@ backfillWorker.on('completed', (job) => {
 });
 
 backfillWorker.on('failed', (job, err) => {
-	console.error(`[backfill] Job ${job?.id} failed:`, err.message);
+	console.error(`[backfill] Job ${job?.id} failed:`, redactSensitive(err));
 });
 
 // ---------------------------------------------------------------------------
@@ -591,5 +611,5 @@ embeddingBackfillWorker.on('completed', (job) => {
 });
 
 embeddingBackfillWorker.on('failed', (job, err) => {
-	console.error(`[embedding-backfill] Job ${job?.id} failed:`, err.message);
+	console.error(`[embedding-backfill] Job ${job?.id} failed:`, redactSensitive(err));
 });

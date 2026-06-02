@@ -4,8 +4,9 @@ import { listKnowledgeNodesAction } from '@/app/actions/knowledge';
 import { searchAction } from '@/app/actions/search';
 import { GOAL_STATUS_COLORS, KNOWLEDGE_TYPE_COLORS } from '@/lib/colors';
 import type { KnowledgeNodePublic } from '@repo/db';
+import { Loader2, Search as SearchIcon } from 'lucide-react';
 import Link from 'next/link';
-import { useState, useTransition } from 'react';
+import * as React from 'react';
 
 interface SearchResults {
 	contacts: Array<Record<string, unknown>>;
@@ -19,20 +20,22 @@ interface SearchResults {
 type TabKey = 'all' | 'contacts' | 'memories' | 'commitments' | 'deals' | 'knowledge' | 'goals';
 
 export function SearchInterface() {
-	const [query, setQuery] = useState('');
-	const [results, setResults] = useState<SearchResults | null>(null);
-	const [activeTab, setActiveTab] = useState<TabKey>('all');
-	const [isPending, startTransition] = useTransition();
+	const [query, setQuery] = React.useState('');
+	const [results, setResults] = React.useState<SearchResults | null>(null);
+	const [activeTab, setActiveTab] = React.useState<TabKey>('all');
+	const [isPending, startTransition] = React.useTransition();
 
 	function handleSearch(e: React.FormEvent<HTMLFormElement>) {
 		e.preventDefault();
-		if (!query.trim()) return;
+		const submittedQuery = String(new FormData(e.currentTarget).get('query') ?? query).trim();
+		if (!submittedQuery) return;
 
-		const q = query.trim().toLowerCase();
+		setQuery(submittedQuery);
+		const q = submittedQuery.toLowerCase();
 		startTransition(async () => {
 			const [searchResult, knowledgeResult, goalsResult] = await Promise.all([
-				searchAction({ query: query.trim() }),
-				listKnowledgeNodesAction({ query: query.trim(), limit: 20, offset: 0 }),
+				searchAction({ query: submittedQuery }),
+				listKnowledgeNodesAction({ query: submittedQuery, limit: 20, offset: 0 }),
 				listGoalsAction({ limit: 100 }),
 			]);
 			const allGoals = (goalsResult?.data as Array<Record<string, unknown>>) ?? [];
@@ -69,32 +72,39 @@ export function SearchInterface() {
 				{ key: 'knowledge', label: 'Knowledge', count: results.knowledge.length },
 			]
 		: [];
+	const activeTabCount = tabs.find((tab) => tab.key === activeTab)?.count ?? 0;
+	const showEmptyActiveTab = Boolean(
+		results && totalResults > 0 && activeTab !== 'all' && activeTabCount === 0,
+	);
 
 	return (
 		<div>
 			<form onSubmit={handleSearch} className="mb-6">
 				<div className="relative">
-					<svg
+					<SearchIcon
 						aria-hidden="true"
 						className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground"
-						fill="none"
-						viewBox="0 0 24 24"
-						stroke="currentColor"
-						strokeWidth={1.5}
-					>
-						<path
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"
-						/>
-					</svg>
+					/>
 					<input
+						name="query"
 						type="text"
 						value={query}
 						onChange={(e: React.ChangeEvent<HTMLInputElement>) => setQuery(e.target.value)}
 						placeholder="Search contacts, memories, commitments, deals, goals..."
-						className="w-full rounded-lg border border-border py-2 pl-10 pr-4 focus:border-blue-500 focus:outline-none"
+						className="w-full rounded-lg border border-border py-2 pl-10 pr-12 focus:border-blue-500 focus:outline-none"
 					/>
+					<button
+						type="submit"
+						aria-label="Search"
+						disabled={isPending}
+						className="absolute right-1 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+					>
+						{isPending ? (
+							<Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
+						) : (
+							<SearchIcon aria-hidden="true" className="h-4 w-4" />
+						)}
+					</button>
 				</div>
 			</form>
 
@@ -123,10 +133,15 @@ export function SearchInterface() {
 
 					{totalResults === 0 ? (
 						<div className="rounded-lg border border-border bg-muted p-8 text-center text-sm text-muted-foreground">
-							No results found. Contact search requires exact names.
+							<p className="font-medium text-foreground">No results found</p>
+							<p className="mt-1">
+								Try a person, company, project, commitment, deal, goal, or knowledge topic.
+							</p>
 						</div>
 					) : (
 						<div className="space-y-3">
+							{showEmptyActiveTab ? <EmptyTabState tab={activeTab} query={query} /> : null}
+
 							{(activeTab === 'all' || activeTab === 'contacts') && results.contacts.length > 0 ? (
 								<ResultSection title="Contacts">
 									{results.contacts.map((c) => (
@@ -262,6 +277,21 @@ export function SearchInterface() {
 	);
 }
 
+function EmptyTabState({ tab, query }: { tab: TabKey; query: string }) {
+	const label = TAB_EMPTY_LABELS[tab] ?? 'results';
+	return (
+		<div className="rounded-lg border border-border bg-muted p-6 text-sm text-muted-foreground">
+			<p className="font-medium text-foreground">
+				No {label} match &ldquo;{query}&rdquo;
+			</p>
+			<p className="mt-1">
+				Other categories matched. Switch back to All, or try a more specific name, project,
+				relationship, or follow-up phrase.
+			</p>
+		</div>
+	);
+}
+
 function ResultSection({ title, children }: { title: string; children: React.ReactNode }) {
 	return (
 		<div>
@@ -270,3 +300,12 @@ function ResultSection({ title, children }: { title: string; children: React.Rea
 		</div>
 	);
 }
+
+const TAB_EMPTY_LABELS: Partial<Record<TabKey, string>> = {
+	contacts: 'contacts',
+	memories: 'memories',
+	commitments: 'commitments',
+	deals: 'deals',
+	knowledge: 'knowledge nodes',
+	goals: 'goals',
+};

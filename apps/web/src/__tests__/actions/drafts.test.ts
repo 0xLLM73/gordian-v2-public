@@ -42,6 +42,11 @@ const mockGetRecentMessages = vi.fn();
 const mockCreateDraftLog = vi.fn();
 const mockMarkDraftSent = vi.fn();
 const mockMarkDraftDiscarded = vi.fn();
+const mockUnwrapWrk = vi.fn();
+const mockDeriveKeys = vi.fn();
+const mockMaskEntities = vi.fn();
+const mockPrefilterEntities = vi.fn();
+const mockGeneratePersonPseudonym = vi.fn();
 
 vi.mock('@repo/db', () => ({
 	withWorkspaceRLS: vi.fn((_wsId: string, fn: (tx: unknown) => unknown) => fn({})),
@@ -56,6 +61,14 @@ vi.mock('@repo/db', () => ({
 	trackBehavior: vi.fn().mockResolvedValue(null),
 }));
 
+vi.mock('@repo/crypto', () => ({
+	unwrapWrk: mockUnwrapWrk,
+	deriveKeys: mockDeriveKeys,
+	maskEntities: mockMaskEntities,
+	prefilterEntities: mockPrefilterEntities,
+	generatePersonPseudonym: mockGeneratePersonPseudonym,
+}));
+
 // Mock global fetch
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
@@ -66,9 +79,28 @@ describe('draft actions', () => {
 		vi.stubEnv('WORKER_URL', 'http://localhost:3001');
 		vi.stubEnv('WORKER_INTERNAL_SECRET', 'test-secret');
 		mockGetWorkspaceEnvelope.mockResolvedValue(MOCK_ENVELOPE);
-		mockGetContact.mockResolvedValue({ firstName: 'Alice', lastName: 'Smith' });
-		mockGetLatestSummary.mockResolvedValue({ summary: 'Great relationship' });
-		mockGetRecentMessages.mockResolvedValue([{ content: 'Hello' }, { content: 'How are you?' }]);
+		mockUnwrapWrk.mockResolvedValue(Buffer.from('mock-wrk'));
+		mockDeriveKeys.mockResolvedValue({ bik: Buffer.from('mock-bik') });
+		mockPrefilterEntities.mockReturnValue([]);
+		mockMaskEntities.mockImplementation((value: string) => ({
+			maskedText: value
+				.replace(/alice@example\.com/gi, 'EMAIL_masked')
+				.replace(/\+1-555-123-4567/g, 'PHONE_masked'),
+			entityMap: [],
+		}));
+		mockGeneratePersonPseudonym.mockReturnValue('PERSON_masked');
+		mockGetContact.mockResolvedValue({
+			firstName: 'Alice',
+			lastName: 'Smith',
+			username: 'alice_dev',
+		});
+		mockGetLatestSummary.mockResolvedValue({
+			summary: 'Great relationship with Alice Smith at alice@example.com',
+		});
+		mockGetRecentMessages.mockResolvedValue([
+			{ content: 'Hello Alice' },
+			{ content: 'Call me at +1-555-123-4567' },
+		]);
 		mockCreateDraftLog.mockResolvedValue({ id: DRAFT_ID });
 	});
 
@@ -111,7 +143,14 @@ describe('draft actions', () => {
 			expect(body.userId).toBe('user-1');
 			expect(body.workspaceId).toBe(WORKSPACE_ID);
 			expect(body.contactId).toBe(CONTACT_ID);
-			expect(body.contactSummary).toContain('Alice Smith');
+			expect(body.contextMasked).toBe(true);
+			expect(body.contactSummary).toContain('Contact: PERSON_masked');
+			expect(body.contactSummary).toContain('EMAIL_masked');
+			expect(body.contactSummary).not.toContain('Alice');
+			expect(body.contactSummary).not.toContain('alice@example.com');
+			expect(body.recentMessages).toContain('PERSON_masked');
+			expect(body.recentMessages).toContain('PHONE_masked');
+			expect(body.recentMessages).not.toContain('+1-555-123-4567');
 			expect(mockCreateDraftLog).toHaveBeenCalledWith(
 				WORKSPACE_ID,
 				CONTACT_ID,

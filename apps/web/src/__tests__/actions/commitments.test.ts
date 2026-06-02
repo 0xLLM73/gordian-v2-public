@@ -19,6 +19,14 @@ vi.mock('@/lib/auth', () => ({
 }));
 
 const WORKSPACE_ID = '550e8400-e29b-41d4-a716-446655440000';
+const SENSITIVE_COMMITMENT_FIELDS = [
+	'extractionContext',
+	'embedding',
+	'banditTraceId',
+	'fulfillmentEvidence',
+	'lastCheckedAt',
+] as const;
+type MockDbRow = Record<string, unknown>;
 
 vi.mock('@/lib/workspace', () => ({
 	getUserWorkspaceId: vi.fn(() => Promise.resolve(WORKSPACE_ID)),
@@ -31,16 +39,58 @@ vi.mock('@/lib/workspace', () => ({
 	),
 }));
 
-const mockGetActive = vi.fn(() =>
-	Promise.resolve([{ id: 'c1', title: 'Follow up', status: 'active', confidence: 0.9 }]),
+const mockCommitmentRow = {
+	id: 'c1',
+	contactId: 'contact-1',
+	title: 'Follow up',
+	commitmentType: 'task',
+	status: 'active',
+	assignee: 'user',
+	confidence: 0.9,
+	dueDate: null,
+	quote: 'test quote',
+	fulfilledAt: null,
+	snoozedUntil: null,
+	createdAt: new Date('2026-05-01T12:00:00.000Z'),
+	updatedAt: new Date('2026-05-01T12:00:00.000Z'),
+	contactFirstName: 'Ada',
+	contactLastName: 'Lovelace',
+	sourceMessageAgeDays: 1,
+	extractionContext: 'private extraction context',
+	embedding: [0.1, 0.2, 0.3],
+	banditTraceId: 'trace-1',
+	fulfillmentEvidence: 'private fulfillment evidence',
+	lastCheckedAt: new Date('2026-05-02T12:00:00.000Z'),
+};
+
+const mockGetActive = vi.fn<(...args: unknown[]) => Promise<MockDbRow[]>>(() =>
+	Promise.resolve([mockCommitmentRow]),
 );
-const mockGetByContact = vi.fn(() => Promise.resolve([]));
-const mockUpdateStatus = vi.fn(() =>
+const mockGetFirstLook = vi.fn<(...args: unknown[]) => Promise<MockDbRow[]>>(() =>
+	Promise.resolve([
+		mockCommitmentRow,
+		{ ...mockCommitmentRow, id: 'c2', status: 'draft', confidence: 0.62 },
+	]),
+);
+const mockGetByContact = vi.fn<(...args: unknown[]) => Promise<MockDbRow[]>>(() =>
+	Promise.resolve([]),
+);
+const mockUpdateStatus = vi.fn<(...args: unknown[]) => Promise<MockDbRow | null>>(() =>
 	Promise.resolve({
 		id: 'c1',
 		status: 'completed',
 		banditTraceId: 'trace-1' as string | null,
 		contactId: 'contact-1',
+		extractionContext: 'private extraction context',
+		embedding: [0.1, 0.2, 0.3],
+		fulfillmentEvidence: 'private fulfillment evidence',
+		lastCheckedAt: new Date('2026-05-02T12:00:00.000Z'),
+	}),
+);
+const mockSnoozeCommitment = vi.fn<(...args: unknown[]) => Promise<MockDbRow | null>>(() =>
+	Promise.resolve({
+		...mockCommitmentRow,
+		snoozedUntil: new Date('2099-05-03T12:00:00.000Z'),
 	}),
 );
 const mockMarkFulfilled = vi.fn(() =>
@@ -62,8 +112,10 @@ const mockGetCommitmentForFeedback = vi.fn().mockResolvedValue({
 vi.mock('@repo/db', () => ({
 	withWorkspaceRLS: vi.fn((_wsId: string, fn: (tx: unknown) => unknown) => fn({})),
 	getActiveCommitments: mockGetActive,
+	getCommitmentsForFirstLook: mockGetFirstLook,
 	getCommitmentsByContact: mockGetByContact,
 	updateCommitmentStatus: mockUpdateStatus,
+	snoozeCommitment: mockSnoozeCommitment,
 	markCommitmentFulfilled: mockMarkFulfilled,
 	getCommitmentForFeedback: mockGetCommitmentForFeedback,
 	createGoldenExample: mockCreateGoldenExample,
@@ -78,6 +130,12 @@ describe('commitment actions', () => {
 		resetRateLimit();
 	});
 
+	function expectNoSensitiveCommitmentFields(value: Record<string, unknown>) {
+		for (const field of SENSITIVE_COMMITMENT_FIELDS) {
+			expect(value).not.toHaveProperty(field);
+		}
+	}
+
 	describe('getActiveCommitmentsAction', () => {
 		it('fetches active commitments', async () => {
 			const { getActiveCommitmentsAction } = await import('@/app/actions/commitments');
@@ -86,6 +144,7 @@ describe('commitment actions', () => {
 
 			expect(result?.data).toBeDefined();
 			expect(mockGetActive).toHaveBeenCalled();
+			expectNoSensitiveCommitmentFields(result?.data?.[0] as Record<string, unknown>);
 		});
 
 		it('accepts optional limit', async () => {
@@ -99,8 +158,27 @@ describe('commitment actions', () => {
 		});
 	});
 
+	describe('getFirstLookCommitmentsAction', () => {
+		it('fetches recent active and draft commitments for onboarding review', async () => {
+			const { getFirstLookCommitmentsAction } = await import('@/app/actions/commitments');
+
+			const result = await getFirstLookCommitmentsAction({
+				limit: 10,
+			});
+
+			expect(result?.data?.map((c) => c.status)).toEqual(['active', 'draft']);
+			expect(mockGetFirstLook).toHaveBeenCalledWith(
+				WORKSPACE_ID,
+				expect.objectContaining({ encryptedWrk: expect.any(Buffer) }),
+				expect.objectContaining({ limit: 10 }),
+			);
+			expectNoSensitiveCommitmentFields(result?.data?.[0] as Record<string, unknown>);
+		});
+	});
+
 	describe('getCommitmentsByContactAction', () => {
 		it('fetches commitments for a contact', async () => {
+			mockGetByContact.mockResolvedValueOnce([mockCommitmentRow]);
 			const { getCommitmentsByContactAction } = await import('@/app/actions/commitments');
 
 			const result = await getCommitmentsByContactAction({
@@ -109,6 +187,7 @@ describe('commitment actions', () => {
 
 			expect(result?.data).toBeDefined();
 			expect(mockGetByContact).toHaveBeenCalled();
+			expectNoSensitiveCommitmentFields(result?.data?.[0] as Record<string, unknown>);
 		});
 
 		it('accepts status filter', async () => {
@@ -150,6 +229,14 @@ describe('commitment actions', () => {
 				'550e8400-e29b-41d4-a716-446655440001',
 				'completed',
 			);
+			expect(result?.data).toEqual(
+				expect.objectContaining({
+					id: 'c1',
+					status: 'completed',
+					contactId: 'contact-1',
+				}),
+			);
+			expectNoSensitiveCommitmentFields(result?.data as Record<string, unknown>);
 		});
 
 		it('updates status to dismissed', async () => {
@@ -165,6 +252,26 @@ describe('commitment actions', () => {
 				expect.any(String),
 				'dismissed',
 			);
+		});
+	});
+
+	describe('snoozeCommitmentAction', () => {
+		it('returns a safe mutation DTO', async () => {
+			const { snoozeCommitmentAction } = await import('@/app/actions/commitments');
+
+			const result = await snoozeCommitmentAction({
+				commitmentId: '550e8400-e29b-41d4-a716-446655440001',
+				snoozedUntil: '2099-05-03T12:00:00.000Z',
+			});
+
+			expect(result?.data).toEqual(
+				expect.objectContaining({
+					id: 'c1',
+					status: 'active',
+					contactId: 'contact-1',
+				}),
+			);
+			expectNoSensitiveCommitmentFields(result?.data as Record<string, unknown>);
 		});
 	});
 

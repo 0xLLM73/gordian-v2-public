@@ -7,10 +7,12 @@ import {
 	unwrapWrk,
 } from '@repo/crypto';
 import { getCommitmentsByContact, getDealsByContact } from '@repo/db';
+import { redactSensitive } from '@repo/shared';
 import { inferWithCache, streamInfer } from './cached-inference';
 import { CHAT_SYSTEM_KERNEL } from './chat';
 import type { ChatMessage } from './chat';
 import { CHAT_TOOLS, TOOL_EXECUTORS } from './chat-tools';
+import { runLocalChat, shouldUseLocalChat } from './local-chat';
 import { MODEL_IDS, routeQuery } from './query-router';
 import {
 	checkSemanticCache,
@@ -83,7 +85,7 @@ async function prefetchContactContext(
 			parts.push(`Contact's Commitments:\n${JSON.stringify(commitments.slice(0, 10), null, 2)}`);
 		}
 	} catch (err) {
-		console.error('[chat-stream] Failed to prefetch contact context:', (err as Error).message);
+		console.error('[chat-stream] Failed to prefetch contact context:', redactSensitive(err));
 	}
 
 	return parts.join('\n\n');
@@ -167,10 +169,6 @@ export async function chatStream(
 		const lastUserMsg = [...trimmed].reverse().find((m) => m.role === 'user');
 		const lastUserText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
 
-		// P4: Smart model routing — route based on last user message
-		const modelTier = routeQuery(lastUserText);
-		const routedModel = MODEL_IDS[modelTier];
-
 		if (lastUserText) {
 			try {
 				const wrk = await unwrapWrk(envelope);
@@ -189,10 +187,51 @@ export async function chatStream(
 			} catch (err) {
 				console.error(
 					'[chat-stream] Semantic cache check failed, proceeding without cache:',
-					(err as Error).message,
+					redactSensitive(err),
 				);
 			}
 		}
+
+		if (shouldUseLocalChat()) {
+			const localResult = await runLocalChat({
+				workspaceId,
+				envelope,
+				messages: trimmed,
+				systemPrompt: effectivePrompt,
+				domainKnowledge,
+				maxIterations: MAX_ITERATIONS,
+				onToolStart: callbacks.onToolStart,
+				onToolEnd: callbacks.onToolEnd,
+				onProposal: callbacks.onProposal,
+				onWriteToolUse: async (toolName) => {
+					if (WRITE_TOOLS.has(toolName)) {
+						await invalidateCacheForTool(workspaceId, toolName);
+					}
+				},
+				limitDraftMessages: true,
+			});
+
+			await callbacks.onTextDelta(localResult.response);
+			await callbacks.onDone(localResult.toolsUsed);
+
+			if (maskedQuery && queryEmbedding.length > 0) {
+				storeSemanticCache(
+					workspaceId,
+					maskedQuery,
+					queryEmbedding,
+					localResult.response,
+					localResult.toolsUsed,
+					envelope,
+				).catch((err) => {
+					console.error('[chat-stream] Failed to store semantic cache:', redactSensitive(err));
+				});
+			}
+			return;
+		}
+
+		// P4: Smart model routing — route based on last user message
+		const modelTier = routeQuery(lastUserText);
+		const routedModel = MODEL_IDS[modelTier];
 
 		for (let i = 0; i < MAX_ITERATIONS; i++) {
 			const response = await inferWithCache(
@@ -237,7 +276,7 @@ export async function chatStream(
 						toolsUsed,
 						envelope,
 					).catch((err) => {
-						console.error('[chat-stream] Failed to store semantic cache:', (err as Error).message);
+						console.error('[chat-stream] Failed to store semantic cache:', redactSensitive(err));
 					});
 				}
 				return;
@@ -313,7 +352,7 @@ export async function chatStream(
 								content: result,
 							});
 						} catch (err) {
-							console.error(`[chat-stream] Tool ${block.name} error:`, (err as Error).message);
+							console.error(`[chat-stream] Tool ${block.name} error:`, redactSensitive(err));
 							toolResults.push({
 								type: 'tool_result',
 								tool_use_id: block.id,
@@ -345,6 +384,6 @@ export async function chatStream(
 		);
 		await callbacks.onDone(toolsUsed);
 	} catch (err) {
-		await callbacks.onError((err as Error).message);
+		await callbacks.onError(redactSensitive(err));
 	}
 }

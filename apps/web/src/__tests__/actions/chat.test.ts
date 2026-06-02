@@ -77,6 +77,7 @@ describe('chat actions', () => {
 			);
 
 			const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+			expect(body.userId).toBe('user-1');
 			expect(body.workspaceId).toBe(WORKSPACE_ID);
 			expect(body.messages).toEqual([{ role: 'user', content: 'Who is my top contact?' }]);
 			expect(body.envelope).toBeDefined();
@@ -93,6 +94,22 @@ describe('chat actions', () => {
 			});
 
 			expect(result?.serverError).toBeDefined();
+		});
+
+		it('preserves AI consent errors from the worker', async () => {
+			const { sendChatMessageAction } = await import('@/app/actions/chat');
+
+			mockFetch.mockResolvedValue({
+				ok: false,
+				status: 403,
+				json: () => Promise.resolve({ error: 'AI analysis consent is required.' }),
+			});
+
+			const result = await sendChatMessageAction({
+				messages: [{ role: 'user', content: 'Hello' }],
+			});
+
+			expect(result?.serverError).toBe('AI analysis consent is required.');
 		});
 
 		it('validates messages schema — rejects empty array', async () => {

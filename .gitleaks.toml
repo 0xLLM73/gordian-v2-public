@@ -1,0 +1,7 @@
+[allowlist]
+description = "Public Gordian placeholder identifiers that are not credentials"
+regexes = [
+	'''gordian-v2''',
+	'''gordian-v2-telegram''',
+	'''gordian-v2-workspace''',
+]

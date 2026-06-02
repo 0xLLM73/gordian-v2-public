@@ -17,6 +17,8 @@ out/
 .claude/
 .playwright-mcp/
 .mcp.json
+.local/
+.local-security-audit/
 
 # Pentagon agent files
 PURPOSE.md
@@ -44,7 +46,9 @@ docs/DECISION_PROVENANCE_GRAPH.md
 docs/KNOWLEDGE_SYSTEM_AUDIT.md
 docs/ONBOARDING_SYSTEM_AUDIT.md
 docs/arch_epiphany.md
+docs/follow-up-plans-flow-audit.md
 docs/implementation/
+docs/local-open-source-transition-plan.md
 docs/magic_moment.md
 docs/progressive_calibration.md
 MORNING_BRIEF.md

@@ -1,14 +1,32 @@
 import { withKeys } from '@repo/crypto';
 import type { SealedEnvelope } from '@repo/crypto';
-import { and, eq, ne, sql } from 'drizzle-orm';
+import { and, eq, or, sql } from 'drizzle-orm';
 import { db } from '../client';
 import { introductions } from '../schema/introductions';
 
+type IntroStatus = 'triage' | 'active' | 'archive';
+type IntroResolution = 'completed' | 'dismissed';
+type IntroContext = 'deal' | 'hiring' | 'knowledge' | 'social' | 'other';
+
+const VALID_CONTEXTS = new Set<IntroContext>(['deal', 'hiring', 'knowledge', 'social', 'other']);
+const VALID_RESOLUTIONS = new Set<IntroResolution>(['completed', 'dismissed']);
+
 // Valid status transitions map
-const VALID_TRANSITIONS: Record<string, string[]> = {
+const VALID_TRANSITIONS: Record<IntroStatus, IntroStatus[]> = {
 	triage: ['active', 'archive'],
 	active: ['archive'],
+	archive: [],
 };
+
+function normalizeContext(context: string | undefined): IntroContext {
+	return context && VALID_CONTEXTS.has(context as IntroContext)
+		? (context as IntroContext)
+		: 'other';
+}
+
+function hasDistinctContacts(...contactIds: string[]): boolean {
+	return new Set(contactIds).size === contactIds.length;
+}
 
 export async function createIntroduction(
 	workspaceId: string,
@@ -28,9 +46,21 @@ export async function createIntroduction(
 ) {
 	return withKeys(envelope, async () => {
 		// Reject low confidence
-		if (input.confidence < 0.3) return null;
+		if (!Number.isFinite(input.confidence) || input.confidence < 0.3 || input.confidence > 1) {
+			return null;
+		}
 
-		// Dedup: same introducer + same parties within 7 days
+		if (
+			!hasDistinctContacts(
+				input.introducerContactId,
+				input.introducedContactId1,
+				input.introducedContactId2,
+			)
+		) {
+			return null;
+		}
+
+		// Dedup: same introducer + same unordered introduced parties within 7 days
 		const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 		const existing = await db
 			.select({ id: introductions.id })
@@ -39,8 +69,16 @@ export async function createIntroduction(
 				and(
 					eq(introductions.workspaceId, workspaceId),
 					eq(introductions.introducerContactId, input.introducerContactId),
-					eq(introductions.introducedContactId1, input.introducedContactId1),
-					eq(introductions.introducedContactId2, input.introducedContactId2),
+					or(
+						and(
+							eq(introductions.introducedContactId1, input.introducedContactId1),
+							eq(introductions.introducedContactId2, input.introducedContactId2),
+						),
+						and(
+							eq(introductions.introducedContactId1, input.introducedContactId2),
+							eq(introductions.introducedContactId2, input.introducedContactId1),
+						),
+					),
 					sql`${introductions.detectedAt} > ${sevenDaysAgo.toISOString()}`,
 				),
 			)
@@ -57,7 +95,7 @@ export async function createIntroduction(
 				introducerContactId: input.introducerContactId,
 				introducedContactId1: input.introducedContactId1,
 				introducedContactId2: input.introducedContactId2,
-				context: (input.context as 'deal' | 'hiring' | 'knowledge' | 'social' | 'other') ?? 'other',
+				context: normalizeContext(input.context),
 				confidence: input.confidence,
 				note: input.note,
 				reasoning: input.reasoning,
@@ -76,6 +114,7 @@ export async function updateIntroductionStatus(
 	workspaceId: string,
 	introductionId: string,
 	newStatus: string,
+	options?: { resolution?: IntroResolution },
 ) {
 	const current = await db
 		.select()
@@ -85,17 +124,30 @@ export async function updateIntroductionStatus(
 
 	if (!current[0]) return null;
 
-	const allowed = VALID_TRANSITIONS[current[0].status];
-	if (!allowed || !allowed.includes(newStatus)) return null;
+	const currentStatus = current[0].status as IntroStatus;
+	if (!VALID_RESOLUTIONS.has(options?.resolution as IntroResolution) && options?.resolution) {
+		return null;
+	}
+
+	const allowed = VALID_TRANSITIONS[currentStatus];
+	if (!allowed || !allowed.includes(newStatus as IntroStatus)) return null;
+
+	if (newStatus !== 'archive' && options?.resolution) return null;
 
 	const history = (current[0].statusHistory as Array<Record<string, unknown>>) || [];
-	history.push({ status: newStatus, timestamp: new Date().toISOString() });
+	const resolution = newStatus === 'archive' ? (options?.resolution ?? null) : null;
+	history.push({
+		status: newStatus,
+		...(resolution ? { resolution } : {}),
+		timestamp: new Date().toISOString(),
+	});
 
 	// SEC-ENC-504: Only return non-encrypted fields — note is encrypted
 	const result = await db
 		.update(introductions)
 		.set({
 			status: newStatus as (typeof introductions.status.enumValues)[number],
+			resolution,
 			statusHistory: history,
 			updatedAt: sql`now()`,
 		})
@@ -103,6 +155,7 @@ export async function updateIntroductionStatus(
 		.returning({
 			id: introductions.id,
 			status: introductions.status,
+			resolution: introductions.resolution,
 			statusHistory: introductions.statusHistory,
 			updatedAt: introductions.updatedAt,
 		});
@@ -212,7 +265,7 @@ export async function getIntroducerLeaderboard(workspaceId: string, limit = 10) 
 			count: sql<number>`count(*)::int`,
 		})
 		.from(introductions)
-		.where(and(eq(introductions.workspaceId, workspaceId), ne(introductions.status, 'archive')))
+		.where(and(eq(introductions.workspaceId, workspaceId), eq(introductions.status, 'active')))
 		.groupBy(introductions.introducerContactId)
 		.orderBy(sql`count(*) desc`)
 		.limit(limit);

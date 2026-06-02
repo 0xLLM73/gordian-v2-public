@@ -13,8 +13,8 @@ export const createGoalAction = workspaceAction
 	.schema(
 		z.object({
 			type: z.enum(['relationship', 'business', 'habit', 'network', 'strategic']),
-			title: z.string().min(1).max(200),
-			description: z.string().max(1000).optional(),
+			title: z.string().trim().min(1).max(200),
+			description: z.string().trim().max(1000).optional(),
 			targetCount: z.number().int().positive(),
 			contactId: z.string().uuid().optional(),
 			targetDate: z.string().datetime().optional(),
@@ -26,7 +26,7 @@ export const createGoalAction = workspaceAction
 			{
 				type: parsedInput.type,
 				title: parsedInput.title,
-				description: parsedInput.description,
+				description: parsedInput.description || undefined,
 				targetCount: parsedInput.targetCount,
 				contactId: parsedInput.contactId,
 				targetDate: parsedInput.targetDate ? new Date(parsedInput.targetDate) : undefined,
@@ -83,8 +83,8 @@ export const updateGoalAction = workspaceAction
 	.schema(
 		z.object({
 			goalId: z.string().uuid(),
-			title: z.string().min(1).max(200).optional(),
-			description: z.string().max(1000).nullable().optional(),
+			title: z.string().trim().min(1).max(200).optional(),
+			description: z.string().trim().max(1000).nullable().optional(),
 			type: z.enum(['relationship', 'business', 'habit', 'network', 'strategic']).optional(),
 			targetCount: z.number().int().positive().optional(),
 			targetDate: z.string().datetime().nullable().optional(),
@@ -97,7 +97,10 @@ export const updateGoalAction = workspaceAction
 			parsedInput.goalId,
 			{
 				title: parsedInput.title,
-				description: parsedInput.description,
+				description:
+					parsedInput.description || parsedInput.description === null
+						? parsedInput.description
+						: undefined,
 				type: parsedInput.type,
 				targetCount: parsedInput.targetCount,
 				targetDate:

@@ -25,6 +25,7 @@ const mockCreateGoalProposal = vi.hoisted(() => vi.fn());
 const mockCreateCommitment = vi.hoisted(() => vi.fn());
 const mockCreateMemory = vi.hoisted(() => vi.fn());
 const mockUpsertSummary = vi.hoisted(() => vi.fn());
+const mockHasUserAiAnalysisConsent = vi.hoisted(() => vi.fn());
 const mockTrackAnalyticsEvent = vi.hoisted(() => vi.fn());
 
 vi.mock('@repo/crypto', () => ({
@@ -38,6 +39,7 @@ vi.mock('@repo/db', () => ({
 	createCommitment: mockCreateCommitment,
 	createMemory: mockCreateMemory,
 	upsertSummary: mockUpsertSummary,
+	hasUserAiAnalysisConsent: mockHasUserAiAnalysisConsent,
 	isDuplicateGoal: mockIsDuplicateGoal,
 	createGoalProposal: mockCreateGoalProposal,
 }));
@@ -78,10 +80,12 @@ vi.mock('../../ai/feedback-signals', () => ({
 type MockProcessor = (job: unknown) => Promise<unknown> | unknown;
 const workerProcessors: Record<string, MockProcessor> = {};
 vi.mock('bullmq', () => ({
-	FlowProducer: vi.fn(function MockFlowProducer() {
+	// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
+	FlowProducer: vi.fn().mockImplementation(function () {
 		return { add: vi.fn() };
 	}),
-	Worker: vi.fn(function MockWorker(name: string, processor: MockProcessor) {
+	// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
+	Worker: vi.fn().mockImplementation(function (name: string, processor: MockProcessor) {
 		workerProcessors[name] = processor;
 		return { on: vi.fn() };
 	}),
@@ -136,6 +140,7 @@ describe('GI4 — Goal Extraction Worker', () => {
 		mockMaskEntities.mockReturnValue({ maskedText: 'masked-title', entityMap: {} });
 		mockIsDuplicateGoal.mockResolvedValue(false);
 		mockCreateGoalProposal.mockResolvedValue({ id: 'goal-001' });
+		mockHasUserAiAnalysisConsent.mockResolvedValue(true);
 
 		// Import to trigger Worker registration
 		await import('../ai-flow');
@@ -181,10 +186,11 @@ describe('GI4 — Goal Extraction Worker', () => {
 		await goalExtractionProcessor(job);
 
 		expect(mockExtractGoals).toHaveBeenCalledTimes(1);
-		const [messages] = mockExtractGoals.mock.calls[0];
+		const [messages, , workspaceSalt] = mockExtractGoals.mock.calls[0];
 		expect(messages).toHaveLength(2);
 		expect(messages[0].content).toBe('decrypted:encrypted-msg-1');
 		expect(messages[1].content).toBe('decrypted:encrypted-msg-2');
+		expect(workspaceSalt).toBe(FAKE_BIK);
 	});
 
 	it('returns stored=0 when no goals extracted', async () => {

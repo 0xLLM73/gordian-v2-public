@@ -103,6 +103,16 @@ export function extractSqlText(sqlObj: unknown): string | null {
 // ── Guard logic ─────────────────────────────────────────────────────────────
 
 const SAFE_PATTERNS = [/^\s*set\s+local\b/i, /^\s*select\s+1\b/i, /^\s*show\b/i];
+const PRE_ENCRYPTED_TELEGRAM_SESSION_TAG = 'gordian:pre-encrypted-telegram-session:v1';
+
+function isTaggedPreEncryptedTelegramSessionWrite(sqlText: string, violations: string[]): boolean {
+	if (!sqlText.includes(PRE_ENCRYPTED_TELEGRAM_SESSION_TAG)) return false;
+	if (violations.length !== 1 || violations[0] !== 'access_token') return false;
+	if (!/\b(update|insert\s+into)\s+accounts\b/i.test(sqlText)) return false;
+	if (!/\bsession_kek_encrypted\b/i.test(sqlText)) return false;
+	if (!/\bprovider_id\b/i.test(sqlText) || !/\baccount_id\b/i.test(sqlText)) return false;
+	return true;
+}
 
 function isRealColumnRef(sqlText: string, colName: string): boolean {
 	const pattern = new RegExp(`\\b${colName}\\b`, 'gi');
@@ -138,6 +148,8 @@ export function guardExecute(sqlText: string): void {
 	if (violations.length === 0) return;
 
 	const isWrite = /\b(update\s|insert\s|delete\s)/i.test(trimmed);
+	if (isWrite && isTaggedPreEncryptedTelegramSessionWrite(trimmed, violations)) return;
+
 	const severity = isWrite ? 'CRITICAL' : 'WARNING';
 	const msg = `[execute-guard] ${severity}: db.execute() references encrypted column(s): ${violations.join(', ')}. Use Drizzle ORM with withKeys() instead.`;
 

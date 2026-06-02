@@ -1,11 +1,18 @@
+import { deleteSessionKek } from '@repo/crypto';
 import Redis from 'ioredis';
 import postgres from 'postgres';
 import { loadRootEnv } from '../../../scripts/lib/load-root-env.mjs';
+import {
+	LOCAL_REDIS_PURGE_PATTERNS,
+	assertLocalPurgeTargets,
+	isLegacyGrammySessionEntry,
+} from '../../../scripts/lib/local-runtime-safety.mjs';
 
 loadRootEnv();
 
 type CountRow = { count: string };
 type IdRow = { id: string };
+type TelegramSessionRow = { sessionKekEncrypted: Buffer | null; userId: string };
 type PurgeResult = {
 	changed: number | null;
 	matched: number;
@@ -30,6 +37,7 @@ function usage(): void {
 
 Purges runtime credentials without printing any secret values:
   - Telegram MTProto session ciphertext in accounts
+  - Telegram MTProto OS Keychain session keys, when configured
   - account access, refresh, and ID tokens
   - Better Auth sessions and verification values
   - calendar OAuth access and refresh tokens
@@ -55,6 +63,12 @@ if (!dryRun && !confirm) {
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
 	console.error('DATABASE_URL is required to purge database-backed secrets.');
+	process.exit(1);
+}
+try {
+	assertLocalPurgeTargets(process.env);
+} catch (error) {
+	console.error(error instanceof Error ? error.message : String(error));
 	process.exit(1);
 }
 
@@ -110,6 +124,35 @@ async function deleteRedisPattern(redis: Redis, pattern: string): Promise<PurgeR
 	};
 }
 
+async function deleteLegacyGrammySessionKeys(redis: Redis): Promise<PurgeResult> {
+	let cursor = '0';
+	let matched = 0;
+	let changed = 0;
+
+	do {
+		const [nextCursor, keys] = await redis.scan(cursor, 'COUNT', 500);
+		cursor = nextCursor;
+		const possibleLegacyKeys = keys.filter((key) => /^-?\d+$/.test(key));
+		if (possibleLegacyKeys.length === 0) continue;
+
+		const values = await redis.mget(...possibleLegacyKeys);
+		const sessionKeys = possibleLegacyKeys.filter((key, index) =>
+			isLegacyGrammySessionEntry(key, values[index]),
+		);
+		matched += sessionKeys.length;
+
+		if (confirm && sessionKeys.length > 0) {
+			changed += await redis.del(...sessionKeys);
+		}
+	} while (cursor !== '0');
+
+	return {
+		changed: confirm ? changed : null,
+		matched,
+		name: 'Legacy grammY chat-id session keys',
+	};
+}
+
 async function purgeRedisKeys(): Promise<PurgeResult[]> {
 	if (!redisUrl) {
 		return [
@@ -128,17 +171,11 @@ async function purgeRedisKeys(): Promise<PurgeResult[]> {
 	});
 
 	try {
-		const patterns = [
-			'auth:phone:*',
-			'tg:send:*',
-			'telegram:session:lock:*',
-			'telegram:session:blocked:*',
-		];
-
 		const results: PurgeResult[] = [];
-		for (const pattern of patterns) {
+		for (const pattern of LOCAL_REDIS_PURGE_PATTERNS) {
 			results.push(await deleteRedisPattern(redis, pattern));
 		}
+		results.push(await deleteLegacyGrammySessionKeys(redis));
 		return results;
 	} finally {
 		await redis.quit();
@@ -170,6 +207,17 @@ const databaseSteps: DatabaseStep[] = [
 				`,
 			),
 		purge: async (client) => {
+			const sessions = await client<TelegramSessionRow[]>`
+				SELECT user_id AS "userId",
+					session_kek_encrypted AS "sessionKekEncrypted"
+				FROM accounts
+				WHERE provider_id = 'telegram'
+					AND session_kek_encrypted IS NOT NULL
+			`;
+			for (const session of sessions) {
+				await deleteSessionKek(session.userId, session.sessionKekEncrypted);
+			}
+
 			const rows = await client<IdRow[]>`
 				UPDATE accounts
 				SET access_token = NULL,

@@ -1,5 +1,19 @@
 import { createAuthClient } from 'better-auth/react';
 
-export const authClient = createAuthClient({
-	baseURL: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
-});
+type AuthResult = {
+	error?: {
+		message?: string;
+	} | null;
+};
+
+type GordianAuthClient = {
+	signIn: {
+		email(input: { email: string; password: string }): Promise<AuthResult>;
+	};
+	signOut(): Promise<unknown>;
+	signUp: {
+		email(input: { email: string; name?: string; password: string }): Promise<AuthResult>;
+	};
+};
+
+export const authClient = createAuthClient() as GordianAuthClient;

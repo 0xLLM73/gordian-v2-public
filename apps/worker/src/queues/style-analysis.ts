@@ -1,6 +1,7 @@
 import { decrypt, deriveKeys, maskEntities, unwrapWrk } from '@repo/crypto';
 import type { SealedEnvelope } from '@repo/crypto';
-import { isFeatureEnabled, upsertContactStyleOverride } from '@repo/db';
+import { hasUserAiAnalysisConsent, isFeatureEnabled, upsertContactStyleOverride } from '@repo/db';
+import { redactSensitive } from '@repo/shared';
 import { Worker } from 'bullmq';
 import { prefilterEntities } from '../ai/prefilter';
 import { extractStyleFeatures } from '../ai/style-analysis';
@@ -34,7 +35,14 @@ export const styleAnalysisWorker = new Worker(
 	'style-analysis',
 	withRLS(async (job) => {
 		const data = job.data as JobData;
-		const { contactId, workspaceId } = data;
+		const { contactId, workspaceId, userId } = data;
+
+		if (!(await hasUserAiAnalysisConsent(userId, workspaceId))) {
+			console.log(
+				`[style-analysis] AI consent no longer persisted for workspace=${workspaceId.slice(0, 8)} user=${userId.slice(0, 8)}, skipping`,
+			);
+			return;
+		}
 
 		// Feature flag guard
 		const enabled = await isFeatureEnabled('voice_profile_collection', workspaceId);
@@ -105,7 +113,7 @@ export const styleAnalysisWorker = new Worker(
 			// Non-fatal — deterministic features are already stored
 			console.warn(
 				`[style-analysis] AI analysis failed for contact=${contactId.slice(0, 8)}:`,
-				err instanceof Error ? err.message : err,
+				redactSensitive(err),
 			);
 		}
 	}),
@@ -116,5 +124,5 @@ styleAnalysisWorker.on('completed', (job) => {
 	console.log(`[style-analysis] Job ${job.id} completed`);
 });
 styleAnalysisWorker.on('failed', (job, err) => {
-	console.error(`[style-analysis] Job ${job?.id} failed:`, err.message);
+	console.error(`[style-analysis] Job ${job?.id} failed:`, redactSensitive(err));
 });

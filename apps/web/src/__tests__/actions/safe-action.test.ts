@@ -41,10 +41,12 @@ vi.mock('@/lib/workspace', () => ({
 	getWorkspaceEnvelope: mockGetWorkspaceEnvelope,
 }));
 
-const mockListContacts = vi.fn(() => Promise.resolve([{ id: '1' }]));
+const mockGetAccessibleContacts = vi.fn(() => Promise.resolve([{ id: '1' }]));
 vi.mock('@repo/db', () => ({
 	withWorkspaceRLS: vi.fn((_wsId: string, fn: (tx: unknown) => unknown) => fn({})),
-	listContacts: mockListContacts,
+	canAccessContact: vi.fn(() => Promise.resolve(true)),
+	getAccessibleContact: vi.fn(),
+	getAccessibleContacts: mockGetAccessibleContacts,
 }));
 
 describe('workspaceAction IDOR prevention', () => {
@@ -61,15 +63,17 @@ describe('workspaceAction IDOR prevention', () => {
 
 		// The DAL was called with the REAL workspace ID from session lookup
 		expect(mockGetUserWorkspaceId).toHaveBeenCalledWith('user-1');
-		expect(mockListContacts).toHaveBeenCalledWith(
+		expect(mockGetAccessibleContacts).toHaveBeenCalledWith(
 			REAL_WORKSPACE_ID,
+			'user-1',
 			expect.any(Object),
 			expect.any(Object),
 		);
 
 		// Verify it was NOT called with the attacker's workspace
-		expect(mockListContacts).not.toHaveBeenCalledWith(
+		expect(mockGetAccessibleContacts).not.toHaveBeenCalledWith(
 			ATTACKER_WORKSPACE_ID,
+			expect.anything(),
 			expect.anything(),
 			expect.anything(),
 		);
@@ -82,7 +86,7 @@ describe('workspaceAction IDOR prevention', () => {
 		const result = await listContactsAction({ limit: 10 });
 
 		expect(result?.serverError).toBe('No workspace found');
-		expect(mockListContacts).not.toHaveBeenCalled();
+		expect(mockGetAccessibleContacts).not.toHaveBeenCalled();
 	});
 
 	it('passes envelope from middleware to action via ctx', async () => {

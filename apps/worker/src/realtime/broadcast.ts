@@ -11,13 +11,31 @@ import { type SupabaseClient, createClient } from '@supabase/supabase-js';
  */
 
 let supabase: SupabaseClient | null = null;
+let missingConfigWarningLogged = false;
 
-function getSupabase(): SupabaseClient {
+function isHostedRuntime(): boolean {
+	return (
+		process.env.NODE_ENV === 'production' || !!process.env.FLY_APP_NAME || !!process.env.COOLIFY_URL
+	);
+}
+
+function getSupabase(): SupabaseClient | null {
 	if (!supabase) {
 		const supabaseUrl = process.env.SUPABASE_URL;
 		const serviceKey = process.env.SUPABASE_SERVICE_KEY;
 		if (!supabaseUrl || !serviceKey) {
-			throw new Error('SUPABASE_URL and SUPABASE_SERVICE_KEY are required for Realtime broadcast');
+			if (isHostedRuntime()) {
+				throw new Error(
+					'SUPABASE_URL and SUPABASE_SERVICE_KEY are required for Realtime broadcast',
+				);
+			}
+			if (!missingConfigWarningLogged) {
+				console.warn(
+					'[realtime] Supabase Realtime is not configured; broadcasts disabled locally.',
+				);
+				missingConfigWarningLogged = true;
+			}
+			return null;
 		}
 		supabase = createClient(supabaseUrl, serviceKey);
 	}
@@ -34,6 +52,7 @@ export async function broadcastUpdate(
 	payload: Record<string, unknown>,
 ): Promise<void> {
 	const client = getSupabase();
+	if (!client) return;
 	const channel = client.channel(`workspace:${workspaceId}`);
 
 	await channel.send({

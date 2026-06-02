@@ -5,25 +5,31 @@ import { useOnboarding } from '@/components/onboarding/onboarding-provider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
+import { TELEGRAM_CONSENT_VERSION } from '@repo/shared';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 const CONSENT_ITEMS = [
 	{
-		title: 'Message Access',
+		title: 'Read-only Telegram access',
 		description:
-			'Gordian will read your Telegram messages to extract contacts, commitments, and relationship insights.',
+			'Gordian connects as an unofficial Telegram client. This build can read only the import scope you choose next and cannot send messages.',
 	},
 	{
-		title: 'AI Processing',
+		title: 'Session custody',
 		description:
-			'Your messages are processed by AI models. All data is encrypted at rest with AES-256-GCM and entity-masked before embedding.',
+			'Telegram creates a reusable local session credential. Gordian encrypts it at rest, and you can disconnect locally from Settings.',
 	},
 	{
-		title: 'Data Storage',
+		title: 'Revocation and deletion',
 		description:
-			'Contact details and message summaries are stored in your encrypted workspace. You can export or delete your data at any time.',
+			'After disconnecting, open Telegram Settings > Devices and terminate the Gordian session to revoke it from Telegram.',
+	},
+	{
+		title: 'AI processing',
+		description:
+			'AI analysis is off by default for imports. If you enable it, eligible imported messages may be summarized, embedded, or classified by configured AI providers.',
 	},
 ];
 const TELEGRAM_LINKING_ENABLED = process.env.NEXT_PUBLIC_TELEGRAM_LINKING_ENABLED === 'true';
@@ -78,7 +84,7 @@ export default function ConnectPage() {
 			const res = await fetch('/api/auth/telegram/send-code', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ phone: np }),
+				body: JSON.stringify({ phone: np, consentVersion: TELEGRAM_CONSENT_VERSION }),
 			});
 
 			const data = (await res.json()) as { success?: boolean; error?: string; message?: string };
@@ -100,8 +106,25 @@ export default function ConnectPage() {
 			<div className="mb-6">
 				<h1 className="text-2xl font-bold text-foreground">Let's map your network</h1>
 				<p className="mt-2 text-sm text-muted-foreground">
-					Connect your Telegram account and Gordian will organize your contacts, track commitments,
-					and surface relationship insights — all encrypted.
+					Connect Telegram in read-only mode, then choose exactly what Gordian may import.
+				</p>
+			</div>
+
+			<div className="mb-5 rounded-lg border border-border bg-muted/40 p-4">
+				<p className="text-sm font-medium text-foreground">Before connecting</p>
+				<p className="mt-1 text-sm text-muted-foreground">
+					Create a dedicated Telegram API app at{' '}
+					<a
+						href="https://my.telegram.org/apps"
+						target="_blank"
+						rel="noreferrer"
+						className="font-medium text-primary hover:text-primary/80"
+					>
+						my.telegram.org/apps
+					</a>
+					, then run <code className="rounded bg-background px-1 py-0.5">pnpm telegram:setup</code>{' '}
+					to save your <code className="rounded bg-background px-1 py-0.5">api_id</code> and{' '}
+					<code className="rounded bg-background px-1 py-0.5">api_hash</code> locally.
 				</p>
 			</div>
 
@@ -174,7 +197,8 @@ export default function ConnectPage() {
 						className="mt-0.5 h-4 w-4 rounded border-border text-primary accent-primary"
 					/>
 					<span className="text-xs text-muted-foreground">
-						I understand and agree to how Gordian accesses and processes my data.
+						I understand Gordian will create a local Telegram session, and I know I must revoke it
+						from Telegram Settings &gt; Devices if I no longer trust this device.
 					</span>
 				</label>
 			</div>

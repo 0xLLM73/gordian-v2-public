@@ -15,14 +15,9 @@ import { dirname, join } from 'node:path';
 
 const root = process.cwd();
 const failures = [];
-const warnings = [];
 
 function fail(message) {
 	failures.push(message);
-}
-
-function warn(message) {
-	warnings.push(message);
 }
 
 function run(command, args, options = {}) {
@@ -82,6 +77,11 @@ function assertEnvExample() {
 		'TELEGRAM_MTPROTO_ENABLED="false"',
 		'TELEGRAM_SEND_ENABLED="false"',
 		'NEXT_PUBLIC_TELEGRAM_LINKING_ENABLED="false"',
+		'TELEGRAM_SESSION_KEY_PROVIDER="dev-insecure"',
+		'TELEGRAM_MTPROTO_PER_INTERACTION_UNLOCK="false"',
+		'TELEGRAM_MTPROTO_SESSION_IDLE_MINUTES="30"',
+		'WORKSPACE_KEY_PROVIDER="dev-insecure"',
+		'WORKSPACE_KEY_CACHE_TTL_MINUTES="60"',
 		'BOT_TOKEN=""',
 		'TELEGRAM_API_ID=""',
 		'TELEGRAM_API_HASH=""',
@@ -180,13 +180,7 @@ function assertOssGovernance() {
 		fail('package.json license must be MIT');
 	}
 
-	if (
-		existsSync('.github/dependabot.yml') &&
-		(!readFileSync('.github/dependabot.yml', 'utf8').includes('package-ecosystem: npm') ||
-			!readFileSync('.github/dependabot.yml', 'utf8').includes('package-ecosystem: github-actions'))
-	) {
-		fail('.github/dependabot.yml must cover npm and GitHub Actions dependencies');
-	}
+	if (existsSync('.github/dependabot.yml')) assertDependabotCoverage();
 
 	if (
 		existsSync('.github/ISSUE_TEMPLATE/config.yml') &&
@@ -196,7 +190,53 @@ function assertOssGovernance() {
 	}
 }
 
+function dependabotUpdates(config) {
+	const updates = [];
+	let current = null;
+	for (const line of config.split(/\r?\n/)) {
+		const ecosystem = line.match(/^\s*-\s*package-ecosystem:\s*"?([^"\s]+)"?\s*$/);
+		if (ecosystem) {
+			current = { ecosystem: ecosystem[1], directory: null };
+			updates.push(current);
+			continue;
+		}
+
+		const directory = line.match(/^\s*directory:\s*"?([^"\s]+)"?\s*$/);
+		if (directory && current) current.directory = directory[1];
+	}
+
+	return updates;
+}
+
+function assertDependabotCoverage() {
+	const updates = dependabotUpdates(readFileSync('.github/dependabot.yml', 'utf8'));
+	for (const required of [
+		{ ecosystem: 'npm', directory: '/' },
+		{ ecosystem: 'github-actions', directory: '/' },
+		{ ecosystem: 'docker', directory: '/apps/web' },
+		{ ecosystem: 'docker', directory: '/apps/worker' },
+		{ ecosystem: 'docker-compose', directory: '/' },
+	]) {
+		if (
+			!updates.some(
+				(update) =>
+					update.ecosystem === required.ecosystem && update.directory === required.directory,
+			)
+		) {
+			fail(
+				`.github/dependabot.yml must cover ${required.ecosystem} dependencies in ${required.directory}`,
+			);
+		}
+	}
+}
+
 function scanCurrentTree() {
+	const forbiddenSensitiveFiles = [
+		/\.p12$/i,
+		/\.mobileprovision$/i,
+		/AuthKey_[A-Z0-9]+\.p8$/i,
+		/(^|\/)(api-key|notarytool|apple-signing|codesign).*\.(json|plist|txt)$/i,
+	];
 	const stalePatterns = [
 		/gordian\.lol/i,
 		/gordian-worker\.internal/i,
@@ -218,9 +258,19 @@ function scanCurrentTree() {
 		/ANTHROPIC_API_KEY="sk-ant-[A-Za-z0-9_-]{20,}"/,
 		/AWS_SECRET_ACCESS_KEY="[^"<][^"]+"/,
 		/SUPABASE_SERVICE_KEY="[^"<][^"]+"/,
+		/APPLE_ID="[^"<][^"]+"/,
+		/APPLE_TEAM_ID="[^"<][^"]+"/,
+		/APPLE_APP_SPECIFIC_PASSWORD="[^"<][^"]+"/,
+		/-----BEGIN (RSA |EC |OPENSSH |)?PRIVATE KEY-----/,
 	];
 
 	for (const path of trackedAndPendingFiles()) {
+		for (const pattern of forbiddenSensitiveFiles) {
+			if (pattern.test(path)) {
+				fail(`${path} matched forbidden sensitive-file pattern ${pattern}`);
+			}
+		}
+
 		let text;
 		try {
 			text = readFileSync(path, 'utf8');
@@ -241,7 +291,17 @@ function scanCurrentTree() {
 function runGitleaks() {
 	const hasGitleaks = run('gitleaks', ['version']);
 	if (hasGitleaks.status !== 0) {
-		warn('gitleaks is not installed; skipping full-history and working-tree secret scanner');
+		fail('gitleaks is required for full-history and working-tree secret scanning');
+		return;
+	}
+
+	const shallow = run('git', ['rev-parse', '--is-shallow-repository']);
+	if (shallow.status !== 0) {
+		fail(`Could not determine whether git history is shallow: ${shallow.stderr.trim()}`);
+		return;
+	}
+	if (shallow.stdout.trim() === 'true') {
+		fail('gitleaks full-history scanning requires a full-depth git checkout');
 		return;
 	}
 
@@ -269,6 +329,13 @@ function runGitleaks() {
 	}
 }
 
+function runLocalRuntimeSafetySmoke() {
+	const result = run('node', ['scripts/local-runtime-safety-smoke.mjs']);
+	if (result.status !== 0) {
+		fail(`local runtime safety smoke failed:\n${result.stdout}${result.stderr}`);
+	}
+}
+
 assertEnvExample();
 assertArchiveTombstoneOnly();
 assertNoGenericDeployScript();
@@ -276,9 +343,8 @@ assertExampleInfraNames();
 assertDocsExist();
 assertOssGovernance();
 scanCurrentTree();
+runLocalRuntimeSafetySmoke();
 runGitleaks();
-
-for (const message of warnings) console.warn(`WARN ${message}`);
 
 if (failures.length > 0) {
 	console.error('\nOpen-source audit failed:');

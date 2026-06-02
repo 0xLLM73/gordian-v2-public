@@ -7,11 +7,24 @@ import {
 } from '@repo/db';
 import { z } from 'zod';
 
+const introStatusSchema = z.enum(['triage', 'active', 'archive']);
+const introResolutionSchema = z.enum(['completed', 'dismissed']);
+const updateIntroStatusInputSchema = z
+	.object({
+		introductionId: z.string().uuid(),
+		status: introStatusSchema,
+		resolution: introResolutionSchema.optional(),
+	})
+	.refine((input) => input.status === 'archive' || !input.resolution, {
+		path: ['resolution'],
+		message: 'Resolution only applies when archiving.',
+	});
+
 export const listIntroductionsAction = workspaceAction
 	.schema(
 		z.object({
-			status: z.string().optional(),
-			limit: z.number().int().positive().optional(),
+			status: introStatusSchema.optional(),
+			limit: z.number().int().positive().max(100).optional(),
 		}),
 	)
 	.action(async ({ parsedInput, ctx }) => {
@@ -98,12 +111,14 @@ export const updateIntroductionAction = workspaceAction
 	});
 
 export const updateIntroStatusAction = workspaceAction
-	.schema(
-		z.object({
-			introductionId: z.string().uuid(),
-			status: z.enum(['triage', 'active', 'archive']),
-		}),
-	)
+	.schema(updateIntroStatusInputSchema)
 	.action(async ({ parsedInput, ctx }) => {
-		return dalUpdateStatus(ctx.workspaceId, parsedInput.introductionId, parsedInput.status);
+		const updated = await dalUpdateStatus(
+			ctx.workspaceId,
+			parsedInput.introductionId,
+			parsedInput.status,
+			parsedInput.resolution ? { resolution: parsedInput.resolution } : undefined,
+		);
+		if (!updated) throw new Error('Invalid input');
+		return updated;
 	});

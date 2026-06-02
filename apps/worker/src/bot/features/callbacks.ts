@@ -9,6 +9,7 @@ import type { BotContext } from '../context';
 export const callbacksComposer = new Composer<BotContext>();
 
 const KNOWN_PREFIXES = ['fulfill:', 'snooze:', 'dismiss:', 'brief_detail:'] as const;
+const DEFAULT_SNOOZE_MS = 24 * 60 * 60 * 1000;
 
 callbacksComposer.on('callback_query:data', async (ctx, next) => {
 	const data = ctx.callbackQuery.data;
@@ -52,8 +53,15 @@ callbacksComposer.on('callback_query:data', async (ctx, next) => {
 				await ctx.answerCallbackQuery({ text: 'Commitment not found or already updated.' });
 			}
 		} else if (action === 'snooze') {
-			await ctx.answerCallbackQuery({ text: 'Snoozed. Will remind you later.' });
-			await ctx.editMessageReplyMarkup({ reply_markup: undefined });
+			const { snoozeCommitment } = await import('@repo/db');
+			const snoozedUntil = new Date(Date.now() + DEFAULT_SNOOZE_MS);
+			const result = await snoozeCommitment(workspaceId, entityId, snoozedUntil);
+			if (result) {
+				await ctx.answerCallbackQuery({ text: 'Snoozed. Will remind you later.' });
+				await ctx.editMessageReplyMarkup({ reply_markup: undefined });
+			} else {
+				await ctx.answerCallbackQuery({ text: 'Commitment not found or already updated.' });
+			}
 		} else if (action === 'brief_detail') {
 			// Expand brief section — entityId is the section key (e.g., "commitments", "followups", "activity")
 			await ctx.answerCallbackQuery();

@@ -23,6 +23,8 @@ export const commitments = pgTable('commitments', {
 	dueDate: timestamp('due_date', { withTimezone: true }),
 	/** Exact substring that triggered extraction */
 	quote: encryptedText('quote'),
+	/** Message UUIDs that directly support the extracted commitment */
+	sourceMessageIds: uuid('source_message_ids').array(),
 	/** Broader conversation context the model saw at extraction time (for golden dataset training) */
 	extractionContext: encryptedText('extraction_context'),
 	/** halfvec for dedup cosine similarity */
