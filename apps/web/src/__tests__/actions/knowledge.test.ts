@@ -67,6 +67,7 @@ const mockGetKnowledgeNode = vi.fn();
 const mockListContactsByKnowledge = vi.fn();
 const mockListEvidenceForKnowledgeLink = vi.fn();
 const mockListEvidenceForKnowledgeNode = vi.fn();
+const mockListEvidenceForKnowledgeNodes = vi.fn();
 const mockListEvidenceForKnowledgeContact = vi.fn();
 const mockListContactsWithEvidenceForKnowledgeNode = vi.fn();
 const mockSearchKnowledgeNodesWithEvidence = vi.fn();
@@ -82,6 +83,7 @@ const mockGetCalibration = vi.fn();
 const mockCreateKnowledgeNode = vi.fn();
 const mockCreateKnowledgeEvidence = vi.fn();
 const mockUpdateKnowledgeNode = vi.fn();
+const mockGetKnowledgeNodeEvidenceStats = vi.fn();
 
 vi.mock('@repo/db', () => ({
 	withWorkspaceRLS: vi.fn((_wsId: string, fn: (tx: unknown) => unknown) => fn({})),
@@ -89,12 +91,14 @@ vi.mock('@repo/db', () => ({
 	createKnowledgeNode: mockCreateKnowledgeNode,
 	updateKnowledgeNode: mockUpdateKnowledgeNode,
 	getCalibration: mockGetCalibration,
+	getKnowledgeNodeEvidenceStats: mockGetKnowledgeNodeEvidenceStats,
 	listKnowledgeNodes: mockListKnowledgeNodes,
 	searchKnowledgeNodes: mockSearchKnowledgeNodes,
 	getKnowledgeNode: mockGetKnowledgeNode,
 	listContactsByKnowledge: mockListContactsByKnowledge,
 	listEvidenceForKnowledgeLink: mockListEvidenceForKnowledgeLink,
 	listEvidenceForKnowledgeNode: mockListEvidenceForKnowledgeNode,
+	listEvidenceForKnowledgeNodes: mockListEvidenceForKnowledgeNodes,
 	listEvidenceForKnowledgeContact: mockListEvidenceForKnowledgeContact,
 	listContactsWithEvidenceForKnowledgeNode: mockListContactsWithEvidenceForKnowledgeNode,
 	searchKnowledgeNodesWithEvidence: mockSearchKnowledgeNodesWithEvidence,
@@ -189,12 +193,29 @@ const projectedMockNode = {
 	reviewedAt: null,
 };
 
+const projectedMockNodeWithEmptyStats = {
+	...projectedMockNode,
+	contactCount: 0,
+	contactPreviews: [],
+	evidenceCount: 0,
+	distinctEvidenceMessages: 0,
+	distinctEvidenceContacts: 0,
+	aggregateEvidenceCount: 0,
+	directEvidenceRows: 0,
+	directEvidenceMessages: 0,
+	directEvidenceContacts: 0,
+	possibleEvidenceRows: 0,
+	weakEvidenceRows: 0,
+};
+
 describe('knowledge actions', () => {
 	beforeEach(() => {
 		vi.resetModules();
 		vi.clearAllMocks();
 		mockMaskEntities.mockImplementation((text: string) => ({ maskedText: text }));
 		mockGetCalibration.mockResolvedValue({ consentAiAnalysis: true });
+		mockGetKnowledgeNodeEvidenceStats.mockResolvedValue(new Map());
+		mockListEvidenceForKnowledgeNodes.mockResolvedValue([]);
 		vi.stubEnv('OPENAI_API_KEY', 'test-key');
 		vi.stubEnv('WORKER_INTERNAL_SECRET', 'test-secret');
 		vi.stubEnv('WORKER_URL', 'http://localhost:3001');
@@ -207,9 +228,7 @@ describe('knowledge actions', () => {
 			const { listKnowledgeNodesAction } = await import('@/app/actions/knowledge');
 			const result = await listKnowledgeNodesAction({ limit: 20, offset: 0 });
 
-			expect(result?.data).toEqual([
-				{ ...projectedMockNode, contactCount: 0, contactPreviews: [] },
-			]);
+			expect(result?.data).toEqual([projectedMockNodeWithEmptyStats]);
 			expect(JSON.stringify(result?.data)).not.toContain('workspaceId');
 			expect(JSON.stringify(result?.data)).not.toContain('embedding');
 			expect(mockListKnowledgeNodes).toHaveBeenCalledWith(
@@ -248,9 +267,7 @@ describe('knowledge actions', () => {
 				const { listKnowledgeNodesAction } = await import('@/app/actions/knowledge');
 				const result = await listKnowledgeNodesAction({ query: 'defi', limit: 20, offset: 0 });
 
-				expect(result?.data).toEqual([
-					{ ...projectedMockNode, contactCount: 0, contactPreviews: [] },
-				]);
+				expect(result?.data).toEqual([projectedMockNodeWithEmptyStats]);
 				expect(mockSearchKnowledgeNodesWithEvidence).toHaveBeenCalledWith(
 					WORKSPACE_ID,
 					'defi',
@@ -276,9 +293,7 @@ describe('knowledge actions', () => {
 			const { listKnowledgeNodesAction } = await import('@/app/actions/knowledge');
 			const result = await listKnowledgeNodesAction({ query: 'defi', limit: 20, offset: 0 });
 
-			expect(result?.data).toEqual([
-				{ ...projectedMockNode, contactCount: 0, contactPreviews: [] },
-			]);
+			expect(result?.data).toEqual([projectedMockNodeWithEmptyStats]);
 			expect(mockSearchKnowledgeNodesWithEvidence).toHaveBeenCalledWith(
 				WORKSPACE_ID,
 				'defi',
@@ -437,6 +452,11 @@ describe('knowledge actions', () => {
 							topConfidence: 0.93,
 							connectedContactCount: 2,
 							connectedContactsWithEvidence: 1,
+							directEvidenceRows: 0,
+							directEvidenceMessages: 0,
+							directEvidenceContacts: 0,
+							possibleEvidenceRows: 0,
+							weakEvidenceRows: 0,
 							contacts: [
 								{
 									id: CONTACT_ID_1,

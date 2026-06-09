@@ -10,6 +10,21 @@ release owner intentionally makes the mirror public. Treat
 `0xLLM73/gordian-v2-public` only after it has been synced as a sanitized release
 tree and all release gates have been rerun against that checkout.
 
+As of the 2026-06-08 PT readiness pass, the mirror remains private and PR #36
+contains a sanitized snapshot from source commit `fe97ac196451`. The mirror
+checkout passed `pnpm install --frozen-lockfile`, `pnpm audit:open-source`,
+`pnpm audit`, `pnpm audit --prod`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
+`pnpm demo:smoke`, and `pnpm security:local-runtime-smoke`. GitHub CI for PR
+#36 passed `validate`, `demo-smoke`, and `postgres-smoke`, and the PR is waiting
+on the required human review. Do not make the mirror public until follow-up
+notification tweaks, provider-side rotation/cleanup, and final sign-off are
+complete.
+
+The current mirror default branch still reports 4 moderate Hono advisories
+because it pins `hono 4.12.18`. The synced PR #36 branch pins `hono 4.12.23`,
+which is above the patched `4.12.21` floor, and passes both `pnpm audit` and
+`pnpm audit --prod`. Recheck GitHub Dependabot after PR #36 merges.
+
 ## What Is Not Live
 
 - The original Telegram bot has been deleted.
@@ -22,6 +37,37 @@ tree and all release gates have been rerun against that checkout.
 ## What Remains In The Repo
 
 The repository still contains the source code for the web app, worker, database schema, encryption helpers, AI queues, and Telegram integration. Private historical planning docs and runbooks are excluded from the release snapshot. Telegram integration code remains for reference and possible future demo use, but all Telegram features are disabled by default in the release configuration.
+
+## Public Feature Matrix
+
+This matrix describes a fresh public mirror checkout using the safe defaults from
+`.env.example` and `pnpm setup:local`. It is intentionally conservative: code may
+exist for a feature, but the runtime will not touch real Telegram or private
+message content until the operator explicitly enables the required gates.
+
+| Feature area | Public default | Automatic? | What must be turned on |
+| --- | --- | --- | --- |
+| Local demo login | Enabled only for generated local demo data | Manual sign-in | `pnpm setup:local`, `pnpm demo:setup`, local seeded credentials |
+| Real Telegram linking | Disabled | No | `TELEGRAM_MTPROTO_ENABLED=true`, `NEXT_PUBLIC_TELEGRAM_LINKING_ENABLED=true`, throwaway Telegram API credentials |
+| Telegram history import | Disabled | No | MTProto enabled, Telegram consent, selected linked account, import confirmation |
+| Telegram sends | Disabled | No | `TELEGRAM_SEND_ENABLED=true` after send confirmation, audit, and rate-limit review |
+| Periodic Telegram sync | Disabled | No | `TELEGRAM_PERIODIC_SYNC_ENABLED=true`; not recommended for personal accounts |
+| Post-import AI analysis | Disabled until local AI plus consent | Automatic after manual import only when enabled | Local AI setup, AI analysis consent, contact-linked newly imported messages |
+| Search | Exact/local search; semantic off | No | `AI_SEARCH_EMBEDDINGS_ENABLED=true` plus local or approved embedding runtime |
+| Knowledge graph | Existing demo data only | No | `KNOWLEDGE_EXTRACTION_ENABLED=true` or `knowledge_extraction` flag, local embeddings, AI consent |
+| Digest generation | Disabled by consent/runtime | No | AI consent plus local Qwen/chat fallback or approved cloud runtime |
+| Chat assistant | Disabled by consent/runtime | No | AI consent plus local Qwen/chat config or approved cloud runtime |
+| Commitment extraction | Disabled by consent/runtime | Runs only from sync/import analysis when enabled | AI consent, local Qwen commitment runtime, local embeddings |
+| Introductions and relationships | Manual records only | No | Current automatic detector uses the older cloud inference path; add a local extractor before enabling for personal data |
+| Recommendations | Disabled | No | `recommendations` feature flag plus morning-brief scheduling |
+| Morning brief and notifications | Bot disabled | No | New test bot token, `TELEGRAM_BOT_ENABLED=true`, user preferences |
+| Google Calendar | Unconfigured | No | Google OAuth credentials and explicit connection |
+| Export and deletion | Manual only | No | Authenticated user action |
+
+For public users, the recommended path is still synthetic demo data first. Real
+Telegram testing should use a throwaway Telegram account, a fresh local database,
+local Keychain-backed session custody, outbound sending disabled, and local AI
+models only.
 
 ## Local Demo
 
@@ -72,4 +118,6 @@ data, embeddings, audit logs, Redis state, or BullMQ queue payloads.
 - Confirm any example deployment config has new app names, volume names, endpoints, and secrets for the fork.
 - Keep Telegram flags disabled in `.env.example`.
 - Choose the publication target and confirm it is synced to the selected release commit.
+- Confirm the mirror PR has the required human approval and no unresolved
+  Dependabot alerts on `main` after merge.
 - Run `pnpm check:publication` against the selected target after it is public and GitHub-side security settings are available.

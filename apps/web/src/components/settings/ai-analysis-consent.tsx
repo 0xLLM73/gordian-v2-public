@@ -24,12 +24,18 @@ export function AiAnalysisConsent({
 	const changed = enabled !== savedEnabled;
 	const disabled = !aiAvailable || isPending;
 	const statusLabel = enabled ? 'Enabled' : 'Off';
+	const savedStatusLabel = savedEnabled ? 'Saved on' : 'Saved off';
 	const detail = useMemo(() => {
 		if (!aiAvailable) return 'Local or vendor AI analysis is not configured for this build.';
-		return enabled
+		if (changed) {
+			return enabled
+				? 'AI analysis will remain blocked until this setting is saved.'
+				: 'AI analysis will remain enabled until this change is saved.';
+		}
+		return savedEnabled
 			? 'Imported messages may be analyzed by configured local models.'
 			: 'Knowledge analysis, chat, and digest generation remain blocked.';
-	}, [aiAvailable, enabled]);
+	}, [aiAvailable, changed, enabled, savedEnabled]);
 
 	function handleSave() {
 		if (disabled || !changed) return;
@@ -64,6 +70,16 @@ export function AiAnalysisConsent({
 				>
 					{statusLabel}
 				</span>
+			</div>
+			<div className="rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
+				<span className="font-medium text-foreground">Persisted status:</span> {savedStatusLabel}
+				{changed ? (
+					<span className="ml-2 text-yellow-700">Unsaved change</span>
+				) : aiAvailable ? (
+					<span className="ml-2">Current workspace setting is in sync.</span>
+				) : (
+					<span className="ml-2">Runtime configuration blocks saving AI analysis on.</span>
+				)}
 			</div>
 
 			<label

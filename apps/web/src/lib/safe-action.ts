@@ -27,6 +27,9 @@ const SAFE_ERROR_MESSAGES = new Set([
 	'Workspace owners must delete the workspace explicitly before deleting their user account',
 	'Telegram sending is disabled on this deployment',
 	'Telegram sync is disabled on this deployment',
+	'Failed to find commitments',
+	'Failed to find introductions',
+	'Failed to find connections',
 ]);
 
 export const actionClient = createSafeActionClient({

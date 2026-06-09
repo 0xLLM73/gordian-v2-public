@@ -183,6 +183,8 @@ export const getTelegramImportStatusAction = workspaceAction
 const startTelegramImportSchema = z.object({
 	confirmLargeImport: z.literal(true),
 	telegramAccountKey: z.string().regex(/^\d+$/).optional(),
+	runAiDuringImport: z.boolean().default(false),
+	backfillOlderHistory: z.boolean().default(false),
 });
 
 export const startTelegramImportAction = workspaceAction
@@ -213,18 +215,26 @@ export const startTelegramImportAction = workspaceAction
 				workspaceId: ctx.workspaceId,
 				sourceAccountId,
 				largeImportConfirmed: true,
+				localAnalysisMode: parsedInput.runAiDuringImport ? 'inline' : 'deferred',
+				importMode: parsedInput.backfillOlderHistory ? 'backfill' : 'recent',
 			},
 			'Failed to start Telegram import',
 		);
 
 		track(ctx.workspaceId, ctx.session.user.id, 'telegram.history_import_started', {
 			scope: 'all_private_and_groups',
+			local_analysis_mode: parsedInput.runAiDuringImport ? 'inline' : 'deferred',
+			import_mode: parsedInput.backfillOlderHistory ? 'backfill' : 'recent',
 		});
 
 		return { importRunId: result.importRunId, status: result.status };
 	});
 
 const importRunSchema = z.object({ runId: z.string().uuid() });
+const resumeImportRunSchema = importRunSchema.extend({
+	runAiDuringImport: z.boolean().default(false),
+	backfillOlderHistory: z.boolean().default(false),
+});
 
 export const pauseTelegramImportAction = workspaceAction
 	.schema(importRunSchema)
@@ -238,11 +248,16 @@ export const pauseTelegramImportAction = workspaceAction
 	});
 
 export const resumeTelegramImportAction = workspaceAction
-	.schema(importRunSchema)
+	.schema(resumeImportRunSchema)
 	.action(async ({ parsedInput, ctx }) => {
 		const result = await callTelegramImportWorker(
 			`/telegram/history-import/${parsedInput.runId}/resume`,
-			{ userId: ctx.session.user.id, workspaceId: ctx.workspaceId },
+			{
+				userId: ctx.session.user.id,
+				workspaceId: ctx.workspaceId,
+				localAnalysisMode: parsedInput.runAiDuringImport ? 'inline' : 'deferred',
+				importMode: parsedInput.backfillOlderHistory ? 'backfill' : 'recent',
+			},
 			'Failed to resume Telegram import',
 		);
 		return { importRunId: result.importRunId, status: result.status };

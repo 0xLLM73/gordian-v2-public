@@ -61,6 +61,7 @@ import {
 	getContactsNeedingExtraction,
 	getKnowledgeNeighbors,
 	getKnowledgeNode,
+	getKnowledgeNodeEvidenceStats,
 	getLegacyKnowledgeEvidenceReport,
 	getSharedKnowledge,
 	knowledgeGraphSearch,
@@ -72,7 +73,9 @@ import {
 	listKnowledgeNodes,
 	mergeKnowledgeNodes,
 	normalizeKnowledgeSearchQuery,
+	repairKnowledgeEvidenceCounts,
 	searchKnowledgeNodesWithEvidence,
+	updateKnowledgeBackfillProgress,
 	updateKnowledgeNode,
 	upsertExtractionLog,
 } from '../dal/knowledge';
@@ -100,6 +103,10 @@ const baseNode = {
 describe('createKnowledgeNode', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockSelect.mockReturnValue({ from: mockSelectFrom });
+		mockSelectFrom.mockReturnValue({ where: mockSelectWhere });
+		mockSelectWhere.mockReturnValue({ limit: mockSelectLimit });
+		mockSelectLimit.mockResolvedValue(undefined);
 		mockInsert.mockReturnValue({ values: mockInsertValues });
 		mockInsertValues.mockReturnValue({
 			onConflictDoUpdate: mockOnConflict,
@@ -325,6 +332,71 @@ describe('listKnowledgeNodes', () => {
 		await listKnowledgeNodes(WS);
 
 		expect(mockOrderByCapture).toHaveBeenCalledTimes(1);
+	});
+});
+
+// ─── getKnowledgeNodeEvidenceStats ───────────────────────────────────────────
+
+describe('getKnowledgeNodeEvidenceStats', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('combines evidence-row and aggregate contact-link stats per node', async () => {
+		const evidenceGroupBy = vi.fn().mockResolvedValue([
+			{
+				nodeId: 'node-1',
+				evidenceRows: 7,
+				distinctEvidenceContacts: 3,
+				distinctEvidenceMessages: 5,
+			},
+		]);
+		const contactGroupBy = vi.fn().mockResolvedValue([
+			{
+				nodeId: 'node-1',
+				linkedContacts: 4,
+				aggregateLinkEvidenceCount: 9,
+				maxLinkEvidenceCount: 3,
+			},
+			{
+				nodeId: 'node-2',
+				linkedContacts: 1,
+				aggregateLinkEvidenceCount: 2,
+				maxLinkEvidenceCount: 2,
+			},
+		]);
+		mockSelect
+			.mockReturnValueOnce({
+				from: vi.fn(() => ({
+					where: vi.fn(() => ({ groupBy: evidenceGroupBy })),
+				})),
+			})
+			.mockReturnValueOnce({
+				from: vi.fn(() => ({
+					where: vi.fn(() => ({ groupBy: contactGroupBy })),
+				})),
+			});
+
+		const stats = await getKnowledgeNodeEvidenceStats(WS, ['node-1', 'node-2']);
+
+		expect(stats.get('node-1')).toEqual({
+			nodeId: 'node-1',
+			evidenceRows: 7,
+			distinctEvidenceContacts: 3,
+			distinctEvidenceMessages: 5,
+			linkedContacts: 4,
+			aggregateLinkEvidenceCount: 9,
+			maxLinkEvidenceCount: 3,
+		});
+		expect(stats.get('node-2')).toEqual({
+			nodeId: 'node-2',
+			evidenceRows: 0,
+			distinctEvidenceContacts: 0,
+			distinctEvidenceMessages: 0,
+			linkedContacts: 1,
+			aggregateLinkEvidenceCount: 2,
+			maxLinkEvidenceCount: 2,
+		});
 	});
 });
 
@@ -576,6 +648,10 @@ describe('evidence-aware knowledge search', () => {
 describe('linkContactToKnowledge', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockSelect.mockReturnValue({ from: mockSelectFrom });
+		mockSelectFrom.mockReturnValue({ where: mockSelectWhere });
+		mockSelectWhere.mockReturnValue({ limit: mockSelectLimit });
+		mockSelectLimit.mockResolvedValue(undefined);
 		mockInsert.mockReturnValue({ values: mockInsertValues });
 		mockInsertValues.mockReturnValue({
 			onConflictDoUpdate: mockOnConflict,
@@ -728,6 +804,48 @@ describe('linkContactToKnowledge', () => {
 		).toBe(true);
 	});
 
+	it('does not increment link evidence or rewrite evidence for duplicate message-backed evidence', async () => {
+		const link = {
+			id: 'link-1',
+			workspaceId: WS,
+			knowledgeNodeId: 'node-1',
+			contactId: 'c-1',
+			relationType: 'works_on',
+			strength: 0.8,
+			evidenceCount: 2,
+			lastEvidenceAt: new Date(),
+			createdAt: new Date(),
+		};
+		const existingEvidence = {
+			id: 'evidence-existing',
+			workspaceId: WS,
+			knowledgeNodeId: 'node-1',
+			contactId: 'c-1',
+			messageId: 'msg-1',
+			relationType: 'works_on',
+			evidenceKind: 'llm_extracted',
+		};
+		mockSelectLimit.mockResolvedValueOnce([existingEvidence]);
+		mockInsertReturning.mockResolvedValueOnce([link]);
+
+		await linkContactToKnowledge(WS, 'node-1', 'c-1', 'works_on', 0.8, {
+			messageId: 'msg-1',
+			snippet: 'We are working on Solana infra',
+			occurredAt: new Date('2026-05-01T00:00:00Z'),
+			evidenceKind: 'llm_extracted',
+			confidence: 0.8,
+			metadata: { source: 'test' },
+			envelope: mockEnvelope,
+		});
+
+		expect(mockInsert).toHaveBeenCalledTimes(1);
+		const conflictArgs = (mockOnConflict.mock.calls as unknown[][])[0]?.[0] as
+			| { set: Record<string, unknown>; target: unknown }
+			| undefined;
+		expect(conflictArgs?.set?.evidenceCount).toBeUndefined();
+		expect(conflictArgs?.set).toMatchObject({ strength: 0.8 });
+	});
+
 	it('rejects evidence snippets without an envelope before writing the aggregate link', async () => {
 		await expect(
 			linkContactToKnowledge(WS, 'node-1', 'c-1', 'works_on', 0.8, {
@@ -798,6 +916,42 @@ describe('knowledge evidence DAL', () => {
 			}),
 		);
 		expect(result).toEqual(evidence);
+	});
+
+	it('returns existing message-backed evidence instead of inserting an exact duplicate', async () => {
+		const existingEvidence = {
+			id: 'evidence-existing',
+			workspaceId: WS,
+			knowledgeNodeId: 'node-1',
+			contactId: 'contact-1',
+			messageId: 'message-1',
+			relationType: 'knows_about',
+			evidenceKind: 'llm_extracted',
+			confidence: 0.9,
+			snippet: 'Solana came up in the thread',
+			occurredAt: new Date('2026-05-01T00:00:00Z'),
+			createdAt: new Date(),
+		};
+		mockSelectLimit.mockResolvedValueOnce([existingEvidence]);
+
+		const result = await createKnowledgeEvidence(
+			WS,
+			{
+				knowledgeNodeId: 'node-1',
+				contactId: 'contact-1',
+				messageId: 'message-1',
+				relationType: 'knows_about',
+				evidenceKind: 'llm_extracted',
+				confidence: 0.9,
+				snippet: 'Solana came up in the thread',
+				occurredAt: existingEvidence.occurredAt,
+				metadata: { source: 'test' },
+			},
+			mockEnvelope,
+		);
+
+		expect(result).toEqual(existingEvidence);
+		expect(mockInsert).not.toHaveBeenCalled();
 	});
 
 	it('requires an envelope when snippet text is provided', async () => {
@@ -948,6 +1102,66 @@ describe('getLegacyKnowledgeEvidenceReport', () => {
 		});
 		expect(report.recommendedNextAction).toContain('evidence backfill');
 		expect(mockExecute).toHaveBeenCalledTimes(5);
+		for (const call of mockExecute.mock.calls) {
+			const queryArg = call[0] as { queryChunks?: unknown[] } | undefined;
+			const sqlText = (queryArg?.queryChunks ?? [])
+				.map((chunk) => {
+					if (typeof chunk === 'string') return chunk;
+					if (chunk && typeof chunk === 'object' && 'value' in chunk) {
+						const value = (chunk as { value?: unknown }).value;
+						return Array.isArray(value) ? value.join('') : String(value ?? '');
+					}
+					return '';
+				})
+				.join(' ');
+			expect(sqlText).toContain('ke.relation_type = kc.relation_type::text');
+		}
+	});
+});
+
+// ─── Evidence Counter Repair ─────────────────────────────────────────────────
+
+describe('repairKnowledgeEvidenceCounts', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('maps cleanup and recompute counts from the repair query', async () => {
+		mockExecute.mockResolvedValueOnce([
+			{
+				duplicateEvidenceRowsDeleted: '7',
+				contactLinksRecomputed: '3',
+				nodesRecomputed: '2',
+			},
+		]);
+
+		const result = await repairKnowledgeEvidenceCounts(WS);
+
+		expect(result).toEqual({
+			workspaceId: WS,
+			duplicateEvidenceRowsDeleted: 7,
+			contactLinksRecomputed: 3,
+			nodesRecomputed: 2,
+		});
+		expect(mockExecute).toHaveBeenCalledTimes(1);
+		const queryArg = mockExecute.mock.calls[0]?.[0] as { queryChunks?: unknown[] } | undefined;
+		const sqlText = (queryArg?.queryChunks ?? [])
+			.map((chunk) => {
+				if (typeof chunk === 'string') return chunk;
+				if (chunk && typeof chunk === 'object' && 'value' in chunk) {
+					const value = (chunk as { value?: unknown }).value;
+					return Array.isArray(value) ? value.join('') : String(value ?? '');
+				}
+				return '';
+			})
+			.join(' ');
+		expect(sqlText).toContain('row_number() OVER');
+		expect(sqlText).toContain('DELETE FROM knowledge_evidence');
+		expect(sqlText).toContain('count(DISTINCT message_id)');
+		expect(sqlText).toContain('UPDATE knowledge_contacts');
+		expect(sqlText).toContain('link_counts AS');
+		expect(sqlText).toContain('coalesce(ec.evidence_count, kc.evidence_count)');
+		expect(sqlText).toContain('UPDATE knowledge_nodes');
 	});
 });
 
@@ -994,6 +1208,31 @@ describe('knowledge extraction log lifecycle', () => {
 				messageHorizon: expect.anything(),
 			}),
 		);
+	});
+
+	it('advances historical backfill progress without replacing extraction counts', async () => {
+		const oldestMessageAt = new Date('2026-05-01T10:00:00.000Z');
+		const completedAt = new Date('2026-05-03T10:00:00.000Z');
+		mockUpdateReturning.mockResolvedValueOnce([{ id: 'log-1' }]);
+
+		await updateKnowledgeBackfillProgress(WS, 'contact-1', {
+			oldestMessageAt,
+			messagesScanned: 200,
+			completedAt,
+		});
+
+		expect(mockUpdateSet).toHaveBeenCalledWith(
+			expect.objectContaining({
+				lastExtractedAt: expect.anything(),
+				backfillOldestMessageAt: expect.anything(),
+				backfillMessagesScanned: expect.anything(),
+				backfillCompletedAt: expect.anything(),
+			}),
+		);
+		const updateSet = (mockUpdateSet.mock.calls as unknown[][])[0]?.[0] as Record<string, unknown>;
+		expect(updateSet).not.toHaveProperty('entitiesExtracted');
+		expect(updateSet).not.toHaveProperty('llmCalled');
+		expect(mockInsert).not.toHaveBeenCalled();
 	});
 
 	it('selects only contacts whose latest message is newer than messageHorizon', async () => {

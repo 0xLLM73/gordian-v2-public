@@ -326,6 +326,7 @@ describe('extractKnowledgeEntities', () => {
 					entityType: 'technology',
 					sourceMessageSelection: {
 						method: 'exact_normalized_name',
+						sourceBacked: true,
 					},
 				}),
 				envelope: testEnvelope,
@@ -389,6 +390,7 @@ describe('extractKnowledgeEntities', () => {
 				metadata: expect.objectContaining({
 					sourceMessageSelection: {
 						method: 'exact_normalized_name',
+						sourceBacked: true,
 					},
 				}),
 			}),
@@ -429,6 +431,7 @@ describe('extractKnowledgeEntities', () => {
 				metadata: expect.objectContaining({
 					sourceMessageSelection: {
 						method: 'exact_normalized_name',
+						sourceBacked: true,
 					},
 				}),
 			}),
@@ -475,10 +478,76 @@ describe('extractKnowledgeEntities', () => {
 				metadata: expect.objectContaining({
 					sourceMessageSelection: {
 						method: 'mention_span',
+						sourceBacked: true,
 					},
 				}),
 			}),
 		);
+	});
+
+	it('does not reuse a semantically close node when the source text does not support that node', async () => {
+		mockInferWithGemini.mockResolvedValue(
+			geminiJsonResponse([
+				{
+					type: 'technology',
+					name: 'solana',
+					displayName: 'Solana',
+					description: 'Layer 1 blockchain',
+					relationshipType: 'uses',
+					confidence: 0.82,
+				},
+			]),
+		);
+		mockSearchKnowledgeNodes.mockResolvedValueOnce([
+			{
+				id: 'node-dspy',
+				name: 'dspy',
+				displayName: 'DSPy',
+				type: 'technology',
+				aliases: [],
+				similarity: 0.86,
+			},
+		]);
+		mockCreateKnowledgeNode.mockResolvedValueOnce({
+			id: 'node-solana',
+			name: 'solana',
+			displayName: 'Solana',
+			type: 'technology',
+		});
+
+		await extractKnowledgeEntities(
+			[
+				{
+					id: 'msg-solana',
+					text: 'Solana project',
+					timestamp: '2026-05-06T00:00:00Z',
+				},
+			],
+			CONTACT,
+			WS,
+			testSalt,
+			testEnvelope,
+		);
+
+		expect(mockCreateKnowledgeNode).toHaveBeenCalledWith(
+			WS,
+			expect.objectContaining({ name: 'solana', displayName: 'Solana' }),
+			testEnvelope,
+		);
+		expect(mockLinkContactToKnowledge).toHaveBeenCalledWith(
+			WS,
+			'node-solana',
+			CONTACT,
+			'uses',
+			0.82,
+			expect.objectContaining({
+				messageId: 'msg-solana',
+				snippet: expect.stringContaining('Solana project'),
+			}),
+		);
+		expect(
+			mockLinkContactToKnowledge.mock.calls.some((call) => (call as unknown[])[1] === 'node-dspy'),
+		).toBe(false);
 	});
 });
 

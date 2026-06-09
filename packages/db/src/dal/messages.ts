@@ -1,6 +1,20 @@
 import { withKeys } from '@repo/crypto';
 import type { SealedEnvelope } from '@repo/crypto';
-import { and, asc, count, desc, eq, gte, inArray, isNull, lte, max, sql } from 'drizzle-orm';
+import {
+	and,
+	asc,
+	count,
+	desc,
+	eq,
+	gte,
+	inArray,
+	isNull,
+	lt,
+	lte,
+	max,
+	or,
+	sql,
+} from 'drizzle-orm';
 import { db } from '../client';
 import { chats } from '../schema/chats';
 import { messages } from '../schema/messages';
@@ -21,10 +35,14 @@ export interface UpsertChatInput {
 export interface UpsertMessageInput {
 	telegramMessageId: string;
 	contactId?: string;
+	telegramSenderId?: string;
+	telegramSenderType?: TelegramSenderType;
 	text?: string;
 	isOutgoing: boolean;
 	sentAt: Date;
 }
+
+export type TelegramSenderType = 'user' | 'chat' | 'channel';
 
 export interface MessageIdentity {
 	id: string;
@@ -34,6 +52,86 @@ export interface MessageIdentity {
 export interface MessageContactLink {
 	telegramMessageId: string;
 	contactId: string;
+}
+
+export interface MessageSenderMetadataLink {
+	telegramMessageId: string;
+	telegramSenderId: string;
+	telegramSenderType: TelegramSenderType;
+}
+
+export interface MessageContactCoverageByChatType {
+	chatType: string;
+	totalMessages: number;
+	messagesWithSenderMetadata: number;
+	messagesWithUserSenderMetadata: number;
+	nullContactMessages: number;
+	nullContactMessagesWithSenderMetadata: number;
+	nullContactMessagesWithUserSenderMetadata: number;
+	linkedContactMessages: number;
+	chatsWithNullContactMessages: number;
+}
+
+export interface MessageContactCoverageReport {
+	workspaceId: string;
+	totalMessages: number;
+	messagesWithSenderMetadata: number;
+	messagesWithUserSenderMetadata: number;
+	nullContactMessages: number;
+	nullContactMessagesWithSenderMetadata: number;
+	nullContactMessagesWithUserSenderMetadata: number;
+	linkedContactMessages: number;
+	chatsWithNullContactMessages: number;
+	byChatType: MessageContactCoverageByChatType[];
+}
+
+export interface MessageNullContactReasonRow {
+	reason:
+		| 'ambiguous_user_sender_contact'
+		| 'channel_not_person_addressable'
+		| 'group_sender_metadata_missing'
+		| 'non_user_sender'
+		| 'partial_sender_metadata'
+		| 'private_peer_contact_missing'
+		| 'repairable_user_sender_contact'
+		| 'sender_metadata_missing'
+		| 'unmatched_user_sender_contact';
+	chatType: string;
+	nullMessages: number;
+	chatsAffected: number;
+}
+
+export interface MessageNullContactReasonReport {
+	workspaceId: string;
+	totalNullMessages: number;
+	reasons: MessageNullContactReasonRow[];
+}
+
+export interface PrivatePeerContactRepairResult {
+	workspaceId: string;
+	writeMode: boolean;
+	privateNullMessages: number;
+	repairableMessages: number;
+	ambiguousMessages: number;
+	unmatchedMessages: number;
+	repairedMessages: number;
+}
+
+export interface SenderMetadataContactRepairResult {
+	workspaceId: string;
+	writeMode: boolean;
+	nullUserSenderMessages: number;
+	repairableMessages: number;
+	ambiguousMessages: number;
+	unmatchedMessages: number;
+	repairedMessages: number;
+}
+
+function asNumber(value: unknown): number {
+	if (typeof value === 'number') return value;
+	if (typeof value === 'bigint') return Number(value);
+	if (typeof value === 'string') return Number.parseInt(value, 10) || 0;
+	return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +304,8 @@ export async function upsertMessages(
 			chatId,
 			telegramMessageId: m.telegramMessageId,
 			contactId: m.contactId ?? null,
+			telegramSenderId: m.telegramSenderId ?? null,
+			telegramSenderType: m.telegramSenderType ?? null,
 			text: m.text ?? null,
 			isOutgoing: m.isOutgoing,
 			sentAt: m.sentAt,
@@ -283,6 +383,504 @@ export async function linkMessagesToContactsByTelegramIds(
 	}
 
 	return linked;
+}
+
+export async function updateMessageSenderMetadataByTelegramIds(
+	workspaceId: string,
+	chatId: string,
+	links: MessageSenderMetadataLink[],
+): Promise<number> {
+	const uniqueLinks = new Map<string, MessageSenderMetadataLink>();
+	for (const link of links) {
+		if (link.telegramMessageId && link.telegramSenderId && link.telegramSenderType) {
+			uniqueLinks.set(link.telegramMessageId, link);
+		}
+	}
+
+	let updated = 0;
+	for (const link of uniqueLinks.values()) {
+		const result = await db
+			.update(messages)
+			.set({
+				telegramSenderId: sql`coalesce(${messages.telegramSenderId}, ${link.telegramSenderId})`,
+				telegramSenderType: sql`coalesce(${messages.telegramSenderType}, ${link.telegramSenderType})`,
+			})
+			.where(
+				and(
+					eq(messages.workspaceId, workspaceId),
+					eq(messages.chatId, chatId),
+					eq(messages.telegramMessageId, link.telegramMessageId),
+					or(isNull(messages.telegramSenderId), isNull(messages.telegramSenderType)),
+				),
+			)
+			.returning({ id: messages.id });
+		updated += result.length;
+	}
+
+	return updated;
+}
+
+export async function getMessageContactCoverageReport(
+	workspaceId: string,
+): Promise<MessageContactCoverageReport> {
+	const summaryRows = (await db.execute(sql`
+			SELECT
+				count(*)::int AS "totalMessages",
+				count(*) FILTER (
+					WHERE m.telegram_sender_id IS NOT NULL
+						AND m.telegram_sender_type IS NOT NULL
+				)::int AS "messagesWithSenderMetadata",
+				count(*) FILTER (
+					WHERE m.telegram_sender_id IS NOT NULL
+						AND m.telegram_sender_type = 'user'
+				)::int AS "messagesWithUserSenderMetadata",
+				count(*) FILTER (WHERE m.contact_id IS NULL)::int AS "nullContactMessages",
+			count(*) FILTER (
+				WHERE m.contact_id IS NULL
+					AND m.telegram_sender_id IS NOT NULL
+					AND m.telegram_sender_type IS NOT NULL
+			)::int AS "nullContactMessagesWithSenderMetadata",
+			count(*) FILTER (
+				WHERE m.contact_id IS NULL
+					AND m.telegram_sender_id IS NOT NULL
+					AND m.telegram_sender_type = 'user'
+			)::int AS "nullContactMessagesWithUserSenderMetadata",
+			count(*) FILTER (WHERE m.contact_id IS NOT NULL)::int AS "linkedContactMessages",
+			count(DISTINCT m.chat_id) FILTER (WHERE m.contact_id IS NULL)::int AS "chatsWithNullContactMessages"
+		FROM messages m
+		WHERE m.workspace_id = ${workspaceId}
+	`)) as Array<{
+		totalMessages: unknown;
+		messagesWithSenderMetadata: unknown;
+		messagesWithUserSenderMetadata: unknown;
+		nullContactMessages: unknown;
+		nullContactMessagesWithSenderMetadata: unknown;
+		nullContactMessagesWithUserSenderMetadata: unknown;
+		linkedContactMessages: unknown;
+		chatsWithNullContactMessages: unknown;
+	}>;
+
+	const byChatTypeRows = (await db.execute(sql`
+		SELECT
+			ch.type::text AS "chatType",
+			count(*)::int AS "totalMessages",
+			count(*) FILTER (
+				WHERE m.telegram_sender_id IS NOT NULL
+					AND m.telegram_sender_type IS NOT NULL
+			)::int AS "messagesWithSenderMetadata",
+			count(*) FILTER (
+				WHERE m.telegram_sender_id IS NOT NULL
+					AND m.telegram_sender_type = 'user'
+			)::int AS "messagesWithUserSenderMetadata",
+			count(*) FILTER (WHERE m.contact_id IS NULL)::int AS "nullContactMessages",
+			count(*) FILTER (
+				WHERE m.contact_id IS NULL
+					AND m.telegram_sender_id IS NOT NULL
+					AND m.telegram_sender_type IS NOT NULL
+			)::int AS "nullContactMessagesWithSenderMetadata",
+			count(*) FILTER (
+				WHERE m.contact_id IS NULL
+					AND m.telegram_sender_id IS NOT NULL
+					AND m.telegram_sender_type = 'user'
+			)::int AS "nullContactMessagesWithUserSenderMetadata",
+			count(*) FILTER (WHERE m.contact_id IS NOT NULL)::int AS "linkedContactMessages",
+			count(DISTINCT m.chat_id) FILTER (WHERE m.contact_id IS NULL)::int AS "chatsWithNullContactMessages"
+		FROM messages m
+		INNER JOIN chats ch
+			ON ch.id = m.chat_id
+			AND ch.workspace_id = m.workspace_id
+		WHERE m.workspace_id = ${workspaceId}
+		GROUP BY ch.type
+		ORDER BY count(*) FILTER (WHERE m.contact_id IS NULL) DESC, ch.type ASC
+	`)) as Array<{
+		chatType: string | null;
+		totalMessages: unknown;
+		messagesWithSenderMetadata: unknown;
+		messagesWithUserSenderMetadata: unknown;
+		nullContactMessages: unknown;
+		nullContactMessagesWithSenderMetadata: unknown;
+		nullContactMessagesWithUserSenderMetadata: unknown;
+		linkedContactMessages: unknown;
+		chatsWithNullContactMessages: unknown;
+	}>;
+
+	const summary = summaryRows[0];
+	return {
+		workspaceId,
+		totalMessages: asNumber(summary?.totalMessages),
+		messagesWithSenderMetadata: asNumber(summary?.messagesWithSenderMetadata),
+		messagesWithUserSenderMetadata: asNumber(summary?.messagesWithUserSenderMetadata),
+		nullContactMessages: asNumber(summary?.nullContactMessages),
+		nullContactMessagesWithSenderMetadata: asNumber(summary?.nullContactMessagesWithSenderMetadata),
+		nullContactMessagesWithUserSenderMetadata: asNumber(
+			summary?.nullContactMessagesWithUserSenderMetadata,
+		),
+		linkedContactMessages: asNumber(summary?.linkedContactMessages),
+		chatsWithNullContactMessages: asNumber(summary?.chatsWithNullContactMessages),
+		byChatType: byChatTypeRows.map((row) => ({
+			chatType: row.chatType ?? 'unknown',
+			totalMessages: asNumber(row.totalMessages),
+			messagesWithSenderMetadata: asNumber(row.messagesWithSenderMetadata),
+			messagesWithUserSenderMetadata: asNumber(row.messagesWithUserSenderMetadata),
+			nullContactMessages: asNumber(row.nullContactMessages),
+			nullContactMessagesWithSenderMetadata: asNumber(row.nullContactMessagesWithSenderMetadata),
+			nullContactMessagesWithUserSenderMetadata: asNumber(
+				row.nullContactMessagesWithUserSenderMetadata,
+			),
+			linkedContactMessages: asNumber(row.linkedContactMessages),
+			chatsWithNullContactMessages: asNumber(row.chatsWithNullContactMessages),
+		})),
+	};
+}
+
+export async function getMessageNullContactReasonReport(
+	workspaceId: string,
+): Promise<MessageNullContactReasonReport> {
+	const rows = (await db.execute(sql`
+		WITH null_messages AS (
+			SELECT
+				m.id AS message_id,
+				m.chat_id,
+				m.telegram_sender_id,
+				m.telegram_sender_type,
+				ch.type::text AS chat_type,
+				ch.source_account_id
+			FROM messages m
+			INNER JOIN chats ch
+				ON ch.id = m.chat_id
+				AND ch.workspace_id = m.workspace_id
+			WHERE m.workspace_id = ${workspaceId}
+				AND m.contact_id IS NULL
+		),
+		sender_contact_candidates AS (
+			SELECT
+				n.message_id,
+				count(c.id)::int AS candidate_count
+			FROM null_messages n
+			LEFT JOIN contacts c
+				ON c.workspace_id = ${workspaceId}
+				AND c.telegram_id = n.telegram_sender_id
+				AND (
+					c.source_account_id IS NOT DISTINCT FROM n.source_account_id
+					OR c.source_account_id IS NULL
+				)
+			WHERE n.telegram_sender_type = 'user'
+				AND n.telegram_sender_id IS NOT NULL
+			GROUP BY n.message_id
+		),
+		classified AS (
+			SELECT
+				n.message_id,
+				n.chat_id,
+				n.chat_type,
+				CASE
+					WHEN n.telegram_sender_type = 'user'
+						AND coalesce(c.candidate_count, 0) = 1
+						THEN 'repairable_user_sender_contact'
+					WHEN n.telegram_sender_type = 'user'
+						AND coalesce(c.candidate_count, 0) > 1
+						THEN 'ambiguous_user_sender_contact'
+					WHEN n.telegram_sender_type = 'user'
+						THEN 'unmatched_user_sender_contact'
+					WHEN n.telegram_sender_type IN ('chat', 'channel')
+						THEN 'non_user_sender'
+					WHEN n.telegram_sender_id IS NOT NULL
+						OR n.telegram_sender_type IS NOT NULL
+						THEN 'partial_sender_metadata'
+					WHEN n.chat_type = 'private'
+						THEN 'private_peer_contact_missing'
+					WHEN n.chat_type IN ('group', 'supergroup')
+						THEN 'group_sender_metadata_missing'
+					WHEN n.chat_type = 'channel'
+						THEN 'channel_not_person_addressable'
+					ELSE 'sender_metadata_missing'
+				END AS reason
+			FROM null_messages n
+			LEFT JOIN sender_contact_candidates c
+				ON c.message_id = n.message_id
+		)
+		SELECT
+			reason,
+			chat_type AS "chatType",
+			count(*)::int AS "nullMessages",
+			count(DISTINCT chat_id)::int AS "chatsAffected"
+		FROM classified
+		GROUP BY reason, chat_type
+		ORDER BY count(*) DESC, reason ASC, chat_type ASC
+	`)) as Array<{
+		reason: MessageNullContactReasonRow['reason'];
+		chatType: string | null;
+		nullMessages: unknown;
+		chatsAffected: unknown;
+	}>;
+
+	const reasons = rows.map((row) => ({
+		reason: row.reason,
+		chatType: row.chatType ?? 'unknown',
+		nullMessages: asNumber(row.nullMessages),
+		chatsAffected: asNumber(row.chatsAffected),
+	}));
+
+	return {
+		workspaceId,
+		totalNullMessages: reasons.reduce((sum, row) => sum + row.nullMessages, 0),
+		reasons,
+	};
+}
+
+export async function repairPrivateMessagesToPeerContacts(
+	workspaceId: string,
+	options: { write?: boolean } = {},
+): Promise<PrivatePeerContactRepairResult> {
+	const baseSql = sql`
+		WITH private_null_messages AS (
+			SELECT
+				m.id AS message_id,
+				ch.telegram_chat_id,
+				ch.source_account_id
+			FROM messages m
+			INNER JOIN chats ch
+				ON ch.id = m.chat_id
+				AND ch.workspace_id = m.workspace_id
+			WHERE m.workspace_id = ${workspaceId}
+				AND m.contact_id IS NULL
+				AND ch.type = 'private'
+		),
+		candidates AS (
+			SELECT
+				p.message_id,
+				c.id AS contact_id,
+				CASE
+					WHEN c.source_account_id IS NOT DISTINCT FROM p.source_account_id THEN 0
+					WHEN c.source_account_id IS NULL THEN 1
+					ELSE 2
+				END AS match_priority
+			FROM private_null_messages p
+			INNER JOIN contacts c
+				ON c.workspace_id = ${workspaceId}
+				AND c.telegram_id = p.telegram_chat_id
+				AND (
+					c.source_account_id IS NOT DISTINCT FROM p.source_account_id
+					OR c.source_account_id IS NULL
+				)
+		),
+		best_priority AS (
+			SELECT message_id, min(match_priority) AS match_priority
+			FROM candidates
+			GROUP BY message_id
+		),
+		best_candidates AS (
+			SELECT c.message_id, c.contact_id
+			FROM candidates c
+			INNER JOIN best_priority p
+				ON p.message_id = c.message_id
+				AND p.match_priority = c.match_priority
+		),
+		repairable AS (
+			SELECT message_id, (array_agg(contact_id))[1] AS contact_id
+			FROM best_candidates
+			GROUP BY message_id
+			HAVING count(*) = 1
+		),
+		ambiguous AS (
+			SELECT message_id
+			FROM best_candidates
+			GROUP BY message_id
+			HAVING count(*) > 1
+		),
+		unmatched AS (
+			SELECT p.message_id
+			FROM private_null_messages p
+			LEFT JOIN best_candidates b ON b.message_id = p.message_id
+			WHERE b.message_id IS NULL
+		)
+	`;
+
+	const countSql = sql`
+		${baseSql}
+		SELECT
+			(SELECT count(*) FROM private_null_messages)::int AS "privateNullMessages",
+			(SELECT count(*) FROM repairable)::int AS "repairableMessages",
+			(SELECT count(*) FROM ambiguous)::int AS "ambiguousMessages",
+			(SELECT count(*) FROM unmatched)::int AS "unmatchedMessages",
+			0::int AS "repairedMessages"
+	`;
+
+	const writeSql = sql`
+		${baseSql},
+		updated AS (
+			UPDATE messages m
+			SET contact_id = repairable.contact_id
+			FROM repairable
+			WHERE m.id = repairable.message_id
+				AND m.workspace_id = ${workspaceId}
+				AND m.contact_id IS NULL
+			RETURNING m.id
+		)
+		SELECT
+			(SELECT count(*) FROM private_null_messages)::int AS "privateNullMessages",
+			(SELECT count(*) FROM repairable)::int AS "repairableMessages",
+			(SELECT count(*) FROM ambiguous)::int AS "ambiguousMessages",
+			(SELECT count(*) FROM unmatched)::int AS "unmatchedMessages",
+			(SELECT count(*) FROM updated)::int AS "repairedMessages"
+	`;
+
+	const rows = (await db.execute(options.write ? writeSql : countSql)) as Array<{
+		privateNullMessages: unknown;
+		repairableMessages: unknown;
+		ambiguousMessages: unknown;
+		unmatchedMessages: unknown;
+		repairedMessages: unknown;
+	}>;
+	const row = rows[0];
+	return {
+		workspaceId,
+		writeMode: Boolean(options.write),
+		privateNullMessages: asNumber(row?.privateNullMessages),
+		repairableMessages: asNumber(row?.repairableMessages),
+		ambiguousMessages: asNumber(row?.ambiguousMessages),
+		unmatchedMessages: asNumber(row?.unmatchedMessages),
+		repairedMessages: asNumber(row?.repairedMessages),
+	};
+}
+
+export async function repairMessagesToSenderContacts(
+	workspaceId: string,
+	options: { write?: boolean } = {},
+): Promise<SenderMetadataContactRepairResult> {
+	const baseSql = sql`
+		WITH null_user_sender_messages AS (
+			SELECT
+				m.id AS message_id,
+				m.telegram_sender_id,
+				ch.source_account_id
+			FROM messages m
+			INNER JOIN chats ch
+				ON ch.id = m.chat_id
+				AND ch.workspace_id = m.workspace_id
+			WHERE m.workspace_id = ${workspaceId}
+				AND m.contact_id IS NULL
+				AND m.telegram_sender_type = 'user'
+				AND m.telegram_sender_id IS NOT NULL
+		),
+		candidates AS (
+			SELECT
+				m.message_id,
+				c.id AS contact_id,
+				CASE
+					WHEN c.source_account_id IS NOT DISTINCT FROM m.source_account_id THEN 0
+					WHEN c.source_account_id IS NULL THEN 1
+					ELSE 2
+				END AS match_priority
+			FROM null_user_sender_messages m
+			INNER JOIN contacts c
+				ON c.workspace_id = ${workspaceId}
+				AND c.telegram_id = m.telegram_sender_id
+				AND (
+					c.source_account_id IS NOT DISTINCT FROM m.source_account_id
+					OR c.source_account_id IS NULL
+				)
+		),
+		best_priority AS (
+			SELECT message_id, min(match_priority) AS match_priority
+			FROM candidates
+			GROUP BY message_id
+		),
+		best_candidates AS (
+			SELECT c.message_id, c.contact_id
+			FROM candidates c
+			INNER JOIN best_priority p
+				ON p.message_id = c.message_id
+				AND p.match_priority = c.match_priority
+		),
+		repairable AS (
+			SELECT message_id, (array_agg(contact_id))[1] AS contact_id
+			FROM best_candidates
+			GROUP BY message_id
+			HAVING count(*) = 1
+		),
+		ambiguous AS (
+			SELECT message_id
+			FROM best_candidates
+			GROUP BY message_id
+			HAVING count(*) > 1
+		),
+		unmatched AS (
+			SELECT m.message_id
+			FROM null_user_sender_messages m
+			LEFT JOIN best_candidates b ON b.message_id = m.message_id
+			WHERE b.message_id IS NULL
+		)
+	`;
+
+	const countSql = sql`
+		${baseSql}
+		SELECT
+			(SELECT count(*) FROM null_user_sender_messages)::int AS "nullUserSenderMessages",
+			(SELECT count(*) FROM repairable)::int AS "repairableMessages",
+			(SELECT count(*) FROM ambiguous)::int AS "ambiguousMessages",
+			(SELECT count(*) FROM unmatched)::int AS "unmatchedMessages",
+			0::int AS "repairedMessages"
+	`;
+
+	const writeSql = sql`
+		${baseSql},
+		updated AS (
+			UPDATE messages m
+			SET contact_id = repairable.contact_id
+			FROM repairable
+			WHERE m.id = repairable.message_id
+				AND m.workspace_id = ${workspaceId}
+				AND m.contact_id IS NULL
+			RETURNING m.id
+		)
+		SELECT
+			(SELECT count(*) FROM null_user_sender_messages)::int AS "nullUserSenderMessages",
+			(SELECT count(*) FROM repairable)::int AS "repairableMessages",
+			(SELECT count(*) FROM ambiguous)::int AS "ambiguousMessages",
+			(SELECT count(*) FROM unmatched)::int AS "unmatchedMessages",
+			(SELECT count(*) FROM updated)::int AS "repairedMessages"
+	`;
+
+	const rows = (await db.execute(options.write ? writeSql : countSql)) as Array<{
+		nullUserSenderMessages: unknown;
+		repairableMessages: unknown;
+		ambiguousMessages: unknown;
+		unmatchedMessages: unknown;
+		repairedMessages: unknown;
+	}>;
+	const row = rows[0];
+	return {
+		workspaceId,
+		writeMode: Boolean(options.write),
+		nullUserSenderMessages: asNumber(row?.nullUserSenderMessages),
+		repairableMessages: asNumber(row?.repairableMessages),
+		ambiguousMessages: asNumber(row?.ambiguousMessages),
+		unmatchedMessages: asNumber(row?.unmatchedMessages),
+		repairedMessages: asNumber(row?.repairedMessages),
+	};
+}
+
+export async function getNullContactSenderMetadataGap(
+	workspaceId: string,
+	chatId: string,
+): Promise<number> {
+	const rows = await db
+		.select({
+			count: sql<number>`count(*)::int`,
+		})
+		.from(messages)
+		.where(
+			and(
+				eq(messages.workspaceId, workspaceId),
+				eq(messages.chatId, chatId),
+				isNull(messages.contactId),
+				or(isNull(messages.telegramSenderId), isNull(messages.telegramSenderType)),
+			),
+		)
+		.limit(1);
+
+	return asNumber(rows[0]?.count);
 }
 
 /**
@@ -364,17 +962,36 @@ export async function getMessagesByContact(
 	workspaceId: string,
 	contactId: string,
 	envelope: SealedEnvelope,
-	options?: { limit?: number; offset?: number },
+	options?: {
+		limit?: number;
+		offset?: number;
+		beforeSentAt?: Date;
+		beforeMessageId?: string;
+		order?: 'asc' | 'desc';
+	},
 ) {
 	const limit = options?.limit ?? 50;
 	const offset = options?.offset ?? 0;
+	const conditions = [eq(messages.workspaceId, workspaceId), eq(messages.contactId, contactId)];
+	if (options?.beforeSentAt) {
+		const cursorCondition = options.beforeMessageId
+			? or(
+					lt(messages.sentAt, options.beforeSentAt),
+					and(eq(messages.sentAt, options.beforeSentAt), lt(messages.id, options.beforeMessageId)),
+				)
+			: lt(messages.sentAt, options.beforeSentAt);
+		if (cursorCondition) conditions.push(cursorCondition);
+	}
 
 	return withKeys(envelope, async () => {
 		return await db
 			.select()
 			.from(messages)
-			.where(and(eq(messages.workspaceId, workspaceId), eq(messages.contactId, contactId)))
-			.orderBy(desc(messages.sentAt))
+			.where(and(...conditions))
+			.orderBy(
+				options?.order === 'asc' ? asc(messages.sentAt) : desc(messages.sentAt),
+				options?.order === 'asc' ? asc(messages.id) : desc(messages.id),
+			)
 			.limit(limit)
 			.offset(offset);
 	});

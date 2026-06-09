@@ -422,6 +422,8 @@ async function handleMessage(msg: {
 							date?: number;
 							fromId?: {
 								userId?: { toString(): string };
+								chatId?: { toString(): string };
+								channelId?: { toString(): string };
 								className: string;
 							};
 							out?: boolean;
@@ -434,8 +436,18 @@ async function handleMessage(msg: {
 						})
 						.map((m) => {
 							let senderId: string | undefined;
+							let senderPeerId: string | undefined;
+							let senderPeerType: 'user' | 'chat' | 'channel' | undefined;
 							if (m.fromId?.className === 'PeerUser' && m.fromId.userId) {
 								senderId = m.fromId.userId.toString();
+								senderPeerId = senderId;
+								senderPeerType = 'user';
+							} else if (m.fromId?.className === 'PeerChat' && m.fromId.chatId) {
+								senderPeerId = m.fromId.chatId.toString();
+								senderPeerType = 'chat';
+							} else if (m.fromId?.className === 'PeerChannel' && m.fromId.channelId) {
+								senderPeerId = m.fromId.channelId.toString();
+								senderPeerType = 'channel';
 							}
 
 							return {
@@ -443,6 +455,8 @@ async function handleMessage(msg: {
 								text: m.message ?? '',
 								date: m.date ?? 0,
 								senderId,
+								senderPeerId,
+								senderPeerType,
 								isOutgoing: m.out ?? senderId === meId,
 							};
 						});

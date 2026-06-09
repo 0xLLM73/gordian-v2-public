@@ -5,6 +5,7 @@ import {
 	getAllDiffEmbeddings,
 	reinforcePattern,
 } from '@repo/db';
+import { redactSensitive } from '@repo/shared';
 import { Queue, Worker } from 'bullmq';
 import { withRLS } from '../middleware/rls';
 import { connection } from '../redis';
@@ -172,7 +173,7 @@ patternAggregationWorker.on('completed', (job) => {
 });
 
 patternAggregationWorker.on('failed', (job, err) => {
-	console.error(`[pattern-aggregation] Job ${job?.id} failed:`, err.message);
+	console.error(`[pattern-aggregation] Job ${job?.id} failed:`, redactSensitive(err));
 });
 
 // ─── Scheduled interval (nightly) ────────────────────────────────────────────
@@ -184,7 +185,7 @@ export function schedulePatternAggregation(): void {
 	patternAggregationQueue
 		.add('nightly-cluster', {})
 		.catch((err) =>
-			console.error('[pattern-aggregation] Failed to queue initial run:', (err as Error).message),
+			console.error('[pattern-aggregation] Failed to queue initial run:', redactSensitive(err)),
 		);
 
 	// Schedule nightly (every 24 hours)

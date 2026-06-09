@@ -72,6 +72,7 @@ export const runtimeCleanupQueueDefinitions = [
 	'goal-extraction',
 	'goal-decomposition',
 	'knowledge-extraction',
+	'knowledge-analysis',
 	'knowledge-inference',
 	'relationship-extraction',
 	'style-analysis',

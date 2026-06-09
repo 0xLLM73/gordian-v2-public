@@ -248,6 +248,16 @@ describe('KnowledgeBrowser evidence-aware search cards', () => {
 						connectedContactCount: 1,
 					},
 				],
+				messageCoverage: {
+					chatsWithNullContactMessages: 3,
+					linkedContactMessages: 75,
+					messagesWithSenderMetadata: 25,
+					messagesWithUserSenderMetadata: 20,
+					nullContactMessages: 25,
+					nullContactMessagesWithSenderMetadata: 0,
+					nullContactMessagesWithUserSenderMetadata: 0,
+					totalMessages: 100,
+				},
 			}),
 		);
 
@@ -258,6 +268,14 @@ describe('KnowledgeBrowser evidence-aware search cards', () => {
 		expect(screen.getByText('Nomic local embeddings')).toBeTruthy();
 		expect(screen.getByText('2 local LLM calls')).toBeTruthy();
 		expect(screen.getByText('Mode: Incremental')).toBeTruthy();
+		expect(screen.getByText('Imported')).toBeTruthy();
+		expect(screen.getByText('100')).toBeTruthy();
+		expect(screen.getByText('Contact-linked')).toBeTruthy();
+		expect(screen.getByText('75%')).toBeTruthy();
+		expect(screen.getByText('Sender-attributed')).toBeTruthy();
+		expect(screen.getByText('20%')).toBeTruthy();
+		expect(screen.getByText('Needs attribution')).toBeTruthy();
+		expect(screen.getByText('25')).toBeTruthy();
 
 		fireEvent.click(screen.getByRole('button', { name: /Full rebuild/i }));
 		await waitFor(() =>

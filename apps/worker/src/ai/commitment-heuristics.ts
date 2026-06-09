@@ -26,7 +26,12 @@ const HIGH_CONFIDENCE: PatternEntry[] = [
 	{ regex: /\bi'll\s+\w+/i, name: 'i_ll', confidence: 0.85 },
 	{ regex: /\blet me\s+\w+/i, name: 'let_me', confidence: 0.85 },
 	{ regex: /\bi'm going to\b/i, name: 'im_going_to', confidence: 0.85 },
-	{ regex: /\bwill do\b/i, name: 'will_do', confidence: 0.85 },
+	{
+		regex:
+			/^\s*(?:(?:sure|yes|yeah|yep|ok|okay|sounds good|got it|roger|copy)[,:\-\s]*)?will do[.!?]?\s*$/i,
+		name: 'will_do',
+		confidence: 0.85,
+	},
 	{ regex: /\bi can\s+\w+\s+that/i, name: 'i_can_that', confidence: 0.85 },
 ];
 

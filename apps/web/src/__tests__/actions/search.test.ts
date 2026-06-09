@@ -80,6 +80,12 @@ describe('search actions', () => {
 			expect(result?.data).toBeDefined();
 			expect(result?.data?.contacts).toHaveLength(1);
 			expect(result?.data?.commitments).toHaveLength(1);
+			expect(result?.data?.meta.embedding).toMatchObject({
+				enabled: false,
+				used: false,
+				providerMode: 'disabled',
+				skippedReason: 'Short queries use exact/text search.',
+			});
 			expect(mockUnifiedSearch).toHaveBeenCalledWith(
 				WORKSPACE_ID,
 				'John',
@@ -135,11 +141,15 @@ describe('search actions', () => {
 
 		it('does not embed long queries unless semantic search egress is explicitly enabled', async () => {
 			const { searchAction } = await import('@/app/actions/search');
-			await searchAction({
+			const result = await searchAction({
 				query: 'meeting notes about project',
 			});
 
 			expect(mockFetch).not.toHaveBeenCalled();
+			expect(result?.data?.meta.embedding).toMatchObject({
+				used: false,
+				skippedReason: 'Semantic search embeddings are disabled.',
+			});
 			expect(mockUnifiedSearch).toHaveBeenCalledWith(
 				WORKSPACE_ID,
 				expect.any(String),
@@ -154,11 +164,15 @@ describe('search actions', () => {
 			vi.stubEnv('AI_SEARCH_EMBEDDINGS_ENABLED', 'true');
 
 			const { searchAction } = await import('@/app/actions/search');
-			await searchAction({
+			const result = await searchAction({
 				query: 'meeting notes about project',
 			});
 
 			expect(mockFetch).not.toHaveBeenCalled();
+			expect(result?.data?.meta.embedding).toMatchObject({
+				used: false,
+				skippedReason: 'Vendor AI egress is disabled.',
+			});
 			expect(mockUnifiedSearch).toHaveBeenCalledWith(
 				WORKSPACE_ID,
 				expect.any(String),
@@ -181,13 +195,23 @@ describe('search actions', () => {
 			});
 
 			const { searchAction } = await import('@/app/actions/search');
-			await searchAction({
+			const result = await searchAction({
 				query: 'follow up with alice@example.com about the deal',
 			});
 
 			expect(mockFetch).toHaveBeenCalledOnce();
 			const body = JSON.parse(mockFetch.mock.calls[0][1].body);
 			expect(body.text).toContain('[EMAIL_1]');
+			expect(result?.data?.meta.embedding).toMatchObject({
+				enabled: true,
+				used: true,
+				providerMode: 'local',
+				providerLabel: 'Qwen local embeddings',
+				queryMasked: true,
+			});
+			expect(result?.data?.meta.sources.commitments).toBe(
+				'Semantic vector + encrypted-text fallback',
+			);
 			expect(mockUnifiedSearch).toHaveBeenCalledWith(
 				WORKSPACE_ID,
 				'follow up with alice@example.com about the deal',
@@ -205,13 +229,18 @@ describe('search actions', () => {
 			});
 
 			const { searchAction } = await import('@/app/actions/search');
-			await searchAction({
+			const result = await searchAction({
 				query: 'follow up with alice@example.com about the deal',
 			});
 
 			const body = JSON.parse(mockFetch.mock.calls[0][1].body);
 			expect(body.text).toContain('[EMAIL_1]');
 			expect(body.text).not.toContain('alice@example.com');
+			expect(result?.data?.meta.embedding).toMatchObject({
+				used: true,
+				providerMode: 'cloud',
+				queryMasked: true,
+			});
 			expect(mockUnifiedSearch).toHaveBeenCalledWith(
 				WORKSPACE_ID,
 				'follow up with alice@example.com about the deal',

@@ -10,17 +10,51 @@ const mockRunKnowledgeAnalysis = vi.hoisted(() => vi.fn());
 const mockRunManualKnowledgeEvidenceBuild = vi.hoisted(() => vi.fn());
 const mockRunKnowledgeInference = vi.hoisted(() => vi.fn());
 const mockScheduleAIPipeline = vi.hoisted(() => vi.fn());
+const mockEstimateConnectionReprocess = vi.hoisted(() => vi.fn());
+const mockQueueConnectionReprocess = vi.hoisted(() => vi.fn());
+const mockEstimateIntroductionReprocess = vi.hoisted(() => vi.fn());
+const mockQueueIntroductionReprocess = vi.hoisted(() => vi.fn());
+const mockGetRelationshipExtractionQueueStatus = vi.hoisted(() => vi.fn());
+const mockCleanupResolvedRelationshipExtractionFailures = vi.hoisted(() => vi.fn());
+const mockSql = vi.hoisted(() =>
+	vi.fn((strings: TemplateStringsArray, ...values: unknown[]) => ({ strings, values })),
+);
+
+function makeSelectLimitChain(rows: unknown[]) {
+	const chain = {
+		from: vi.fn(() => chain),
+		innerJoin: vi.fn(() => chain),
+		where: vi.fn(() => chain),
+		groupBy: vi.fn(() => chain),
+		orderBy: vi.fn(() => chain),
+		limit: vi.fn(() => Promise.resolve(rows)),
+	};
+	return chain;
+}
 
 vi.mock('@repo/db', () => ({
+	and: vi.fn((...conditions: unknown[]) => ({ conditions, op: 'and' })),
 	appendAuditLog: mockAppendAuditLog,
+	chats: { id: 'chatId', sourceAccountId: 'sourceAccountId' },
 	contacts: { id: 'id', workspaceId: 'workspaceId' },
 	db: { select: mockDbSelect },
-	eq: vi.fn(),
+	desc: vi.fn((value: unknown) => ({ direction: 'desc', value })),
+	eq: vi.fn((left: unknown, right: unknown) => ({ left, op: 'eq', right })),
 	getMessageCount: mockGetMessageCount,
 	getMessagesByContact: vi.fn(),
 	hasUserAiAnalysisConsent: mockHasUserAiAnalysisConsent,
+	inArray: vi.fn((left: unknown, right: unknown) => ({ left, op: 'inArray', right })),
 	isWorkspaceMember: mockIsWorkspaceMember,
-	sql: vi.fn(),
+	messages: {
+		chatId: 'chatId',
+		contactId: 'contactId',
+		id: 'messageId',
+		isOutgoing: 'isOutgoing',
+		sentAt: 'sentAt',
+		text: 'text',
+		workspaceId: 'workspaceId',
+	},
+	sql: mockSql,
 	workspaces: {
 		id: 'id',
 		encryptedWrk: 'encryptedWrk',
@@ -35,6 +69,47 @@ vi.mock('../../ai/embeddings', () => ({
 
 vi.mock('../../queues/ai-flow', () => ({
 	scheduleAIPipeline: mockScheduleAIPipeline,
+}));
+
+vi.mock('../../queues/connection-reprocess', () => ({
+	estimateConnectionReprocess: mockEstimateConnectionReprocess,
+	normalizeConnectionReprocessBatchSize: (value: unknown) =>
+		Math.min(Math.max(Number(value ?? 200), 1), 200),
+	normalizeConnectionReprocessContactIds: (value: unknown) =>
+		Array.isArray(value)
+			? [...new Set(value.filter((item): item is string => typeof item === 'string'))]
+			: undefined,
+	normalizeConnectionReprocessContactLimit: (value: unknown) =>
+		Math.min(Math.max(Number(value ?? 25), 1), 100),
+	normalizeConnectionReprocessMaxAgeDays: (value: unknown) => {
+		if (value === undefined || value === null || value === '') return undefined;
+		const numeric = Number(value);
+		return Number.isFinite(numeric) ? Math.min(Math.max(Math.trunc(numeric), 1), 3650) : undefined;
+	},
+	queueConnectionReprocess: mockQueueConnectionReprocess,
+}));
+
+vi.mock('../../queues/introduction-reprocess', () => ({
+	estimateIntroductionReprocess: mockEstimateIntroductionReprocess,
+	normalizeIntroductionReprocessBatchSize: (value: unknown) =>
+		Math.min(Math.max(Number(value ?? 200), 1), 200),
+	normalizeIntroductionReprocessChatIds: (value: unknown) =>
+		Array.isArray(value)
+			? [...new Set(value.filter((item): item is string => typeof item === 'string'))]
+			: undefined,
+	normalizeIntroductionReprocessChatLimit: (value: unknown) =>
+		Math.min(Math.max(Number(value ?? 25), 1), 100),
+	normalizeIntroductionReprocessMaxAgeDays: (value: unknown) => {
+		if (value === undefined || value === null || value === '') return undefined;
+		const numeric = Number(value);
+		return Number.isFinite(numeric) ? Math.min(Math.max(Math.trunc(numeric), 1), 3650) : undefined;
+	},
+	queueIntroductionReprocess: mockQueueIntroductionReprocess,
+}));
+
+vi.mock('../../queues/relationship-extraction', () => ({
+	cleanupResolvedRelationshipExtractionFailures: mockCleanupResolvedRelationshipExtractionFailures,
+	getRelationshipExtractionQueueStatus: mockGetRelationshipExtractionQueueStatus,
 }));
 
 vi.mock('../../queues/knowledge-cron', () => ({
@@ -70,6 +145,14 @@ function post(path: string, body: object) {
 			'X-Internal-Secret': SECRET,
 		},
 		body: JSON.stringify(body),
+	});
+}
+
+function get(path: string) {
+	return admin.request(path, {
+		headers: {
+			'X-Internal-Secret': SECRET,
+		},
 	});
 }
 
@@ -109,6 +192,82 @@ describe('admin AI privacy gates', () => {
 		await expect(res.json()).resolves.toEqual({ embedding: [0.1, 0.2, 0.3] });
 	});
 
+	it('returns workspace-scoped relationship extraction status', async () => {
+		const workspaceId = '550e8400-e29b-41d4-a716-446655440000';
+		const userId = '660e8400-e29b-41d4-a716-446655440001';
+		mockGetRelationshipExtractionQueueStatus.mockResolvedValueOnce({
+			active: 1,
+			waiting: 3,
+			delayed: 0,
+			retainedFailed: 0,
+			resolvedFailed: 0,
+			failed: 0,
+			total: 4,
+			introductionJobs: 2,
+			connectionJobs: 2,
+			unknownJobs: 0,
+			progressReports: 0,
+			diagnostics: {
+				messagesInBatch: 0,
+				freshSourceMessages: 0,
+				relationshipModelCalls: 0,
+				introductionKeywordMatches: 0,
+				introductionModelCalls: 0,
+				introductionRejected: 0,
+				connectionKeywordMatches: 0,
+				connectionModelCalls: 0,
+				connectionRejected: 0,
+			},
+			oldestJobAt: '2026-06-08T12:00:00.000Z',
+			newestJobAt: '2026-06-08T12:05:00.000Z',
+			sampledAt: '2026-06-08T12:10:00.000Z',
+		});
+
+		const res = await get(
+			`/relationship-extraction-status?workspaceId=${workspaceId}&userId=${userId}`,
+		);
+
+		expect(res.status).toBe(200);
+		expect(mockIsWorkspaceMember).toHaveBeenCalledWith(workspaceId, userId);
+		expect(mockGetRelationshipExtractionQueueStatus).toHaveBeenCalledWith({ workspaceId, userId });
+		await expect(res.json()).resolves.toEqual(
+			expect.objectContaining({
+				active: 1,
+				waiting: 3,
+				introductionJobs: 2,
+				connectionJobs: 2,
+			}),
+		);
+	});
+
+	it('clears resolved relationship extraction failures for workspace members', async () => {
+		const workspaceId = '550e8400-e29b-41d4-a716-446655440000';
+		const userId = '660e8400-e29b-41d4-a716-446655440001';
+		mockCleanupResolvedRelationshipExtractionFailures.mockResolvedValueOnce({
+			scanned: 50,
+			removed: 49,
+			retained: 1,
+			sampledAt: '2026-06-08T12:15:00.000Z',
+		});
+
+		const res = await post('/relationship-extraction-cleanup', { workspaceId, userId });
+
+		expect(res.status).toBe(200);
+		expect(mockIsWorkspaceMember).toHaveBeenCalledWith(workspaceId, userId);
+		expect(mockCleanupResolvedRelationshipExtractionFailures).toHaveBeenCalledWith({
+			workspaceId,
+			userId,
+			limit: undefined,
+		});
+		await expect(res.json()).resolves.toEqual(
+			expect.objectContaining({
+				scanned: 50,
+				removed: 49,
+				retained: 1,
+			}),
+		);
+	});
+
 	it('rejects message reprocessing before loading workspace messages when AI is disabled', async () => {
 		vi.stubEnv('ADMIN_AI_REPROCESS_ENABLED', 'true');
 		const res = await post('/reprocess-messages', {
@@ -145,6 +304,74 @@ describe('admin AI privacy gates', () => {
 
 		expect(res.status).toBe(403);
 		expect(mockDbSelect).not.toHaveBeenCalled();
+		expect(mockScheduleAIPipeline).not.toHaveBeenCalled();
+	});
+
+	it('dry-runs message reprocessing within the requested recent window', async () => {
+		vi.stubEnv('ADMIN_AI_REPROCESS_ENABLED', 'true');
+		vi.stubEnv('AI_PROCESSING_ENABLED', 'true');
+		mockDbSelect.mockReturnValueOnce(
+			makeSelectLimitChain([
+				{ id: 'contact-1', messageCount: 20 },
+				{ id: 'contact-2', messageCount: 5 },
+			]),
+		);
+
+		const res = await post('/reprocess-messages', {
+			workspaceId: '550e8400-e29b-41d4-a716-446655440000',
+			userId: '660e8400-e29b-41d4-a716-446655440001',
+			batchSize: 10,
+			contactLimit: 3,
+			maxAgeDays: 14,
+			dryRun: true,
+		});
+
+		expect(res.status).toBe(200);
+		await expect(res.json()).resolves.toEqual(
+			expect.objectContaining({
+				status: 'dry_run',
+				batchSize: 10,
+				contactLimit: 3,
+				maxAgeDays: 14,
+				wouldProcessContacts: 2,
+				wouldProcessMessages: 15,
+				confirmToken: expect.any(String),
+			}),
+		);
+		expect(mockSql.mock.calls.some((call) => call.includes(14))).toBe(true);
+		expect(mockScheduleAIPipeline).not.toHaveBeenCalled();
+	});
+
+	it('binds message reprocessing confirmation tokens to the recent window', async () => {
+		vi.stubEnv('ADMIN_AI_REPROCESS_ENABLED', 'true');
+		vi.stubEnv('AI_PROCESSING_ENABLED', 'true');
+		mockDbSelect.mockReturnValueOnce(makeSelectLimitChain([{ id: 'contact-1', messageCount: 20 }]));
+
+		const dryRun = await post('/reprocess-messages', {
+			workspaceId: '550e8400-e29b-41d4-a716-446655440000',
+			userId: '660e8400-e29b-41d4-a716-446655440001',
+			batchSize: 10,
+			contactLimit: 3,
+			maxAgeDays: 14,
+			dryRun: true,
+		});
+		const dryRunBody = (await dryRun.json()) as { confirmToken: string };
+		mockDbSelect.mockReturnValueOnce(makeSelectLimitChain([{ id: 'contact-1', messageCount: 20 }]));
+
+		const res = await post('/reprocess-messages', {
+			workspaceId: '550e8400-e29b-41d4-a716-446655440000',
+			userId: '660e8400-e29b-41d4-a716-446655440001',
+			batchSize: 10,
+			contactLimit: 3,
+			maxAgeDays: 7,
+			confirm: true,
+			confirmToken: dryRunBody.confirmToken,
+		});
+
+		expect(res.status).toBe(400);
+		await expect(res.json()).resolves.toEqual({
+			error: 'Valid dry-run confirmToken is required to queue jobs.',
+		});
 		expect(mockScheduleAIPipeline).not.toHaveBeenCalled();
 	});
 
@@ -266,5 +493,195 @@ describe('admin AI privacy gates', () => {
 		expect(mockRunKnowledgeInference).toHaveBeenCalledWith(workspaceId, {
 			requireFeatureFlag: false,
 		});
+	});
+
+	it('rejects introduction reprocessing before loading group messages when AI is disabled', async () => {
+		vi.stubEnv('ADMIN_AI_REPROCESS_ENABLED', 'true');
+
+		const res = await post('/reprocess-introductions', {
+			workspaceId: '550e8400-e29b-41d4-a716-446655440000',
+			userId: '660e8400-e29b-41d4-a716-446655440001',
+		});
+
+		expect(res.status).toBe(403);
+		expect(mockEstimateIntroductionReprocess).not.toHaveBeenCalled();
+		expect(mockQueueIntroductionReprocess).not.toHaveBeenCalled();
+	});
+
+	it('dry-runs introduction reprocessing within the requested recent group window', async () => {
+		vi.stubEnv('ADMIN_AI_REPROCESS_ENABLED', 'true');
+		vi.stubEnv('AI_PROCESSING_ENABLED', 'true');
+		mockEstimateIntroductionReprocess.mockResolvedValueOnce({
+			workspaceId: '550e8400-e29b-41d4-a716-446655440000',
+			chatLimit: 20,
+			batchSize: 50,
+			wouldProcessChats: 3,
+			wouldProcessMessages: 120,
+			maxAgeDays: 30,
+		});
+
+		const res = await post('/reprocess-introductions', {
+			workspaceId: '550e8400-e29b-41d4-a716-446655440000',
+			userId: '660e8400-e29b-41d4-a716-446655440001',
+			batchSize: 50,
+			chatLimit: 20,
+			maxAgeDays: 30,
+			dryRun: true,
+		});
+
+		expect(res.status).toBe(200);
+		await expect(res.json()).resolves.toEqual(
+			expect.objectContaining({
+				status: 'dry_run',
+				batchSize: 50,
+				chatLimit: 20,
+				maxAgeDays: 30,
+				wouldProcessChats: 3,
+				wouldProcessMessages: 120,
+				confirmToken: expect.any(String),
+			}),
+		);
+		expect(mockEstimateIntroductionReprocess).toHaveBeenCalledWith(
+			expect.objectContaining({
+				batchSize: 50,
+				chatLimit: 20,
+				maxAgeDays: 30,
+			}),
+		);
+		expect(mockQueueIntroductionReprocess).not.toHaveBeenCalled();
+	});
+
+	it('binds introduction reprocessing confirmation tokens to the recent window', async () => {
+		vi.stubEnv('ADMIN_AI_REPROCESS_ENABLED', 'true');
+		vi.stubEnv('AI_PROCESSING_ENABLED', 'true');
+		mockEstimateIntroductionReprocess.mockResolvedValueOnce({
+			workspaceId: '550e8400-e29b-41d4-a716-446655440000',
+			chatLimit: 20,
+			batchSize: 50,
+			wouldProcessChats: 3,
+			wouldProcessMessages: 120,
+			maxAgeDays: 30,
+		});
+
+		const dryRun = await post('/reprocess-introductions', {
+			workspaceId: '550e8400-e29b-41d4-a716-446655440000',
+			userId: '660e8400-e29b-41d4-a716-446655440001',
+			batchSize: 50,
+			chatLimit: 20,
+			maxAgeDays: 30,
+			dryRun: true,
+		});
+		const dryRunBody = (await dryRun.json()) as { confirmToken: string };
+
+		const res = await post('/reprocess-introductions', {
+			workspaceId: '550e8400-e29b-41d4-a716-446655440000',
+			userId: '660e8400-e29b-41d4-a716-446655440001',
+			batchSize: 50,
+			chatLimit: 20,
+			maxAgeDays: 7,
+			confirm: true,
+			confirmToken: dryRunBody.confirmToken,
+		});
+
+		expect(res.status).toBe(400);
+		await expect(res.json()).resolves.toEqual({
+			error: 'Valid dry-run confirmToken is required to queue jobs.',
+		});
+		expect(mockQueueIntroductionReprocess).not.toHaveBeenCalled();
+	});
+
+	it('rejects connection reprocessing before loading contact messages when AI is disabled', async () => {
+		vi.stubEnv('ADMIN_AI_REPROCESS_ENABLED', 'true');
+
+		const res = await post('/reprocess-connections', {
+			workspaceId: '550e8400-e29b-41d4-a716-446655440000',
+			userId: '660e8400-e29b-41d4-a716-446655440001',
+		});
+
+		expect(res.status).toBe(403);
+		expect(mockEstimateConnectionReprocess).not.toHaveBeenCalled();
+		expect(mockQueueConnectionReprocess).not.toHaveBeenCalled();
+	});
+
+	it('dry-runs connection reprocessing within the requested recent contact window', async () => {
+		vi.stubEnv('ADMIN_AI_REPROCESS_ENABLED', 'true');
+		vi.stubEnv('AI_PROCESSING_ENABLED', 'true');
+		mockEstimateConnectionReprocess.mockResolvedValueOnce({
+			workspaceId: '550e8400-e29b-41d4-a716-446655440000',
+			contactLimit: 20,
+			batchSize: 50,
+			wouldProcessContacts: 4,
+			wouldProcessMessages: 140,
+			maxAgeDays: 30,
+		});
+
+		const res = await post('/reprocess-connections', {
+			workspaceId: '550e8400-e29b-41d4-a716-446655440000',
+			userId: '660e8400-e29b-41d4-a716-446655440001',
+			batchSize: 50,
+			contactLimit: 20,
+			maxAgeDays: 30,
+			dryRun: true,
+		});
+
+		expect(res.status).toBe(200);
+		await expect(res.json()).resolves.toEqual(
+			expect.objectContaining({
+				status: 'dry_run',
+				batchSize: 50,
+				contactLimit: 20,
+				maxAgeDays: 30,
+				wouldProcessContacts: 4,
+				wouldProcessMessages: 140,
+				confirmToken: expect.any(String),
+			}),
+		);
+		expect(mockEstimateConnectionReprocess).toHaveBeenCalledWith(
+			expect.objectContaining({
+				batchSize: 50,
+				contactLimit: 20,
+				maxAgeDays: 30,
+			}),
+		);
+		expect(mockQueueConnectionReprocess).not.toHaveBeenCalled();
+	});
+
+	it('binds connection reprocessing confirmation tokens to the recent window', async () => {
+		vi.stubEnv('ADMIN_AI_REPROCESS_ENABLED', 'true');
+		vi.stubEnv('AI_PROCESSING_ENABLED', 'true');
+		mockEstimateConnectionReprocess.mockResolvedValueOnce({
+			workspaceId: '550e8400-e29b-41d4-a716-446655440000',
+			contactLimit: 20,
+			batchSize: 50,
+			wouldProcessContacts: 4,
+			wouldProcessMessages: 140,
+			maxAgeDays: 30,
+		});
+
+		const dryRun = await post('/reprocess-connections', {
+			workspaceId: '550e8400-e29b-41d4-a716-446655440000',
+			userId: '660e8400-e29b-41d4-a716-446655440001',
+			batchSize: 50,
+			contactLimit: 20,
+			maxAgeDays: 30,
+			dryRun: true,
+		});
+		const dryRunBody = (await dryRun.json()) as { confirmToken: string };
+
+		const res = await post('/reprocess-connections', {
+			workspaceId: '550e8400-e29b-41d4-a716-446655440000',
+			userId: '660e8400-e29b-41d4-a716-446655440001',
+			batchSize: 50,
+			contactLimit: 20,
+			maxAgeDays: 7,
+			confirm: true,
+			confirmToken: dryRunBody.confirmToken,
+		});
+
+		expect(res.status).toBe(400);
+		await expect(res.json()).resolves.toEqual({
+			error: 'Valid dry-run confirmToken is required to queue jobs.',
+		});
+		expect(mockQueueConnectionReprocess).not.toHaveBeenCalled();
 	});
 });

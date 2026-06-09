@@ -15,6 +15,7 @@ import {
 	listChats,
 	updateChatLastSync,
 	updateMemoryEmbedding,
+	updateMessageSenderMetadataByTelegramIds,
 	upsertChat,
 	upsertMessages,
 } from '@repo/db';
@@ -77,6 +78,8 @@ interface GramJSMessage {
 	text: string;
 	date: number;
 	senderId?: string;
+	senderPeerId?: string;
+	senderPeerType?: 'user' | 'chat' | 'channel';
 	isOutgoing: boolean;
 }
 
@@ -276,6 +279,8 @@ async function processChat(
 	const messagesToInsert = rawMessages.map((m) => ({
 		telegramMessageId: String(m.id),
 		contactId: m.senderId ? (contactMap.get(m.senderId) ?? undefined) : undefined,
+		telegramSenderId: m.senderPeerId ?? m.senderId,
+		telegramSenderType: m.senderPeerType ?? (m.senderId ? ('user' as const) : undefined),
 		text: m.text || undefined,
 		isOutgoing: m.isOutgoing,
 		sentAt: new Date(m.date * 1000),
@@ -286,6 +291,20 @@ async function processChat(
 	for (let i = 0; i < messagesToInsert.length; i += 500) {
 		const batch = messagesToInsert.slice(i, i + 500);
 		inserted += await upsertMessages(workspaceId, chatDbId, batch, envelope);
+		const metadataBatch = batch.flatMap((message) =>
+			message.telegramSenderId && message.telegramSenderType
+				? [
+						{
+							telegramMessageId: message.telegramMessageId,
+							telegramSenderId: message.telegramSenderId,
+							telegramSenderType: message.telegramSenderType,
+						},
+					]
+				: [],
+		);
+		if (metadataBatch.length > 0) {
+			await updateMessageSenderMetadataByTelegramIds(workspaceId, chatDbId, metadataBatch);
+		}
 	}
 
 	await updateChatLastSync(workspaceId, chatDbId);

@@ -136,11 +136,17 @@ export {
 	upsertMessages,
 	linkMessagesToContact,
 	linkMessagesToContactsByTelegramIds,
+	getMessageContactCoverageReport,
+	getMessageNullContactReasonReport,
+	repairMessagesToSenderContacts,
+	repairPrivateMessagesToPeerContacts,
+	updateMessageSenderMetadataByTelegramIds,
 	listMessageIdsByTelegramIds,
 	getMessagesByChat,
 	getMessagesByTelegramIds,
 	getMessagesByContact,
 	getMessagesByIds,
+	getNullContactSenderMetadataGap,
 	getRecentMessages,
 	getMessageCount,
 	getMessageTimeRangeStats,
@@ -148,7 +154,19 @@ export {
 	getLatestMessageTimestamp,
 	getMessagesByTimeRange,
 } from './messages';
-export type { MessageIdentity, UpsertChatInput, UpsertMessageInput } from './messages';
+export type {
+	MessageContactCoverageByChatType,
+	MessageContactCoverageReport,
+	MessageNullContactReasonReport,
+	MessageNullContactReasonRow,
+	MessageIdentity,
+	MessageSenderMetadataLink,
+	PrivatePeerContactRepairResult,
+	SenderMetadataContactRepairResult,
+	TelegramSenderType,
+	UpsertChatInput,
+	UpsertMessageInput,
+} from './messages';
 
 export {
 	TELEGRAM_IMPORT_ACTIVE_STATUSES,
@@ -160,6 +178,8 @@ export {
 	getLatestTelegramImportProgress,
 	getLatestTelegramImportProgressWithHistory,
 	getLatestTelegramImportRun,
+	listChatIdsForTelegramImportRun,
+	listContactIdsForTelegramImportRun,
 	getOldestTelegramMessageId,
 	getTelegramChatImportState,
 	getTelegramImportRun,
@@ -199,7 +219,12 @@ export type { CreateRelationshipInput, GetAllRelationshipsOptions } from './rela
 export { getLatestSummary, upsertSummary, markSummaryStale } from './summaries';
 export type { UpsertSummaryInput } from './summaries';
 
-export { getPreferences, upsertPreferences, getWorkspaceIntroKeywords } from './user-preferences';
+export {
+	getPreferences,
+	upsertPreferences,
+	getWorkspaceIntroKeywords,
+	getWorkspaceConnectionKeywords,
+} from './user-preferences';
 export type { UserPreferencesData, UpsertPreferencesInput } from './user-preferences';
 
 export {
@@ -395,6 +420,7 @@ export {
 	incrementNodeMentionCount,
 	getKnowledgeNode,
 	listKnowledgeNodes,
+	getKnowledgeNodeEvidenceStats,
 	normalizeKnowledgeSearchQuery,
 	DEFAULT_KNOWLEDGE_MESSAGE_RECALL_LIMIT,
 	DEFAULT_KNOWLEDGE_MESSAGE_RECALL_MIN_SCORE,
@@ -403,8 +429,10 @@ export {
 	searchKnowledgeNodes,
 	searchKnowledgeNodesWithEvidence,
 	getLegacyKnowledgeEvidenceReport,
+	repairKnowledgeEvidenceCounts,
 	createKnowledgeEvidence,
 	listEvidenceForKnowledgeNode,
+	listEvidenceForKnowledgeNodes,
 	listEvidenceForKnowledgeContact,
 	listEvidenceForKnowledgeLink,
 	linkContactToKnowledge,
@@ -424,6 +452,7 @@ export {
 	provenanceSearch,
 	getGraphData,
 	upsertExtractionLog,
+	updateKnowledgeBackfillProgress,
 	getExtractionLog,
 	getContactsNeedingExtraction,
 	getKnowledgeAnalysisContactCandidates,
@@ -448,6 +477,7 @@ export type {
 	LegacyKnowledgeEvidenceNodeTypeSummary,
 	LegacyKnowledgeEvidenceNodeGap,
 	LegacyKnowledgeEvidenceContactGap,
+	RepairKnowledgeEvidenceCountsResult,
 	KnowledgeExtractionLogEntry,
 	KnowledgeAnalysisContactCandidate,
 	CreateKnowledgeNodeInput,

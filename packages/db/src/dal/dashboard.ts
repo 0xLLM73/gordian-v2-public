@@ -25,12 +25,7 @@ export async function getDashboardStats(workspaceId: string): Promise<DashboardS
 		db
 			.select({ count: sql<number>`count(*)::int` })
 			.from(commitments)
-			.where(
-				and(
-					eq(commitments.workspaceId, workspaceId),
-					sql`${commitments.status} IN ('active', 'draft')`,
-				),
-			),
+			.where(and(eq(commitments.workspaceId, workspaceId), eq(commitments.status, 'active'))),
 
 		db
 			.select({
@@ -121,12 +116,7 @@ export async function getUpcomingCommitments(
 				dueDate: commitments.dueDate,
 			})
 			.from(commitments)
-			.where(
-				and(
-					eq(commitments.workspaceId, workspaceId),
-					sql`${commitments.status} IN ('active', 'draft')`,
-				),
-			)
+			.where(and(eq(commitments.workspaceId, workspaceId), eq(commitments.status, 'active')))
 			.orderBy(sql`${commitments.dueDate} ASC NULLS LAST`)
 			.limit(limit);
 

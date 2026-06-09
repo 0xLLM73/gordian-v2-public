@@ -18,8 +18,8 @@ export async function ConnectionList({
 		return (
 			<div className="mt-4 rounded-lg border border-border bg-muted p-8 text-center">
 				<p className="text-sm text-muted-foreground">
-					No new connections detected yet. Gordian will automatically detect first-meeting signals
-					from your conversations.
+					No new connections detected yet. Use Find new connections to scan recent contact-linked
+					messages for first-meeting signals.
 				</p>
 			</div>
 		);

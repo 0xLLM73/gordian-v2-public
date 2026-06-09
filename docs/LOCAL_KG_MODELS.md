@@ -241,6 +241,37 @@ shows:
 The Run analysis button still uses the same feature and consent gates. Local
 mode only changes where the embedding and entity-extraction calls go.
 
+## Post-Sync Graph Builds
+
+Telegram history imports schedule KG work automatically when
+`KNOWLEDGE_POST_SYNC_ANALYSIS_ENABLED` is not `false`.
+
+- Pages that insert new messages queue a debounced incremental job for the
+  workspace. The default debounce is `KNOWLEDGE_SYNC_INCREMENTAL_DELAY_MS=90000`
+  and the default contact limit is `KNOWLEDGE_SYNC_INCREMENTAL_CONTACT_LIMIT=50`.
+- A completed history import with inserted messages queues one full workspace
+  analysis job keyed by the import run id. The default delay is
+  `KNOWLEDGE_IMPORT_COMPLETION_DELAY_MS=5000` and the default contact limit is
+  `KNOWLEDGE_IMPORT_FULL_CONTACT_LIMIT=500`.
+- Full import analysis is resumable per contact. Each run scans up to
+  `KNOWLEDGE_IMPORT_FULL_MESSAGES_PER_CONTACT_LIMIT=200` messages per contact,
+  records the oldest message reached in `knowledge_extraction_log`, and queues
+  a continuation batch while historical messages remain. Continuations are
+  capped by `KNOWLEDGE_IMPORT_FULL_MAX_BATCHES=20` with
+  `KNOWLEDGE_IMPORT_FULL_CONTINUATION_DELAY_MS=1000` between batches.
+- Incremental sync analysis keeps the cheaper newest-message path and defaults
+  to `KNOWLEDGE_INCREMENTAL_MESSAGES_PER_CONTACT_LIMIT=200` messages per
+  contact.
+- The KG jobs carry workspace/run metadata only. They do not carry Telegram
+  session material or message plaintext. The Telegram import session is
+  disconnected at import finalization; KG analysis reads encrypted local
+  message rows through the workspace envelope and still requires persisted AI
+  analysis consent plus the `knowledge_extraction` feature flag or
+  `KNOWLEDGE_EXTRACTION_ENABLED=true`.
+
+`KNOWLEDGE_AUTO_ANALYSIS_ENABLED` still controls the old 24-hour cron. It is not
+required for post-sync graph builds.
+
 ## Why 512 Dimensions
 
 The database stores KG vectors as `halfvec(512)`. That is efficient for local

@@ -55,28 +55,11 @@ if addStatus == errSecDuplicateItem {
 fail("SecItemAdd failed with status \\(addStatus)")
 `;
 
-export async function writeKeychainSecret({ account, secret, service }) {
-	if (!account || !service) {
-		throw new Error('Keychain account and service are required');
-	}
-	if (!secret) {
-		throw new Error('Refusing to store empty keychain secret');
-	}
-
-	const helperDir = mkdtempSync(join(tmpdir(), 'gordian-keychain-helper-'));
-	const helperPath = join(helperDir, 'keychain-set-secret.swift');
-	const moduleCachePath = join(tmpdir(), 'gordian-swift-module-cache');
-	mkdirSync(moduleCachePath, { recursive: true });
-	writeFileSync(helperPath, KEYCHAIN_SET_SECRET_SWIFT, { mode: 0o600 });
-
-	await new Promise((resolve, reject) => {
-		const child = spawn(
-			'swift',
-			['-module-cache-path', moduleCachePath, helperPath, service, account],
-			{
-				stdio: ['pipe', 'pipe', 'pipe'],
-			},
-		);
+function runKeychainSetCommand({ args, command, secret, startErrorMessage }) {
+	return new Promise((resolve, reject) => {
+		const child = spawn(command, args, {
+			stdio: ['pipe', 'pipe', 'pipe'],
+		});
 
 		let stdout = '';
 		let stderr = '';
@@ -89,11 +72,7 @@ export async function writeKeychainSecret({ account, secret, service }) {
 			stderr += chunk;
 		});
 		child.once('error', (error) => {
-			reject(
-				new Error(
-					`macOS Keychain helper failed to start. Install Xcode Command Line Tools. Cause: ${error.message}`,
-				),
-			);
+			reject(new Error(`${startErrorMessage} Cause: ${error.message}`));
 		});
 		child.once('close', (code, signal) => {
 			if (code === 0) {
@@ -104,6 +83,40 @@ export async function writeKeychainSecret({ account, secret, service }) {
 			reject(new Error(`macOS Keychain helper failed: ${detail}`));
 		});
 		child.stdin.end(secret);
+	});
+}
+
+export async function writeKeychainSecret({ account, helperPath, secret, service }) {
+	if (!account || !service) {
+		throw new Error('Keychain account and service are required');
+	}
+	if (!secret) {
+		throw new Error('Refusing to store empty keychain secret');
+	}
+
+	const configuredHelperPath = helperPath?.trim();
+	if (configuredHelperPath) {
+		await runKeychainSetCommand({
+			args: ['set', service, account, 'standard'],
+			command: configuredHelperPath,
+			secret,
+			startErrorMessage:
+				'Gordian Keychain helper failed to start. Check GORDIAN_KEYCHAIN_HELPER_PATH.',
+		});
+		return;
+	}
+
+	const helperDir = mkdtempSync(join(tmpdir(), 'gordian-keychain-helper-'));
+	const tempHelperPath = join(helperDir, 'keychain-set-secret.swift');
+	const moduleCachePath = join(tmpdir(), 'gordian-swift-module-cache');
+	mkdirSync(moduleCachePath, { recursive: true });
+	writeFileSync(tempHelperPath, KEYCHAIN_SET_SECRET_SWIFT, { mode: 0o600 });
+
+	await runKeychainSetCommand({
+		args: ['-module-cache-path', moduleCachePath, tempHelperPath, service, account],
+		command: 'swift',
+		secret,
+		startErrorMessage: 'macOS Keychain helper failed to start. Install Xcode Command Line Tools.',
 	}).finally(() => {
 		rmSync(helperDir, { recursive: true, force: true });
 	});

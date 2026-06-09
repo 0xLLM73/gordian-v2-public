@@ -1,7 +1,7 @@
 'use server';
 
 import { getOptionalWorkerInternalSecret } from '@/lib/runtime-env';
-import { workspaceAction } from '@/lib/safe-action';
+import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
 import { track } from '@/lib/track';
 import {
 	createCorrectionDiff,
@@ -17,6 +17,26 @@ import {
 } from '@repo/db';
 import { canRunCloudRationaleExtraction, commitmentStatusSchema } from '@repo/shared';
 import { z } from 'zod';
+
+const commitmentPeriodUnitSchema = z.enum(['days', 'weeks', 'months']);
+
+type CommitmentReprocessWorkerResponse =
+	| {
+			status: 'dry_run';
+			workspaceId?: string;
+			contactLimit: number;
+			batchSize: number;
+			wouldProcessContacts: number;
+			wouldProcessMessages: number;
+			maxAgeDays?: number;
+			confirmToken: string;
+	  }
+	| {
+			status: 'queued';
+			contactsProcessed: number;
+			messagesQueued: number;
+			maxAgeDays?: number;
+	  };
 
 type CommitmentPreviewRow = {
 	id: string;
@@ -77,6 +97,59 @@ function toCommitmentMutationDto(c: CommitmentMutationRow | null | undefined) {
 	};
 }
 
+function periodToDays(value: number, unit: z.infer<typeof commitmentPeriodUnitSchema>) {
+	const multiplier = unit === 'months' ? 30 : unit === 'weeks' ? 7 : 1;
+	return Math.min(value * multiplier, 3650);
+}
+
+function isCommitmentReprocessWorkerResponse(
+	value: unknown,
+): value is CommitmentReprocessWorkerResponse {
+	if (!value || typeof value !== 'object') return false;
+	const record = value as Record<string, unknown>;
+	if (record.status === 'dry_run') {
+		return (
+			typeof record.contactLimit === 'number' &&
+			typeof record.batchSize === 'number' &&
+			typeof record.wouldProcessContacts === 'number' &&
+			typeof record.wouldProcessMessages === 'number' &&
+			typeof record.confirmToken === 'string'
+		);
+	}
+	if (record.status === 'queued') {
+		return (
+			typeof record.contactsProcessed === 'number' && typeof record.messagesQueued === 'number'
+		);
+	}
+	return false;
+}
+
+async function callCommitmentReprocessWorker(
+	body: Record<string, unknown>,
+): Promise<CommitmentReprocessWorkerResponse> {
+	const workerUrl = process.env.WORKER_URL;
+	if (!workerUrl) throw new Error('WORKER_URL is not configured');
+
+	const response = await fetch(`${workerUrl}/admin/reprocess-messages`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			'X-Internal-Secret': getInternalSecret(),
+		},
+		body: JSON.stringify(body),
+	});
+
+	if (!response.ok) {
+		throw new Error('Failed to find commitments');
+	}
+
+	const payload = (await response.json()) as unknown;
+	if (!isCommitmentReprocessWorkerResponse(payload)) {
+		throw new Error('Failed to find commitments');
+	}
+	return payload;
+}
+
 export const getActiveCommitmentsAction = workspaceAction
 	.schema(
 		z.object({
@@ -105,6 +178,54 @@ export const getFirstLookCommitmentsAction = workspaceAction
 			maxAgeDays: parsedInput.maxAgeDays,
 		});
 		return raw.map(toCommitmentPreviewDto);
+	});
+
+export const findCommitmentsForPeriodAction = workspaceAction
+	.schema(
+		z.object({
+			periodValue: z.number().int().min(1).max(365),
+			periodUnit: commitmentPeriodUnitSchema.default('days'),
+			batchSize: z.number().int().min(1).max(200).default(200),
+			contactLimit: z.number().int().min(1).max(100).default(100),
+			confirmToken: z.string().min(1).optional(),
+		}),
+	)
+	.action(async ({ parsedInput, ctx }) => {
+		const maxAgeDays = periodToDays(parsedInput.periodValue, parsedInput.periodUnit);
+		const isConfirm = Boolean(parsedInput.confirmToken);
+		const result = await callCommitmentReprocessWorker({
+			workspaceId: ctx.workspaceId,
+			userId: ctx.session.user.id,
+			batchSize: parsedInput.batchSize,
+			contactLimit: parsedInput.contactLimit,
+			maxAgeDays,
+			dryRun: !isConfirm,
+			confirm: isConfirm,
+			confirmToken: parsedInput.confirmToken,
+		});
+
+		if (result.status === 'dry_run') {
+			return {
+				status: result.status,
+				batchSize: result.batchSize,
+				contactLimit: result.contactLimit,
+				wouldProcessContacts: result.wouldProcessContacts,
+				wouldProcessMessages: result.wouldProcessMessages,
+				maxAgeDays: result.maxAgeDays ?? maxAgeDays,
+				periodValue: parsedInput.periodValue,
+				periodUnit: parsedInput.periodUnit,
+				confirmToken: result.confirmToken,
+			};
+		}
+
+		return {
+			status: result.status,
+			contactsProcessed: result.contactsProcessed,
+			messagesQueued: result.messagesQueued,
+			maxAgeDays: result.maxAgeDays ?? maxAgeDays,
+			periodValue: parsedInput.periodValue,
+			periodUnit: parsedInput.periodUnit,
+		};
 	});
 
 export const getCommitmentsByContactAction = workspaceAction

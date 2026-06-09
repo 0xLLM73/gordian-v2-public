@@ -12,6 +12,7 @@ const DEFAULTS: UserPreferencesData = {
 	briefDays: ['mon', 'tue', 'wed', 'thu', 'fri'],
 	digestFocus: 'balanced',
 	introKeywords: [],
+	connectionKeywords: [],
 	ghostingAlertStatuses: ['cooling', 'dormant'],
 	ghostingStaleDays: 30,
 };
@@ -23,6 +24,7 @@ export interface UserPreferencesData {
 	briefDays: BriefDay[];
 	digestFocus: 'balanced' | 'commitments' | 'relationships' | 'deals' | 'network';
 	introKeywords: string[];
+	connectionKeywords: string[];
 	ghostingAlertStatuses: ('cooling' | 'dormant')[];
 	ghostingStaleDays: number;
 }
@@ -47,6 +49,7 @@ export async function getPreferences(
 		briefDays: row.briefDays as BriefDay[],
 		digestFocus: row.digestFocus,
 		introKeywords: row.introKeywords ?? [],
+		connectionKeywords: row.connectionKeywords ?? [],
 		ghostingAlertStatuses: (row.ghostingAlertStatuses ?? ['cooling', 'dormant']) as (
 			| 'cooling'
 			| 'dormant'
@@ -62,6 +65,7 @@ export interface UpsertPreferencesInput {
 	briefDays?: BriefDay[];
 	digestFocus?: 'balanced' | 'commitments' | 'relationships' | 'deals' | 'network';
 	introKeywords?: string[];
+	connectionKeywords?: string[];
 	ghostingAlertStatuses?: ('cooling' | 'dormant')[];
 	ghostingStaleDays?: number;
 }
@@ -82,6 +86,7 @@ export async function upsertPreferences(
 			briefDays: input.briefDays ?? DEFAULTS.briefDays,
 			digestFocus: input.digestFocus ?? DEFAULTS.digestFocus,
 			introKeywords: input.introKeywords ?? DEFAULTS.introKeywords,
+			connectionKeywords: input.connectionKeywords ?? DEFAULTS.connectionKeywords,
 			ghostingAlertStatuses: input.ghostingAlertStatuses ?? DEFAULTS.ghostingAlertStatuses,
 			ghostingStaleDays: input.ghostingStaleDays ?? DEFAULTS.ghostingStaleDays,
 		})
@@ -94,6 +99,9 @@ export async function upsertPreferences(
 				...(input.briefDays !== undefined ? { briefDays: input.briefDays } : {}),
 				...(input.digestFocus !== undefined ? { digestFocus: input.digestFocus } : {}),
 				...(input.introKeywords !== undefined ? { introKeywords: input.introKeywords } : {}),
+				...(input.connectionKeywords !== undefined
+					? { connectionKeywords: input.connectionKeywords }
+					: {}),
 				...(input.ghostingAlertStatuses !== undefined
 					? { ghostingAlertStatuses: input.ghostingAlertStatuses }
 					: {}),
@@ -114,6 +122,7 @@ export async function upsertPreferences(
 		briefDays: row.briefDays as BriefDay[],
 		digestFocus: row.digestFocus,
 		introKeywords: row.introKeywords ?? [],
+		connectionKeywords: row.connectionKeywords ?? [],
 		ghostingAlertStatuses: (row.ghostingAlertStatuses ?? ['cooling', 'dormant']) as (
 			| 'cooling'
 			| 'dormant'
@@ -133,6 +142,25 @@ export async function getWorkspaceIntroKeywords(workspaceId: string): Promise<st
 	for (const row of rows) {
 		if (row.introKeywords) {
 			for (const kw of row.introKeywords) {
+				const trimmed = kw.trim().toLowerCase();
+				if (trimmed) merged.add(trimmed);
+			}
+		}
+	}
+	return [...merged];
+}
+
+/** Aggregate custom new-connection keywords from all users in a workspace (deduplicated, lowercased). */
+export async function getWorkspaceConnectionKeywords(workspaceId: string): Promise<string[]> {
+	const rows = await db
+		.select({ connectionKeywords: userPreferences.connectionKeywords })
+		.from(userPreferences)
+		.where(eq(userPreferences.workspaceId, workspaceId));
+
+	const merged = new Set<string>();
+	for (const row of rows) {
+		if (row.connectionKeywords) {
+			for (const kw of row.connectionKeywords) {
 				const trimmed = kw.trim().toLowerCase();
 				if (trimmed) merged.add(trimmed);
 			}

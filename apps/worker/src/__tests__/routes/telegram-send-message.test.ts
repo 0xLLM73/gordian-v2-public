@@ -24,6 +24,10 @@ vi.mock('../../queues/sync', () => ({
 	syncQueue: { add: vi.fn() },
 }));
 
+vi.mock('../../queues/telegram-history-import', () => ({
+	enqueueTelegramHistoryImport: vi.fn(),
+}));
+
 vi.mock('@repo/shared/handoff-token', () => ({
 	verifyHandoffToken: vi.fn(),
 }));

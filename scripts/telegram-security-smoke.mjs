@@ -14,6 +14,7 @@ import {
 	DEFAULT_ENV_PATH,
 	classifyDoctor,
 	envValue,
+	getGordianKeychainHelperPath,
 	getTelegramApiCredentialProvider,
 	parseArgs,
 	parseEnvText,
@@ -31,6 +32,7 @@ const WORKSPACE_KEYCHAIN_MARKER_PREFIX = 'gordian:keychain:workspace-wrk:v1:';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
 const REDIS_RESIDUE_PATTERNS = LOCAL_REDIS_PURGE_PATTERNS;
+const AI_FLOW_BULLMQ_PATTERN = '{ai-flow}:*';
 
 function getPostgresClient() {
 	return workerRequire('postgres');
@@ -135,23 +137,26 @@ function isConnectionRefused(error) {
 	);
 }
 
-async function setKeychainSecret({ account, secret, service }) {
+async function setKeychainSecret({ account, helperPath, secret, service }) {
 	await writeKeychainSecret({
 		account,
+		helperPath,
 		secret,
 		service,
 	});
 }
 
-async function getKeychainSecret({ account, service }) {
-	const { stdout } = await execFileAsync('security', [
-		'find-generic-password',
-		'-a',
-		account,
-		'-s',
-		service,
-		'-w',
-	]);
+async function getKeychainSecret({ account, helperPath, service }) {
+	const { stdout } = helperPath
+		? await execFileAsync(helperPath, ['get', service, account, 'standard'])
+		: await execFileAsync('security', [
+				'find-generic-password',
+				'-a',
+				account,
+				'-s',
+				service,
+				'-w',
+			]);
 	return String(stdout).trim();
 }
 
@@ -244,7 +249,7 @@ async function addKeychainChecks(checks, env, options) {
 
 	try {
 		const service = envValue(env, 'TELEGRAM_KEYCHAIN_SERVICE') || 'gordian-v2-telegram';
-		await probeMacOsKeychain(service);
+		await probeMacOsKeychain(service, { helperPath: getGordianKeychainHelperPath(env) });
 		add(checks, 'pass', 'macOS Keychain probe', `write/read/delete probe passed for ${service}`);
 	} catch (error) {
 		add(checks, 'fail', 'macOS Keychain probe', safeErrorMessage(error));
@@ -252,10 +257,11 @@ async function addKeychainChecks(checks, env, options) {
 	}
 
 	const service = envValue(env, 'TELEGRAM_KEYCHAIN_SERVICE') || 'gordian-v2-telegram';
+	const helperPath = getGordianKeychainHelperPath(env);
 	const account = `telegram-session:security-smoke:${randomUUID()}`;
 	try {
 		const secret = Buffer.from(randomUUID()).toString('base64');
-		await setKeychainSecret({ account, secret, service });
+		await setKeychainSecret({ account, helperPath, secret, service });
 		const ciphertextBlob = Buffer.from(
 			`${KEYCHAIN_MARKER_PREFIX}${JSON.stringify({
 				account,
@@ -277,7 +283,7 @@ async function addKeychainChecks(checks, env, options) {
 				: 'database blob does not look like a safe Keychain marker',
 		);
 
-		const readBack = await getKeychainSecret({ account, service });
+		const readBack = await getKeychainSecret({ account, helperPath, service });
 		add(
 			checks,
 			readBack === secret ? 'pass' : 'fail',
@@ -287,7 +293,7 @@ async function addKeychainChecks(checks, env, options) {
 
 		await deleteKeychainSecret({ account, service });
 		try {
-			await getKeychainSecret({ account, service });
+			await getKeychainSecret({ account, helperPath, service });
 			add(checks, 'fail', 'Telegram session KEK deletion', 'deleted marker was still readable');
 		} catch {
 			add(checks, 'pass', 'Telegram session KEK deletion', 'Keychain item was removed');
@@ -584,6 +590,15 @@ async function addRedisChecks(checks, env, options) {
 		await redis.connect();
 		for (const pattern of REDIS_RESIDUE_PATTERNS) {
 			const matched = await countRedisPattern(redis, pattern);
+			if (pattern === AI_FLOW_BULLMQ_PATTERN && !options.expectPurged) {
+				add(
+					checks,
+					'pass',
+					`Redis ${pattern}`,
+					`${matched} BullMQ runtime key(s); covered by purge tooling`,
+				);
+				continue;
+			}
 			const level = matched === 0 ? 'pass' : options.expectPurged ? 'fail' : 'warn';
 			add(checks, level, `Redis ${pattern}`, `${matched} key(s)`);
 		}

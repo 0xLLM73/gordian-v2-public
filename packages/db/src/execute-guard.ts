@@ -80,9 +80,7 @@ export function extractSqlText(sqlObj: unknown): string | null {
 
 	function walk(chunks: unknown[]) {
 		for (const chunk of chunks) {
-			if (typeof chunk === 'string') {
-				parts.push(chunk);
-			} else if (chunk && typeof chunk === 'object') {
+			if (chunk && typeof chunk === 'object') {
 				const c = chunk as { value?: unknown[]; queryChunks?: unknown[] };
 				if (Array.isArray(c.value)) {
 					for (const v of c.value) {

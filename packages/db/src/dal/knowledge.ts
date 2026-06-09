@@ -1,7 +1,7 @@
 import { withKeys } from '@repo/crypto';
 import type { SealedEnvelope } from '@repo/crypto';
 import { and, eq, sql } from '@repo/db';
-import { desc, inArray, isNotNull } from 'drizzle-orm';
+import { desc, inArray, isNotNull, isNull } from 'drizzle-orm';
 import { db } from '../client';
 import { contacts } from '../schema/contacts';
 import {
@@ -202,9 +202,31 @@ export interface LegacyKnowledgeEvidenceReport {
 export interface KnowledgeAnalysisContactCandidate {
 	id: string;
 	messageCount: number;
+	earliestMessageAt: Date | null;
 	latestMessageAt: Date | null;
 	messageHorizon: Date | null;
+	backfillOldestMessageAt: Date | null;
+	backfillOldestMessageId: string | null;
+	backfillMessagesScanned: number;
+	backfillCompletedAt: Date | null;
 	stale: boolean;
+}
+
+export interface KnowledgeNodeEvidenceStats {
+	nodeId: string;
+	evidenceRows: number;
+	distinctEvidenceContacts: number;
+	distinctEvidenceMessages: number;
+	linkedContacts: number;
+	aggregateLinkEvidenceCount: number;
+	maxLinkEvidenceCount: number;
+}
+
+export interface RepairKnowledgeEvidenceCountsResult {
+	workspaceId: string;
+	duplicateEvidenceRowsDeleted: number;
+	contactLinksRecomputed: number;
+	nodesRecomputed: number;
 }
 
 /** Column selection that excludes `embedding` — use for all browser-facing queries. */
@@ -405,6 +427,75 @@ export async function listKnowledgeNodes(
 			.offset(offset);
 
 	return envelope ? withKeys(envelope, doQuery) : doQuery();
+}
+
+export async function getKnowledgeNodeEvidenceStats(
+	workspaceId: string,
+	nodeIds: string[],
+): Promise<Map<string, KnowledgeNodeEvidenceStats>> {
+	if (nodeIds.length === 0) return new Map();
+
+	const [evidenceRows, contactRows] = await Promise.all([
+		db
+			.select({
+				nodeId: knowledgeEvidence.knowledgeNodeId,
+				evidenceRows: sql<number>`count(*)::int`,
+				distinctEvidenceContacts: sql<number>`count(DISTINCT ${knowledgeEvidence.contactId}) FILTER (WHERE ${knowledgeEvidence.contactId} IS NOT NULL)::int`,
+				distinctEvidenceMessages: sql<number>`count(DISTINCT ${knowledgeEvidence.messageId}) FILTER (WHERE ${knowledgeEvidence.messageId} IS NOT NULL)::int`,
+			})
+			.from(knowledgeEvidence)
+			.where(
+				and(
+					eq(knowledgeEvidence.workspaceId, workspaceId),
+					inArray(knowledgeEvidence.knowledgeNodeId, nodeIds),
+				),
+			)
+			.groupBy(knowledgeEvidence.knowledgeNodeId),
+		db
+			.select({
+				nodeId: knowledgeContacts.knowledgeNodeId,
+				linkedContacts: sql<number>`count(*)::int`,
+				aggregateLinkEvidenceCount: sql<number>`coalesce(sum(${knowledgeContacts.evidenceCount}), 0)::int`,
+				maxLinkEvidenceCount: sql<number>`coalesce(max(${knowledgeContacts.evidenceCount}), 0)::int`,
+			})
+			.from(knowledgeContacts)
+			.where(
+				and(
+					eq(knowledgeContacts.workspaceId, workspaceId),
+					inArray(knowledgeContacts.knowledgeNodeId, nodeIds),
+				),
+			)
+			.groupBy(knowledgeContacts.knowledgeNodeId),
+	]);
+
+	const stats = new Map<string, KnowledgeNodeEvidenceStats>();
+	for (const nodeId of nodeIds) {
+		stats.set(nodeId, {
+			nodeId,
+			evidenceRows: 0,
+			distinctEvidenceContacts: 0,
+			distinctEvidenceMessages: 0,
+			linkedContacts: 0,
+			aggregateLinkEvidenceCount: 0,
+			maxLinkEvidenceCount: 0,
+		});
+	}
+	for (const row of evidenceRows) {
+		const current = stats.get(row.nodeId);
+		if (!current) continue;
+		current.evidenceRows = Number(row.evidenceRows ?? 0);
+		current.distinctEvidenceContacts = Number(row.distinctEvidenceContacts ?? 0);
+		current.distinctEvidenceMessages = Number(row.distinctEvidenceMessages ?? 0);
+	}
+	for (const row of contactRows) {
+		const current = stats.get(row.nodeId);
+		if (!current) continue;
+		current.linkedContacts = Number(row.linkedContacts ?? 0);
+		current.aggregateLinkEvidenceCount = Number(row.aggregateLinkEvidenceCount ?? 0);
+		current.maxLinkEvidenceCount = Number(row.maxLinkEvidenceCount ?? 0);
+	}
+
+	return stats;
 }
 
 /**
@@ -1197,7 +1288,7 @@ export async function getLegacyKnowledgeEvidenceReport(): Promise<LegacyKnowledg
 					ON ke.workspace_id = kc.workspace_id
 					AND ke.knowledge_node_id = kc.knowledge_node_id
 					AND ke.contact_id = kc.contact_id
-					AND ke.relation_type = kc.relation_type
+					AND ke.relation_type = kc.relation_type::text
 			`),
 			db.execute(sql`
 				SELECT
@@ -1209,7 +1300,7 @@ export async function getLegacyKnowledgeEvidenceReport(): Promise<LegacyKnowledg
 					ON ke.workspace_id = kc.workspace_id
 					AND ke.knowledge_node_id = kc.knowledge_node_id
 					AND ke.contact_id = kc.contact_id
-					AND ke.relation_type = kc.relation_type
+					AND ke.relation_type = kc.relation_type::text
 				GROUP BY kc.workspace_id
 				ORDER BY "rowsWithoutEvidence" DESC
 			`),
@@ -1226,7 +1317,7 @@ export async function getLegacyKnowledgeEvidenceReport(): Promise<LegacyKnowledg
 					ON ke.workspace_id = kc.workspace_id
 					AND ke.knowledge_node_id = kc.knowledge_node_id
 					AND ke.contact_id = kc.contact_id
-					AND ke.relation_type = kc.relation_type
+					AND ke.relation_type = kc.relation_type::text
 				GROUP BY kn.type
 				ORDER BY "rowsWithoutEvidence" DESC
 			`),
@@ -1246,7 +1337,7 @@ export async function getLegacyKnowledgeEvidenceReport(): Promise<LegacyKnowledg
 					ON ke.workspace_id = kc.workspace_id
 					AND ke.knowledge_node_id = kc.knowledge_node_id
 					AND ke.contact_id = kc.contact_id
-					AND ke.relation_type = kc.relation_type
+					AND ke.relation_type = kc.relation_type::text
 				WHERE ke.id IS NULL
 				GROUP BY kc.workspace_id, kc.knowledge_node_id, kn.type
 				ORDER BY "rowsWithoutEvidence" DESC, "aggregateEvidenceCount" DESC
@@ -1264,7 +1355,7 @@ export async function getLegacyKnowledgeEvidenceReport(): Promise<LegacyKnowledg
 					ON ke.workspace_id = kc.workspace_id
 					AND ke.knowledge_node_id = kc.knowledge_node_id
 					AND ke.contact_id = kc.contact_id
-					AND ke.relation_type = kc.relation_type
+					AND ke.relation_type = kc.relation_type::text
 				WHERE ke.id IS NULL
 				GROUP BY kc.workspace_id, kc.contact_id
 				ORDER BY "rowsWithoutEvidence" DESC, "aggregateEvidenceCount" DESC
@@ -1336,9 +1427,211 @@ export async function getLegacyKnowledgeEvidenceReport(): Promise<LegacyKnowledg
 }
 
 /**
+ * Remove exact rerun duplicates and normalize counters for a workspace.
+ *
+ * This is intentionally content-blind: it groups by stable IDs, relation type,
+ * evidence kind, and source message only. It does not decrypt snippets or labels.
+ */
+export async function repairKnowledgeEvidenceCounts(
+	workspaceId: string,
+): Promise<RepairKnowledgeEvidenceCountsResult> {
+	const result = await db.execute(sql`
+		WITH ranked_message_evidence AS (
+			SELECT
+				id,
+				row_number() OVER (
+					PARTITION BY
+						workspace_id,
+						knowledge_node_id,
+						coalesce(contact_id, '00000000-0000-0000-0000-000000000000'::uuid),
+						coalesce(related_knowledge_node_id, '00000000-0000-0000-0000-000000000000'::uuid),
+						message_id,
+						relation_type,
+						evidence_kind
+					ORDER BY created_at ASC, id ASC
+				) AS duplicate_rank
+			FROM knowledge_evidence
+			WHERE workspace_id = ${workspaceId}::uuid
+				AND message_id IS NOT NULL
+		),
+		deleted_duplicate_evidence AS (
+			DELETE FROM knowledge_evidence ke
+			USING ranked_message_evidence rme
+			WHERE ke.id = rme.id
+				AND rme.duplicate_rank > 1
+			RETURNING ke.id
+		),
+		evidence_counts AS (
+			SELECT
+				workspace_id,
+				knowledge_node_id,
+				contact_id,
+				relation_type,
+				GREATEST(
+					(
+						count(DISTINCT message_id) FILTER (WHERE message_id IS NOT NULL)
+						+ count(*) FILTER (WHERE message_id IS NULL)
+					)::int,
+					1
+				) AS evidence_count,
+				max(coalesce(occurred_at, created_at)) AS latest_evidence_at
+			FROM knowledge_evidence
+			WHERE workspace_id = ${workspaceId}::uuid
+				AND contact_id IS NOT NULL
+			GROUP BY workspace_id, knowledge_node_id, contact_id, relation_type
+		),
+		updated_contacts AS (
+			UPDATE knowledge_contacts kc
+			SET
+				evidence_count = ec.evidence_count,
+				last_evidence_at = coalesce(ec.latest_evidence_at, kc.last_evidence_at)
+			FROM evidence_counts ec
+			WHERE kc.workspace_id = ec.workspace_id
+				AND kc.knowledge_node_id = ec.knowledge_node_id
+				AND kc.contact_id = ec.contact_id
+				AND kc.relation_type::text = ec.relation_type
+				AND (
+					kc.evidence_count IS DISTINCT FROM ec.evidence_count
+					OR kc.last_evidence_at IS DISTINCT FROM coalesce(ec.latest_evidence_at, kc.last_evidence_at)
+				)
+			RETURNING kc.id
+		),
+		link_counts AS (
+			SELECT
+				kc.workspace_id,
+				kc.knowledge_node_id,
+				kc.contact_id,
+				kc.relation_type::text AS relation_type,
+				coalesce(ec.evidence_count, kc.evidence_count) AS evidence_count,
+				coalesce(ec.latest_evidence_at, kc.last_evidence_at) AS last_evidence_at
+			FROM knowledge_contacts kc
+			LEFT JOIN evidence_counts ec
+				ON ec.workspace_id = kc.workspace_id
+				AND ec.knowledge_node_id = kc.knowledge_node_id
+				AND ec.contact_id = kc.contact_id
+				AND ec.relation_type = kc.relation_type::text
+			WHERE kc.workspace_id = ${workspaceId}::uuid
+		),
+		contact_node_counts AS (
+			SELECT
+				workspace_id,
+				knowledge_node_id,
+				coalesce(sum(evidence_count), 0)::int AS aggregate_evidence_count,
+				max(last_evidence_at) AS latest_contact_evidence_at
+			FROM link_counts
+			GROUP BY workspace_id, knowledge_node_id
+		),
+		evidence_node_counts AS (
+			SELECT
+				workspace_id,
+				knowledge_node_id,
+				(
+					count(DISTINCT message_id) FILTER (WHERE message_id IS NOT NULL)
+					+ count(*) FILTER (WHERE message_id IS NULL)
+				)::int AS direct_evidence_count,
+				max(coalesce(occurred_at, created_at)) AS latest_direct_evidence_at
+			FROM knowledge_evidence
+			WHERE workspace_id = ${workspaceId}::uuid
+			GROUP BY workspace_id, knowledge_node_id
+		),
+		node_counts AS (
+			SELECT
+				kn.workspace_id,
+				kn.id AS knowledge_node_id,
+				GREATEST(
+					1,
+					coalesce(cnc.aggregate_evidence_count, 0),
+					coalesce(enc.direct_evidence_count, 0)
+				)::int AS mention_count,
+				GREATEST(
+					kn.last_seen_at,
+					cnc.latest_contact_evidence_at,
+					enc.latest_direct_evidence_at
+				) AS latest_seen_at
+			FROM knowledge_nodes kn
+			LEFT JOIN contact_node_counts cnc
+				ON cnc.workspace_id = kn.workspace_id
+				AND cnc.knowledge_node_id = kn.id
+			LEFT JOIN evidence_node_counts enc
+				ON enc.workspace_id = kn.workspace_id
+				AND enc.knowledge_node_id = kn.id
+			WHERE kn.workspace_id = ${workspaceId}::uuid
+				AND (
+					cnc.knowledge_node_id IS NOT NULL
+					OR enc.knowledge_node_id IS NOT NULL
+				)
+		),
+		updated_nodes AS (
+			UPDATE knowledge_nodes kn
+			SET
+				mention_count = nc.mention_count,
+				last_seen_at = coalesce(nc.latest_seen_at, kn.last_seen_at)
+			FROM node_counts nc
+			WHERE kn.workspace_id = nc.workspace_id
+				AND kn.id = nc.knowledge_node_id
+				AND (
+					kn.mention_count IS DISTINCT FROM nc.mention_count
+					OR kn.last_seen_at IS DISTINCT FROM coalesce(nc.latest_seen_at, kn.last_seen_at)
+				)
+			RETURNING kn.id
+		)
+		SELECT
+			(SELECT count(*)::int FROM deleted_duplicate_evidence) AS "duplicateEvidenceRowsDeleted",
+			(SELECT count(*)::int FROM updated_contacts) AS "contactLinksRecomputed",
+			(SELECT count(*)::int FROM updated_nodes) AS "nodesRecomputed"
+	`);
+	const row = rowsFromExecute<{
+		duplicateEvidenceRowsDeleted: unknown;
+		contactLinksRecomputed: unknown;
+		nodesRecomputed: unknown;
+	}>(result)[0];
+
+	return {
+		workspaceId,
+		duplicateEvidenceRowsDeleted: toReportNumber(row?.duplicateEvidenceRowsDeleted),
+		contactLinksRecomputed: toReportNumber(row?.contactLinksRecomputed),
+		nodesRecomputed: toReportNumber(row?.nodesRecomputed),
+	};
+}
+
+/**
  * Store one evidence/provenance row for a knowledge claim.
  * Snippets are encryptedText, so callers must pass an envelope when snippet is present.
  */
+async function findExistingMessageBackedKnowledgeEvidence(
+	workspaceId: string,
+	data: CreateKnowledgeEvidenceInput,
+	envelope?: SealedEnvelope,
+): Promise<KnowledgeEvidence | null> {
+	if (!data.messageId) return null;
+
+	const relatedNodeId = data.relatedKnowledgeNodeId ?? null;
+	const contactId = data.contactId ?? null;
+	const conditions = [
+		eq(knowledgeEvidence.workspaceId, workspaceId),
+		eq(knowledgeEvidence.knowledgeNodeId, data.knowledgeNodeId),
+		eq(knowledgeEvidence.messageId, data.messageId),
+		eq(knowledgeEvidence.relationType, data.relationType),
+		eq(knowledgeEvidence.evidenceKind, data.evidenceKind),
+		contactId ? eq(knowledgeEvidence.contactId, contactId) : isNull(knowledgeEvidence.contactId),
+		relatedNodeId
+			? eq(knowledgeEvidence.relatedKnowledgeNodeId, relatedNodeId)
+			: isNull(knowledgeEvidence.relatedKnowledgeNodeId),
+	];
+
+	const doQuery = async () => {
+		const result =
+			(await db
+				.select()
+				.from(knowledgeEvidence)
+				.where(and(...conditions))
+				.limit(1)) ?? [];
+		return result[0] ?? null;
+	};
+
+	return envelope ? withKeys(envelope, doQuery) : doQuery();
+}
+
 export async function createKnowledgeEvidence(
 	workspaceId: string,
 	data: CreateKnowledgeEvidenceInput,
@@ -1349,6 +1642,9 @@ export async function createKnowledgeEvidence(
 	}
 
 	const doInsert = async () => {
+		const existing = await findExistingMessageBackedKnowledgeEvidence(workspaceId, data);
+		if (existing) return existing;
+
 		const result = await db
 			.insert(knowledgeEvidence)
 			.values({
@@ -1392,6 +1688,26 @@ export async function listEvidenceForKnowledgeNode(
 			)
 			.orderBy(evidenceRecencyOrder, desc(knowledgeEvidence.createdAt))
 			.limit(limit),
+	);
+}
+
+export async function listEvidenceForKnowledgeNodes(
+	workspaceId: string,
+	nodeIds: string[],
+	envelope: SealedEnvelope,
+): Promise<KnowledgeEvidence[]> {
+	if (nodeIds.length === 0) return [];
+	return withKeys(envelope, async () =>
+		db
+			.select()
+			.from(knowledgeEvidence)
+			.where(
+				and(
+					eq(knowledgeEvidence.workspaceId, workspaceId),
+					inArray(knowledgeEvidence.knowledgeNodeId, nodeIds),
+				),
+			)
+			.orderBy(evidenceRecencyOrder, desc(knowledgeEvidence.createdAt)),
 	);
 }
 
@@ -1485,6 +1801,35 @@ export async function linkContactToKnowledge(
 		values.lastEvidenceAt = evidence.occurredAt;
 	}
 	const evidenceOccurredAtIso = evidence?.occurredAt?.toISOString();
+	const evidenceInput: CreateKnowledgeEvidenceInput | null = evidence
+		? {
+				knowledgeNodeId: nodeId,
+				contactId,
+				messageId: evidence.messageId ?? null,
+				relationType,
+				evidenceKind: evidence.evidenceKind ?? 'manual',
+				confidence: evidence.confidence ?? strength,
+				snippet: evidence.snippet ?? null,
+				occurredAt: evidence.occurredAt ?? null,
+				metadata: evidence.metadata ?? null,
+			}
+		: null;
+	const existingEvidence = evidenceInput
+		? await findExistingMessageBackedKnowledgeEvidence(
+				workspaceId,
+				evidenceInput,
+				evidence?.envelope,
+			)
+		: null;
+	const conflictSet: Record<string, unknown> = {
+		strength,
+		lastEvidenceAt: evidenceOccurredAtIso
+			? sql`GREATEST(${knowledgeContacts.lastEvidenceAt}, ${evidenceOccurredAtIso}::timestamptz)`
+			: sql`now()`,
+	};
+	if (!existingEvidence) {
+		conflictSet.evidenceCount = sql`${knowledgeContacts.evidenceCount} + 1`;
+	}
 
 	const result = await db
 		.insert(knowledgeContacts)
@@ -1495,33 +1840,13 @@ export async function linkContactToKnowledge(
 				knowledgeContacts.contactId,
 				knowledgeContacts.relationType,
 			],
-			set: {
-				evidenceCount: sql`${knowledgeContacts.evidenceCount} + 1`,
-				strength,
-				lastEvidenceAt: evidenceOccurredAtIso
-					? sql`GREATEST(${knowledgeContacts.lastEvidenceAt}, ${evidenceOccurredAtIso}::timestamptz)`
-					: sql`now()`,
-			},
+			set: conflictSet,
 		})
 		.returning();
 	const row = result[0];
 	if (!row) throw new Error('linkContactToKnowledge: insert returned no rows');
-	if (evidence) {
-		await createKnowledgeEvidence(
-			workspaceId,
-			{
-				knowledgeNodeId: nodeId,
-				contactId,
-				messageId: evidence.messageId ?? null,
-				relationType,
-				evidenceKind: evidence.evidenceKind ?? 'manual',
-				confidence: evidence.confidence ?? strength,
-				snippet: evidence.snippet ?? null,
-				occurredAt: evidence.occurredAt ?? null,
-				metadata: evidence.metadata ?? null,
-			},
-			evidence.envelope,
-		);
+	if (evidenceInput && !existingEvidence) {
+		await createKnowledgeEvidence(workspaceId, evidenceInput, evidence?.envelope);
 	}
 	return row;
 }
@@ -2355,6 +2680,7 @@ export async function upsertExtractionLog(
 ): Promise<void> {
 	// Import the table value here to avoid the linter stripping the top-level import
 	const { knowledgeExtractionLog: logTable } = await import('../schema/knowledge');
+	const messageHorizonIso = data.messageHorizon?.toISOString();
 	await db
 		.insert(logTable)
 		.values({
@@ -2370,9 +2696,78 @@ export async function upsertExtractionLog(
 				lastExtractedAt: sql`now()`,
 				entitiesExtracted: sql`${data.entitiesExtracted}`,
 				llmCalled: sql`${data.llmCalled ? 1 : 0}`,
-				messageHorizon: data.messageHorizon ?? sql`"knowledge_extraction_log"."message_horizon"`,
+				messageHorizon: messageHorizonIso
+					? sql`COALESCE(GREATEST("knowledge_extraction_log"."message_horizon", ${messageHorizonIso}::timestamptz), ${messageHorizonIso}::timestamptz)`
+					: sql`"knowledge_extraction_log"."message_horizon"`,
 			},
 		});
+}
+
+/**
+ * Advance historical knowledge backfill progress without overwriting the
+ * extraction summary fields from the entity/embedding pass.
+ */
+export async function updateKnowledgeBackfillProgress(
+	workspaceId: string,
+	contactId: string,
+	data: {
+		oldestMessageAt?: Date;
+		oldestMessageId?: string;
+		messagesScanned?: number;
+		completedAt?: Date;
+	},
+): Promise<void> {
+	const { knowledgeExtractionLog: logTable } = await import('../schema/knowledge');
+	const scanned = Math.max(0, Math.floor(data.messagesScanned ?? 0));
+	const oldestMessageAtIso = data.oldestMessageAt?.toISOString();
+	const oldestMessageId = data.oldestMessageId;
+	const completedAtIso = data.completedAt?.toISOString();
+	const set: Record<string, unknown> = {
+		lastExtractedAt: sql`now()`,
+	};
+	if (oldestMessageAtIso) {
+		set.backfillOldestMessageAt = sql`COALESCE(LEAST("knowledge_extraction_log"."backfill_oldest_message_at", ${oldestMessageAtIso}::timestamptz), ${oldestMessageAtIso}::timestamptz)`;
+		if (oldestMessageId) {
+			set.backfillOldestMessageId = sql`
+				CASE
+					WHEN "knowledge_extraction_log"."backfill_oldest_message_at" IS NULL THEN ${oldestMessageId}::uuid
+					WHEN ${oldestMessageAtIso}::timestamptz < "knowledge_extraction_log"."backfill_oldest_message_at" THEN ${oldestMessageId}::uuid
+					WHEN ${oldestMessageAtIso}::timestamptz = "knowledge_extraction_log"."backfill_oldest_message_at"
+						AND (
+							"knowledge_extraction_log"."backfill_oldest_message_id" IS NULL
+							OR ${oldestMessageId}::uuid < "knowledge_extraction_log"."backfill_oldest_message_id"
+						)
+						THEN ${oldestMessageId}::uuid
+					ELSE "knowledge_extraction_log"."backfill_oldest_message_id"
+				END
+			`;
+		}
+	}
+	if (scanned > 0) {
+		set.backfillMessagesScanned = sql`"knowledge_extraction_log"."backfill_messages_scanned" + ${scanned}`;
+	}
+	if (completedAtIso) {
+		set.backfillCompletedAt = sql`COALESCE("knowledge_extraction_log"."backfill_completed_at", ${completedAtIso}::timestamptz)`;
+	}
+
+	const updatedRows = await db
+		.update(logTable)
+		.set(set)
+		.where(and(eq(logTable.workspaceId, workspaceId), eq(logTable.contactId, contactId)))
+		.returning({ id: logTable.id });
+	if (Array.isArray(updatedRows) && updatedRows.length > 0) return;
+
+	await db
+		.insert(logTable)
+		.values({
+			workspaceId,
+			contactId,
+			backfillOldestMessageAt: data.oldestMessageAt,
+			backfillOldestMessageId: data.oldestMessageId,
+			backfillMessagesScanned: scanned,
+			backfillCompletedAt: data.completedAt,
+		})
+		.onConflictDoNothing();
 }
 
 /**
@@ -2475,6 +2870,7 @@ export async function getKnowledgeAnalysisContactCandidates(
 				c.id,
 				c.source_account_id,
 				COUNT(m.id)::int AS message_count,
+				MIN(m.sent_at) AS earliest_message_at,
 				MAX(m.sent_at) AS latest_message_at
 			FROM contacts c
 			INNER JOIN messages m
@@ -2488,13 +2884,22 @@ export async function getKnowledgeAnalysisContactCandidates(
 				cm.id,
 				cm.source_account_id,
 				cm.message_count,
+				cm.earliest_message_at,
 				cm.latest_message_at,
 				kel.message_horizon,
+				kel.backfill_oldest_message_at,
+				kel.backfill_oldest_message_id,
+				kel.backfill_messages_scanned,
+				kel.backfill_completed_at,
 				(
 					kel.id IS NULL
 					OR kel.message_horizon IS NULL
 					OR kel.message_horizon < cm.latest_message_at
-				) AS stale
+				) AS stale,
+				(
+					kel.id IS NULL
+					OR kel.backfill_completed_at IS NULL
+				) AS backfill_incomplete
 			FROM contact_messages cm
 			LEFT JOIN knowledge_extraction_log kel
 				ON kel.contact_id = cm.id
@@ -2507,18 +2912,23 @@ export async function getKnowledgeAnalysisContactCandidates(
 				*,
 				ROW_NUMBER() OVER (
 					PARTITION BY source_account_id
-					ORDER BY stale DESC, latest_message_at DESC NULLS LAST
+					ORDER BY backfill_incomplete DESC, stale DESC, latest_message_at DESC NULLS LAST
 				) AS source_rank
 			FROM candidates
 		)
 		SELECT
 			id,
 			message_count,
+			earliest_message_at,
 			latest_message_at,
 			message_horizon,
+			backfill_oldest_message_at,
+			backfill_oldest_message_id,
+			backfill_messages_scanned,
+			backfill_completed_at,
 			stale
 		FROM ranked
-		ORDER BY source_rank ASC, stale DESC, latest_message_at DESC NULLS LAST
+		ORDER BY source_rank ASC, backfill_incomplete DESC, stale DESC, latest_message_at DESC NULLS LAST
 		LIMIT ${limit}
 	`);
 
@@ -2527,17 +2937,36 @@ export async function getKnowledgeAnalysisContactCandidates(
 			id: string;
 			message_count?: number | string;
 			messageCount?: number | string;
+			earliest_message_at?: Date | string | null;
+			earliestMessageAt?: Date | string | null;
 			latest_message_at?: Date | string | null;
 			latestMessageAt?: Date | string | null;
 			message_horizon?: Date | string | null;
 			messageHorizon?: Date | string | null;
+			backfill_oldest_message_at?: Date | string | null;
+			backfillOldestMessageAt?: Date | string | null;
+			backfill_oldest_message_id?: string | null;
+			backfillOldestMessageId?: string | null;
+			backfill_messages_scanned?: number | string | null;
+			backfillMessagesScanned?: number | string | null;
+			backfill_completed_at?: Date | string | null;
+			backfillCompletedAt?: Date | string | null;
 			stale?: boolean;
 		}>
 	).map((row) => ({
 		id: row.id,
 		messageCount: Number(row.message_count ?? row.messageCount ?? 0),
+		earliestMessageAt: coerceDate(row.earliest_message_at ?? row.earliestMessageAt),
 		latestMessageAt: coerceDate(row.latest_message_at ?? row.latestMessageAt),
 		messageHorizon: coerceDate(row.message_horizon ?? row.messageHorizon),
+		backfillOldestMessageAt: coerceDate(
+			row.backfill_oldest_message_at ?? row.backfillOldestMessageAt,
+		),
+		backfillOldestMessageId: row.backfill_oldest_message_id ?? row.backfillOldestMessageId ?? null,
+		backfillMessagesScanned: Number(
+			row.backfill_messages_scanned ?? row.backfillMessagesScanned ?? 0,
+		),
+		backfillCompletedAt: coerceDate(row.backfill_completed_at ?? row.backfillCompletedAt),
 		stale: row.stale === true,
 	}));
 }

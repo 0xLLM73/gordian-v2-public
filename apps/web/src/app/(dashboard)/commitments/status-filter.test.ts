@@ -8,10 +8,10 @@ describe('commitment status filters', () => {
 		}
 	});
 
-	it('falls back to all for missing or unsupported filters', () => {
-		expect(normalizeCommitmentStatusFilter(undefined)).toBe('all');
-		expect(normalizeCommitmentStatusFilter('')).toBe('all');
-		expect(normalizeCommitmentStatusFilter('archived')).toBe('all');
-		expect(normalizeCommitmentStatusFilter('active;drop')).toBe('all');
+	it('falls back to active commitments for missing or unsupported filters', () => {
+		expect(normalizeCommitmentStatusFilter(undefined)).toBe('active');
+		expect(normalizeCommitmentStatusFilter('')).toBe('active');
+		expect(normalizeCommitmentStatusFilter('archived')).toBe('active');
+		expect(normalizeCommitmentStatusFilter('active;drop')).toBe('active');
 	});
 });

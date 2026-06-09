@@ -74,6 +74,35 @@ describe('requireTelegramMtProtoConfig', () => {
 		);
 	});
 
+	it('uses the configured Gordian helper for Telegram API Keychain reads', () => {
+		stubProcessPlatform('darwin');
+		vi.stubEnv('TELEGRAM_MTPROTO_ENABLED', 'true');
+		vi.stubEnv('TELEGRAM_API_CREDENTIAL_PROVIDER', 'os-keychain');
+		vi.stubEnv(telegramKeychainServiceEnv, fakeKeychainService);
+		vi.stubEnv('TELEGRAM_API_KEYCHAIN_ACCOUNT', 'telegram-api-credentials-helper');
+		vi.stubEnv(
+			'GORDIAN_KEYCHAIN_HELPER_PATH',
+			'/Applications/GordianKeychainBroker.app/Contents/MacOS/GordianKeychainBroker',
+		);
+		execFileSyncMock.mockReturnValue(
+			JSON.stringify({
+				apiHash: fakeTelegramApiHash,
+				apiId: '67890',
+				version: 1,
+			}),
+		);
+
+		expect(requireTelegramMtProtoConfig()).toEqual({
+			apiHash: fakeTelegramApiHash,
+			apiId: 67890,
+		});
+		expect(execFileSyncMock).toHaveBeenCalledWith(
+			'/Applications/GordianKeychainBroker.app/Contents/MacOS/GordianKeychainBroker',
+			['get', fakeKeychainService, 'telegram-api-credentials-helper', 'standard'],
+			{ encoding: 'utf8' },
+		);
+	});
+
 	it('caches Telegram API credentials after the first Keychain read', () => {
 		stubProcessPlatform('darwin');
 		vi.stubEnv('TELEGRAM_MTPROTO_ENABLED', 'true');

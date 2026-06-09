@@ -9,18 +9,28 @@ const mocks = vi.hoisted(() => ({
 	extractRelationships: vi.fn(),
 	listContactMaskingAliases: vi.fn(),
 	getMemoriesByContact: vi.fn(),
+	getWorkspaceConnectionKeywords: vi.fn(),
 	getWorkspaceIntroKeywords: vi.fn(),
 	hasUserAiAnalysisConsent: vi.fn(),
 	hasConnectionKeywords: vi.fn(),
 	hasIntroKeywords: vi.fn(),
 	maskContactAliases: vi.fn(),
-	processor: undefined as undefined | ((job: { data: Record<string, unknown> }) => Promise<void>),
+	processor: undefined as
+		| undefined
+		| ((job: { data: Record<string, unknown> }) => Promise<unknown>),
+	queueGetJobs: vi.fn(),
 	searchContactByName: vi.fn(),
 }));
 
 vi.mock('@repo/crypto', () => ({
 	decrypt: vi.fn((content: string) => content.replace(/^enc:/, '')),
 	deriveKeys: vi.fn(() => Promise.resolve({ dek: Buffer.alloc(32) })),
+	generatePersonPseudonym: vi.fn((contactId: string) => {
+		if (contactId.endsWith('1')) return 'PERSON_alice';
+		if (contactId.endsWith('2')) return 'PERSON_bob';
+		if (contactId.endsWith('3')) return 'PERSON_carol';
+		return 'PERSON_unknown';
+	}),
 	maskContactAliases: mocks.maskContactAliases,
 	unwrapWrk: vi.fn(() => Promise.resolve(Buffer.alloc(32))),
 }));
@@ -31,6 +41,7 @@ vi.mock('@repo/db', () => ({
 	createRelationship: mocks.createRelationship,
 	listContactMaskingAliases: mocks.listContactMaskingAliases,
 	getMemoriesByContact: mocks.getMemoriesByContact,
+	getWorkspaceConnectionKeywords: mocks.getWorkspaceConnectionKeywords,
 	getWorkspaceIntroKeywords: mocks.getWorkspaceIntroKeywords,
 	hasUserAiAnalysisConsent: mocks.hasUserAiAnalysisConsent,
 	searchContactByName: mocks.searchContactByName,
@@ -39,7 +50,7 @@ vi.mock('@repo/db', () => ({
 vi.mock('bullmq', () => ({
 	// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
 	Queue: vi.fn().mockImplementation(function () {
-		return { add: vi.fn(), on: vi.fn() };
+		return { add: vi.fn(), getJobs: mocks.queueGetJobs, on: vi.fn() };
 	}),
 	// biome-ignore lint/complexity/useArrowFunction: Vitest 4 class mocks must be constructible.
 	Worker: vi.fn().mockImplementation(function (_name: string, processor: typeof mocks.processor) {
@@ -70,7 +81,7 @@ vi.mock('../../redis', () => ({
 	connection: {},
 }));
 
-await import('../relationship-extraction');
+const relationshipModule = await import('../relationship-extraction');
 
 const WS = 'ws-00000000-0000-0000-0000-000000000001';
 const USER = 'user-00000000-0000-0000-0000-000000000001';
@@ -151,10 +162,12 @@ describe('relationship extraction intro provenance', () => {
 			},
 		);
 		mocks.getWorkspaceIntroKeywords.mockResolvedValue([]);
+		mocks.getWorkspaceConnectionKeywords.mockResolvedValue([]);
 		mocks.hasUserAiAnalysisConsent.mockResolvedValue(true);
 		mocks.extractRelationships.mockResolvedValue([]);
 		mocks.hasConnectionKeywords.mockReturnValue(false);
 		mocks.hasIntroKeywords.mockReturnValue(true);
+		mocks.queueGetJobs.mockResolvedValue([]);
 		mocks.searchContactByName.mockImplementation((_workspaceId: string, name: string) => {
 			const contacts: Record<string, Array<{ id: string }>> = {
 				Alice: [{ id: CONTACT_A }],
@@ -181,7 +194,7 @@ describe('relationship extraction intro provenance', () => {
 		const processor = mocks.processor;
 		expect(processor).toBeDefined();
 		if (!processor) throw new Error('relationship extraction processor was not registered');
-		await processor({
+		const result = await processor({
 			data: {
 				workspaceId: WS,
 				userId: USER,
@@ -221,6 +234,7 @@ describe('relationship extraction intro provenance', () => {
 		expect(mocks.detectIntroductions).toHaveBeenCalledWith(expect.stringContaining(MSG_2));
 		const prompt = mocks.detectIntroductions.mock.calls[0]?.[0] as string;
 		expect(prompt).toContain('[source:');
+		expect(prompt).toContain('[speaker:PERSON_alice]');
 		expect(prompt).toContain('PERSON_alice');
 		expect(prompt).toContain('PERSON_bob');
 		expect(prompt).toContain('PERSON_carol');
@@ -251,6 +265,18 @@ describe('relationship extraction intro provenance', () => {
 				status: 'active',
 			}),
 			expect.anything(),
+		);
+		expect(result).toEqual(
+			expect.objectContaining({
+				introductionsDetected: 1,
+				introductionsCreated: 1,
+				introductionsRejected: 0,
+				diagnostics: expect.objectContaining({
+					freshSourceMessages: 3,
+					introductionKeywordMatched: true,
+					introductionModelCalls: 1,
+				}),
+			}),
 		);
 	});
 
@@ -431,5 +457,130 @@ describe('relationship extraction intro provenance', () => {
 			}),
 			expect.anything(),
 		);
+	});
+
+	it('detects new connections from fresh contact batches and stores grounded source IDs', async () => {
+		mocks.getWorkspaceConnectionKeywords.mockResolvedValue(['vibed at']);
+		mocks.hasConnectionKeywords.mockImplementation((content: string) =>
+			content.includes('Great to meet'),
+		);
+		mocks.detectConnections.mockResolvedValue([
+			{
+				contact_name: 'PERSON_alice',
+				event: 'ETHDenver',
+				context: 'First met at ETHDenver.',
+				confidence: 0.91,
+				reasoning: 'Explicit first-meeting signal.',
+				source_message_ids: [MSG_1, 'not-from-this-batch'],
+			},
+		]);
+
+		const processor = mocks.processor;
+		expect(processor).toBeDefined();
+		if (!processor) throw new Error('relationship extraction processor was not registered');
+		const result = await processor({
+			data: {
+				workspaceId: WS,
+				userId: USER,
+				sourceAccountId: 'tg-account-1',
+				contactId: CONTACT_A,
+				keyEnvelope: fakeKeyEnvelope,
+				workspaceSalt: Buffer.from('salt').toString('hex'),
+				messages: [
+					{
+						role: 'assistant',
+						content: 'enc:Great to meet you at ETHDenver.',
+						timestamp: '2026-05-14T10:00:00Z',
+						sourceMessageId: MSG_1,
+						chatId: 'chat-1',
+						contactId: CONTACT_A,
+					},
+				],
+			},
+		});
+
+		expect(mocks.getWorkspaceConnectionKeywords).toHaveBeenCalledWith(WS);
+		expect(mocks.hasConnectionKeywords).toHaveBeenCalledWith(
+			expect.stringContaining('Great to meet'),
+			['vibed at'],
+		);
+		expect(mocks.detectConnections).toHaveBeenCalledWith(expect.stringContaining(MSG_1));
+		const prompt = mocks.detectConnections.mock.calls[0]?.[0] as string;
+		expect(prompt).toContain('[speaker:PERSON_alice]');
+		expect(mocks.createConnection).toHaveBeenCalledWith(
+			WS,
+			expect.objectContaining({
+				contactId: CONTACT_A,
+				event: 'ETHDenver',
+				context: 'First met at ETHDenver.',
+				confidence: 0.91,
+				sourceMessageIds: [MSG_1],
+			}),
+			expect.anything(),
+		);
+		expect(result).toEqual(
+			expect.objectContaining({
+				connectionsDetected: 1,
+				connectionsCreated: 1,
+				connectionsRejected: 0,
+				diagnostics: expect.objectContaining({
+					connectionKeywordMatched: true,
+					connectionModelCalls: 1,
+				}),
+			}),
+		);
+	});
+
+	it('classifies and clears resolved retained relationship extraction failures', async () => {
+		const removeResolved = vi.fn();
+		const removeStalled = vi.fn();
+		mocks.queueGetJobs.mockResolvedValueOnce([
+			{
+				data: { workspaceId: WS, userId: USER, contactId: CONTACT_A },
+				failedReason: 'Failed query: select "connection_keywords" from "user_preferences"',
+				remove: removeResolved,
+				timestamp: Date.now(),
+			},
+			{
+				data: { workspaceId: WS, userId: USER, contactId: CONTACT_B },
+				failedReason: 'job stalled more than allowable limit',
+				remove: removeStalled,
+				timestamp: Date.now(),
+			},
+		]);
+
+		const result = await relationshipModule.cleanupResolvedRelationshipExtractionFailures({
+			workspaceId: WS,
+			userId: USER,
+		});
+
+		expect(result).toEqual(
+			expect.objectContaining({
+				scanned: 2,
+				removed: 1,
+				retained: 1,
+			}),
+		);
+		expect(removeResolved).toHaveBeenCalledTimes(1);
+		expect(removeStalled).not.toHaveBeenCalled();
+	});
+
+	it('keeps relationship extraction concurrency conservative and bounded', () => {
+		expect(relationshipModule.relationshipExtractionConcurrency({})).toBe(1);
+		expect(
+			relationshipModule.relationshipExtractionConcurrency({
+				RELATIONSHIP_EXTRACTION_CONCURRENCY: '2',
+			}),
+		).toBe(2);
+		expect(
+			relationshipModule.relationshipExtractionConcurrency({
+				RELATIONSHIP_EXTRACTION_CONCURRENCY: '999',
+			}),
+		).toBe(4);
+		expect(
+			relationshipModule.relationshipExtractionConcurrency({
+				RELATIONSHIP_EXTRACTION_CONCURRENCY: 'not-a-number',
+			}),
+		).toBe(1);
 	});
 });

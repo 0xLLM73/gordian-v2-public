@@ -52,11 +52,9 @@ function infoPlist() {
 `;
 }
 
-function entitlements({ bundleId, teamId }) {
-	const applicationIdentifier = teamId
-		? `${teamId}.${bundleId}`
-		: '$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)';
-	const developerTeam = teamId || '$(DEVELOPMENT_TEAM)';
+function entitlements() {
+	const applicationIdentifier = '$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)';
+	const developerTeam = '$(DEVELOPMENT_TEAM)';
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -65,6 +63,10 @@ function entitlements({ bundleId, teamId }) {
 \t<string>${applicationIdentifier}</string>
 \t<key>com.apple.developer.team-identifier</key>
 \t<string>${developerTeam}</string>
+\t<key>keychain-access-groups</key>
+\t<array>
+\t\t<string>${applicationIdentifier}</string>
+\t</array>
 \t<key>com.apple.security.get-task-allow</key>
 \t<true/>
 </dict>
@@ -164,6 +166,14 @@ function projectFile({ bundleId, teamId }) {
 \t\t\t\tTargetAttributes = {
 \t\t\t\t\tA0000000000000000000000A = {
 \t\t\t\t\t\tCreatedOnToolsVersion = 26.5;
+\t\t\t\t\t\tSystemCapabilities = {
+\t\t\t\t\t\t\tcom.apple.HardenedRuntime = {
+\t\t\t\t\t\t\t\tenabled = 1;
+\t\t\t\t\t\t\t};
+\t\t\t\t\t\t\tcom.apple.Keychain = {
+\t\t\t\t\t\t\t\tenabled = 1;
+\t\t\t\t\t\t\t};
+\t\t\t\t\t\t};
 \t\t\t\t\t};
 \t\t\t\t};
 \t\t\t};
@@ -394,8 +404,18 @@ products, provisioning profiles, certificates, or signing metadata.
 1. Open ${projectPath} in Xcode.
 2. Select the GordianKeychainBroker target.
 3. Open Signing & Capabilities.
-4. Select your Apple Personal Team.
-5. Build the Debug target.
+4. Enable Automatically manage signing.
+5. Select your Apple Personal Team.
+6. Confirm Keychain Sharing is present.
+7. Build the Debug target.
+
+If \`xcodebuild\` reports \`No Account for Team "${teamId || '<team id>'}"\`, Xcode
+has a local signing certificate but not a valid account session for that team.
+Open **Xcode > Settings > Accounts**, add or remove/re-add the Apple Account,
+then return to Signing & Capabilities and select the team again. If Xcode reports
+that no Mac App Development provisioning profile exists for \`${bundleId}\`, use
+the same Accounts pane to download manual profiles or build once from Xcode so
+automatic signing can create the profile.
 
 The broker bundle id is:
 
@@ -421,6 +441,18 @@ pnpm telegram:touchid:probe -- --helper "$GORDIAN_KEYCHAIN_HELPER_PATH"
 
 function detectAppleDevelopmentTeamId() {
 	if (process.platform !== 'darwin') return '';
+	try {
+		const identities = execFileSync('security', ['find-identity', '-v', '-p', 'codesigning'], {
+			encoding: 'utf8',
+			stdio: ['ignore', 'pipe', 'ignore'],
+		});
+		for (const line of String(identities).split(/\r?\n/)) {
+			const match = line.match(/"Apple Development:.+\(([A-Z0-9]{10})\)"$/);
+			if (match) return match[1];
+		}
+	} catch {
+		// Fall through to certificate parsing below.
+	}
 	try {
 		const certs = execFileSync(
 			'security',
@@ -490,10 +522,7 @@ function main() {
 		resolve(sourceDir, 'main.swift'),
 	);
 	writeFileSync(resolve(sourceDir, 'Info.plist'), infoPlist());
-	writeFileSync(
-		resolve(sourceDir, 'GordianKeychainBroker.entitlements'),
-		entitlements({ bundleId, teamId }),
-	);
+	writeFileSync(resolve(sourceDir, 'GordianKeychainBroker.entitlements'), entitlements());
 	writeFileSync(resolve(projectDir, 'project.pbxproj'), projectFile({ bundleId, teamId }));
 	writeFileSync(resolve(out, 'README.md'), readme({ bundleId, out, teamId }));
 

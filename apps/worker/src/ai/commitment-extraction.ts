@@ -9,7 +9,6 @@ import {
 } from '@repo/shared';
 import { seedBanditPriors, selectPromptVariant } from './bandit';
 import { getHeliconeHeaders, inferWithCache } from './cached-inference';
-import { checkCommitmentHeuristic } from './commitment-heuristics';
 import { prefilterEntities } from './prefilter';
 
 /**
@@ -819,47 +818,91 @@ If no clear commitment exists, return {"commitments":[]}.
 Rules:
 - commitment_type must be exactly one of promise, task, meeting, financial.
 - assignee must be exactly user, contact, both, or unknown. Use unknown for ambiguous group assignments.
+- Extract only useful commitments worth tracking in a CRM: accepted future obligations, promised deliverables, tasks, payments, or concrete meeting plans.
+- A trigger phrase alone is not enough. Exclude jokes, banter, threats, insults, venting, predictions, status updates, attendance notes like "I'll be there", and general announcements that do not create a trackable obligation.
 - source_message_ids must contain only IDs present in [source:...] tags in the transcript.
 - quote must be an exact substring from the masked transcript, not a paraphrase.
 - Extract only commitments supported by the episode evidence. Learned hints may calibrate classification only.
 - Return [] for vague intentions, jokes, pure questions without acceptance, completed past actions, cancelled actions, and KG-only or memory-only inferences.
 - confidence must be a number from 0 to 1.`;
 
-const LOCAL_COMMITMENT_MAX_TOKENS = 800;
+const LOCAL_COMMITMENT_MAX_TOKENS = 1200;
+
+function transcriptSourceLines(transcript: string): Array<{ sourceId: string; line: string }> {
+	return transcript
+		.split('\n')
+		.map((line) => {
+			const match = line.match(/^\[source:([^\]]+)\]/);
+			if (!match?.[1]) return null;
+			return { sourceId: match[1], line };
+		})
+		.filter((line): line is { sourceId: string; line: string } => line !== null);
+}
+
+function repairLocalCommitmentSourceIds(
+	commitment: ExtractedCommitment,
+	transcript: string,
+	allowedSourceIds: Set<string>,
+): ExtractedCommitment {
+	const sourceMessageIds = commitment.source_message_ids ?? [];
+	if (
+		sourceMessageIds.length > 0 &&
+		sourceMessageIds.every((sourceId) => allowedSourceIds.has(sourceId))
+	) {
+		return commitment;
+	}
+
+	const normalizedQuote = normalizeGroundingText(commitment.quote);
+	if (normalizedQuote.length < 12) return commitment;
+
+	const repaired = transcriptSourceLines(transcript)
+		.filter(({ sourceId, line }) => {
+			return (
+				allowedSourceIds.has(sourceId) && normalizeGroundingText(line).includes(normalizedQuote)
+			);
+		})
+		.map(({ sourceId }) => sourceId);
+	const unique = [...new Set(repaired)];
+	if (unique.length === 0 || unique.length > 3) return commitment;
+
+	return { ...commitment, source_message_ids: unique };
+}
 
 function validateLocalCommitments(
 	commitments: ExtractedCommitment[],
 	transcript: string,
 	allowedSourceIds: Set<string>,
 ): ExtractedCommitment[] {
-	return commitments.filter((commitment) => {
-		if (
-			commitment.state === 'completed' ||
-			commitment.state === 'cancelled' ||
-			commitment.state === 'superseded'
-		) {
-			return false;
-		}
+	return commitments
+		.map((commitment) => repairLocalCommitmentSourceIds(commitment, transcript, allowedSourceIds))
+		.filter((commitment) => {
+			if (
+				commitment.state === 'completed' ||
+				commitment.state === 'cancelled' ||
+				commitment.state === 'superseded'
+			) {
+				return false;
+			}
 
-		if (!isQuoteGrounded(transcript, commitment.quote)) {
-			console.log('[commitment-extraction] rejected local commitment with ungrounded quote');
-			return false;
-		}
+			if (!isQuoteGrounded(transcript, commitment.quote)) {
+				console.log('[commitment-extraction] rejected local commitment with ungrounded quote');
+				return false;
+			}
 
-		const sourceMessageIds = commitment.source_message_ids ?? [];
-		if (sourceMessageIds.length === 0) {
-			console.log('[commitment-extraction] rejected local commitment without source ids');
-			return false;
-		}
-		if (!sourceMessageIds.every((id) => allowedSourceIds.has(id))) {
-			console.log(
-				'[commitment-extraction] rejected local commitment with out-of-episode source id',
-			);
-			return false;
-		}
+			const sourceMessageIds = commitment.source_message_ids ?? [];
+			if (sourceMessageIds.length === 0) {
+				console.log('[commitment-extraction] rejected local commitment without source ids');
+				return false;
+			}
+			if (!sourceMessageIds.every((id) => allowedSourceIds.has(id))) {
+				console.log(
+					'[commitment-extraction] rejected local commitment with out-of-episode source id',
+				);
+				return false;
+			}
 
-		return true;
-	});
+			return true;
+		});
 }
 
 async function runPass1NetLocal(
@@ -1008,37 +1051,7 @@ export async function extractCommitmentsWithBandit(
 		episodeMessages.map((message, index) => messageSourceId(message, index)),
 	);
 
-	// 4. P8: Check heuristic patterns before Haiku call (instant, free)
-	const lastMessage = episodeMessages[episodeMessages.length - 1];
-	if (lastMessage) {
-		const heuristic = checkCommitmentHeuristic(lastMessage.content);
-		if (heuristic.matched && heuristic.extractedCommitment) {
-			const sourceId = messageSourceId(lastMessage, episodeMessages.length - 1);
-			const heuristicCommitment: ExtractedCommitment = {
-				title: heuristic.extractedCommitment,
-				commitment_type: 'task',
-				assignee: 'user',
-				confidence: heuristic.confidence,
-				quote: heuristic.extractedCommitment,
-				source_message_ids: [sourceId],
-				evidence_level: 'explicit',
-				state: 'open',
-				rationale_tags: [`heuristic_${heuristic.pattern}`],
-				reasoning: `Heuristic match: ${heuristic.pattern}`,
-			};
-			console.log(
-				`[extraction-bandit] source=heuristic pattern=${heuristic.pattern} confidence=${heuristic.confidence}`,
-			);
-			return {
-				commitments: [heuristicCommitment],
-				candidates: [heuristicCommitment],
-				traceId,
-				variant,
-			};
-		}
-	}
-
-	// 5. Provider extraction — downstream storage handles draft/active routing.
+	// 4. Provider extraction — downstream storage handles draft/active routing.
 	const commitmentRuntime = getCommitmentLlmRuntime(process.env);
 	console.log(`[extraction-bandit] source=${commitmentRuntime.mode} variant=${variant}`);
 	const learnedPromptText = await buildLearnedPromptText(workspaceId);

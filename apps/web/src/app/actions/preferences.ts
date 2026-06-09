@@ -26,6 +26,7 @@ export const updatePreferencesAction = workspaceAction
 				.enum(['balanced', 'commitments', 'relationships', 'deals', 'network'])
 				.optional(),
 			introKeywords: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
+			connectionKeywords: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
 			ghostingAlertStatuses: z
 				.array(z.enum(['cooling', 'dormant']))
 				.min(0)

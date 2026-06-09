@@ -528,6 +528,79 @@ export async function getOldestTelegramMessageId(
 	return rows[0]?.oldest ?? null;
 }
 
+export async function listContactIdsForTelegramImportRun(input: {
+	workspaceId: string;
+	runId: string;
+	limit?: number;
+}): Promise<string[]> {
+	const limit = Math.min(Math.max(Math.trunc(input.limit ?? 100), 1), 500);
+	const rows = await db
+		.select({
+			contactId: messages.contactId,
+		})
+		.from(messages)
+		.innerJoin(
+			telegramImportRunChats,
+			and(
+				eq(telegramImportRunChats.workspaceId, messages.workspaceId),
+				eq(telegramImportRunChats.chatId, messages.chatId),
+			),
+		)
+		.innerJoin(
+			telegramImportRuns,
+			and(
+				eq(telegramImportRuns.id, telegramImportRunChats.importRunId),
+				eq(telegramImportRuns.workspaceId, telegramImportRunChats.workspaceId),
+			),
+		)
+		.where(
+			and(
+				eq(telegramImportRuns.workspaceId, input.workspaceId),
+				eq(telegramImportRuns.id, input.runId),
+				sql`${telegramImportRunChats.messagesInserted} > 0`,
+				sql`${messages.contactId} IS NOT NULL`,
+				sql`${messages.createdAt} >= ${telegramImportRuns.requestedAt}`,
+			),
+		)
+		.groupBy(messages.contactId)
+		.limit(limit);
+
+	return rows
+		.map((row) => row.contactId)
+		.filter((contactId): contactId is string => typeof contactId === 'string');
+}
+
+export async function listChatIdsForTelegramImportRun(input: {
+	workspaceId: string;
+	runId: string;
+	limit?: number;
+	chatTypes?: Array<'private' | 'group' | 'supergroup'>;
+}): Promise<string[]> {
+	const limit = Math.min(Math.max(Math.trunc(input.limit ?? 100), 1), 500);
+	const conditions = [
+		eq(telegramImportRunChats.workspaceId, input.workspaceId),
+		eq(telegramImportRunChats.importRunId, input.runId),
+		sql`${telegramImportRunChats.chatId} IS NOT NULL`,
+		sql`${telegramImportRunChats.messagesInserted} > 0`,
+	];
+	if (input.chatTypes?.length) {
+		conditions.push(inArray(telegramImportRunChats.chatType, input.chatTypes));
+	}
+
+	const rows = await db
+		.select({
+			chatId: telegramImportRunChats.chatId,
+		})
+		.from(telegramImportRunChats)
+		.where(and(...conditions))
+		.groupBy(telegramImportRunChats.chatId)
+		.limit(limit);
+
+	return rows
+		.map((row) => row.chatId)
+		.filter((chatId): chatId is string => typeof chatId === 'string');
+}
+
 export async function recordTelegramImportPage(input: {
 	runId: string;
 	runChatId: string;
@@ -543,11 +616,16 @@ export async function recordTelegramImportPage(input: {
 	messagesInserted: number;
 	duplicateMessages: number;
 	historyComplete: boolean;
+	chatComplete?: boolean;
+	updateBackfillOffset?: boolean;
 }): Promise<void> {
+	const chatComplete = input.chatComplete ?? input.historyComplete;
+	const updateBackfillOffset = input.updateBackfillOffset ?? true;
+
 	await db
 		.update(telegramImportRunChats)
 		.set({
-			status: input.historyComplete ? 'completed' : 'queued',
+			status: chatComplete ? 'completed' : 'queued',
 			nextOffsetMessageId: input.nextOffsetMessageId,
 			...(input.oldestImportedMessageId !== null && {
 				oldestImportedMessageId: sql`LEAST(COALESCE(${telegramImportRunChats.oldestImportedMessageId}, ${input.oldestImportedMessageId}), ${input.oldestImportedMessageId})`,
@@ -559,7 +637,7 @@ export async function recordTelegramImportPage(input: {
 			messagesSeen: sql`${telegramImportRunChats.messagesSeen} + ${input.messagesSeen}`,
 			messagesInserted: sql`${telegramImportRunChats.messagesInserted} + ${input.messagesInserted}`,
 			duplicateMessages: sql`${telegramImportRunChats.duplicateMessages} + ${input.duplicateMessages}`,
-			completedAt: input.historyComplete ? sql`now()` : null,
+			completedAt: chatComplete ? sql`now()` : null,
 			updatedAt: sql`now()`,
 		})
 		.where(
@@ -572,7 +650,7 @@ export async function recordTelegramImportPage(input: {
 	await db
 		.update(telegramImportRuns)
 		.set({
-			...(input.historyComplete && {
+			...(chatComplete && {
 				chatsCompleted: sql`${telegramImportRuns.chatsCompleted} + 1`,
 			}),
 			pagesFetched: sql`${telegramImportRuns.pagesFetched} + 1`,
@@ -614,7 +692,7 @@ export async function recordTelegramImportPage(input: {
 				chatId: input.chatId,
 				chatType: input.chatType,
 				historyComplete: input.historyComplete,
-				nextOffsetMessageId: input.nextOffsetMessageId,
+				...(updateBackfillOffset && { nextOffsetMessageId: input.nextOffsetMessageId }),
 				...(input.oldestImportedMessageId !== null && {
 					oldestImportedMessageId: sql`LEAST(COALESCE(${telegramChatImportState.oldestImportedMessageId}, ${input.oldestImportedMessageId}), ${input.oldestImportedMessageId})`,
 				}),

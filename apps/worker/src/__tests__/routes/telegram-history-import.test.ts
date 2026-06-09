@@ -167,11 +167,53 @@ describe('POST /telegram/history-import/start', () => {
 			userId: USER_ID,
 			workspaceId: WORKSPACE_ID,
 			sourceAccountId: SOURCE_ACCOUNT_ID,
+			localAnalysisMode: 'deferred',
+			importMode: 'recent',
 		});
 		const payload = mockEnqueueTelegramHistoryImport.mock.calls[0][0];
 		expect(payload).not.toHaveProperty('keyEnvelope');
 		expect(payload).not.toHaveProperty('workspaceSalt');
 		expect(payload).not.toHaveProperty('telegramSession');
+	});
+
+	it('allows explicit inline local analysis for a source-account-bound import', async () => {
+		const res = await post('/history-import/start', {
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			sourceAccountId: SOURCE_ACCOUNT_ID,
+			largeImportConfirmed: true,
+			localAnalysisMode: 'inline',
+		});
+
+		expect(res.status).toBe(200);
+		expect(mockEnqueueTelegramHistoryImport).toHaveBeenCalledWith({
+			runId: RUN_ID,
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			sourceAccountId: SOURCE_ACCOUNT_ID,
+			localAnalysisMode: 'inline',
+			importMode: 'recent',
+		});
+	});
+
+	it('allows explicit older-history backfill for a source-account-bound import', async () => {
+		const res = await post('/history-import/start', {
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			sourceAccountId: SOURCE_ACCOUNT_ID,
+			largeImportConfirmed: true,
+			importMode: 'backfill',
+		});
+
+		expect(res.status).toBe(200);
+		expect(mockEnqueueTelegramHistoryImport).toHaveBeenCalledWith({
+			runId: RUN_ID,
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			sourceAccountId: SOURCE_ACCOUNT_ID,
+			localAnalysisMode: 'deferred',
+			importMode: 'backfill',
+		});
 	});
 
 	it('marks the run failed when the initial enqueue fails', async () => {
@@ -215,6 +257,8 @@ describe('POST /telegram/history-import/:runId controls', () => {
 			userId: USER_ID,
 			workspaceId: WORKSPACE_ID,
 			sourceAccountId: SOURCE_ACCOUNT_ID,
+			localAnalysisMode: 'deferred',
+			importMode: 'recent',
 		});
 	});
 });

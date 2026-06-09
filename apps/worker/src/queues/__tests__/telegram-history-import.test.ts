@@ -9,6 +9,7 @@ const state = vi.hoisted(() => ({
 	rlsDepth: 0,
 	lockDepth: 0,
 	hasConsent: true,
+	hasAiConsent: true,
 	decryptError: null as Error | null,
 	getMessagesError: null as Error | null,
 	messagesResult: {
@@ -17,12 +18,14 @@ const state = vi.hoisted(() => ({
 		users: [] as Array<Record<string, unknown>>,
 	},
 	contactRows: [] as Array<Record<string, unknown>>,
+	messageIdentityRows: [] as Array<{ id: string; telegramMessageId: string }>,
 	dialogs: [] as Array<Record<string, unknown>>,
 	importState: null as null | {
 		historyComplete: boolean;
 		nextOffsetMessageId: number;
 		newestImportedMessageId: number | null;
 	},
+	runMessagesInserted: 0,
 	runChatType: 'private' as 'private' | 'group' | 'supergroup',
 	runChatNextOffsetMessageId: 100,
 	runStatuses: [] as string[],
@@ -38,9 +41,15 @@ const mockFailTelegramImportRunChat = vi.hoisted(() => vi.fn());
 const mockGetTelegramImportRun = vi.hoisted(() => vi.fn());
 const mockGetTelegramImportRunChat = vi.hoisted(() => vi.fn());
 const mockGetTelegramChatImportState = vi.hoisted(() => vi.fn());
+const mockGetNullContactSenderMetadataGap = vi.hoisted(() => vi.fn());
 const mockGetOldestTelegramMessageId = vi.hoisted(() => vi.fn());
+const mockRecordTelegramImportPage = vi.hoisted(() => vi.fn());
+const mockGetCalibration = vi.hoisted(() => vi.fn());
 const mockHasCurrentTelegramConsent = vi.hoisted(() => vi.fn());
+const mockHasUserAiAnalysisConsent = vi.hoisted(() => vi.fn());
 const mockHasOpenTelegramImportChats = vi.hoisted(() => vi.fn());
+const mockListChatIdsForTelegramImportRun = vi.hoisted(() => vi.fn());
+const mockListContactIdsForTelegramImportRun = vi.hoisted(() => vi.fn());
 const mockUpdateTelegramImportDiscoveryCounts = vi.hoisted(() => vi.fn());
 const mockUpdateTelegramImportRunChatStatus = vi.hoisted(() => vi.fn());
 const mockUpdateTelegramImportRunStatus = vi.hoisted(() => vi.fn());
@@ -48,11 +57,18 @@ const mockUpsertChat = vi.hoisted(() => vi.fn());
 const mockCreateContact = vi.hoisted(() => vi.fn());
 const mockLinkMessagesToContact = vi.hoisted(() => vi.fn());
 const mockLinkMessagesToContactsByTelegramIds = vi.hoisted(() => vi.fn());
+const mockListMessageIdsByTelegramIds = vi.hoisted(() => vi.fn());
 const mockUpsertMessages = vi.hoisted(() => vi.fn());
 const mockUpsertTelegramImportRunChat = vi.hoisted(() => vi.fn());
 const mockWithWorkspaceRLS = vi.hoisted(() => vi.fn());
 const mockTerminateUser = vi.hoisted(() => vi.fn());
 const mockDisconnectUser = vi.hoisted(() => vi.fn());
+const mockBufferMessage = vi.hoisted(() => vi.fn());
+const mockScheduleKnowledgeAnalysis = vi.hoisted(() => vi.fn());
+const mockQueueCommitmentReprocess = vi.hoisted(() => vi.fn());
+const mockQueueIntroductionReprocess = vi.hoisted(() => vi.fn());
+const mockQueueConnectionReprocess = vi.hoisted(() => vi.fn());
+const mockAppendAuditLog = vi.hoisted(() => vi.fn());
 
 const DATA = {
 	runId: RUN_ID,
@@ -120,12 +136,45 @@ vi.mock('@repo/crypto', () => ({
 		if (state.decryptError) throw state.decryptError;
 		return Buffer.alloc(32, 1);
 	}),
+	deriveKeys: vi.fn(async () => ({ dek: Buffer.alloc(32, 2), bik: Buffer.alloc(32, 3) })),
+	encrypt: vi.fn((value: string) => `encrypted:${value}`),
+	unwrapWrk: vi.fn(async () => Buffer.alloc(32, 4)),
 }));
 
 vi.mock('@repo/shared', () => ({
 	TELEGRAM_CONSENT_VERSION: 1,
+	canRunCommitmentExtraction: vi.fn(() => true),
+	isAiAnalysisAvailable: vi.fn(() => true),
 	redactSensitive: (value: unknown) =>
 		String(value).replace(/\btelegram-session:[0-9a-f-]{36}(?::[0-9a-f-]{36})?\b/gi, '[redacted]'),
+}));
+
+vi.mock('../message-buffer', () => ({
+	bufferMessage: mockBufferMessage,
+}));
+
+vi.mock('../knowledge-cron', () => ({
+	scheduleKnowledgeAnalysis: mockScheduleKnowledgeAnalysis,
+}));
+
+vi.mock('../../ai/connection-detection', () => ({
+	canRunConnectionDetection: vi.fn(() => true),
+}));
+
+vi.mock('../../ai/introduction-detection', () => ({
+	canRunIntroductionDetection: vi.fn(() => true),
+}));
+
+vi.mock('../connection-reprocess', () => ({
+	queueConnectionReprocess: mockQueueConnectionReprocess,
+}));
+
+vi.mock('../commitment-reprocess', () => ({
+	queueCommitmentReprocess: mockQueueCommitmentReprocess,
+}));
+
+vi.mock('../introduction-reprocess', () => ({
+	queueIntroductionReprocess: mockQueueIntroductionReprocess,
 }));
 
 vi.mock('@repo/db', () => {
@@ -183,6 +232,7 @@ vi.mock('@repo/db', () => {
 		userId: USER_ID,
 		workspaceId: WORKSPACE_ID,
 		sourceAccountId: SOURCE_ACCOUNT_ID,
+		messagesInserted: state.runMessagesInserted,
 	}));
 	mockGetTelegramImportRunChat.mockImplementation(async () => ({
 		id: '33333333-3333-4333-8333-333333333333',
@@ -196,7 +246,9 @@ vi.mock('@repo/db', () => {
 		nextOffsetMessageId: state.runChatNextOffsetMessageId,
 	}));
 	mockGetTelegramChatImportState.mockImplementation(async () => state.importState);
+	mockGetCalibration.mockResolvedValue({ commitmentSensitivity: 'specific' });
 	mockHasCurrentTelegramConsent.mockImplementation(async () => state.hasConsent);
+	mockHasUserAiAnalysisConsent.mockImplementation(async () => state.hasAiConsent);
 	mockHasOpenTelegramImportChats.mockResolvedValue(false);
 	mockUpdateTelegramImportDiscoveryCounts.mockResolvedValue(undefined);
 	mockUpdateTelegramImportRunChatStatus.mockResolvedValue(undefined);
@@ -221,22 +273,30 @@ vi.mock('@repo/db', () => {
 	return {
 		accounts: {},
 		and: vi.fn(),
+		appendAuditLog: mockAppendAuditLog,
 		contacts: {},
 		createContact: mockCreateContact,
 		db,
 		eq: vi.fn(),
 		failTelegramImportRunChat: mockFailTelegramImportRunChat,
+		getCalibration: mockGetCalibration,
+		getNullContactSenderMetadataGap: mockGetNullContactSenderMetadataGap,
 		getOldestTelegramMessageId: mockGetOldestTelegramMessageId,
 		getTelegramChatImportState: mockGetTelegramChatImportState,
 		getTelegramImportRun: mockGetTelegramImportRun,
 		getTelegramImportRunChat: mockGetTelegramImportRunChat,
 		hasCurrentTelegramConsent: mockHasCurrentTelegramConsent,
+		hasUserAiAnalysisConsent: mockHasUserAiAnalysisConsent,
 		hasOpenTelegramImportChats: mockHasOpenTelegramImportChats,
 		isNull: vi.fn(),
 		linkMessagesToContact: mockLinkMessagesToContact,
 		linkMessagesToContactsByTelegramIds: mockLinkMessagesToContactsByTelegramIds,
+		listChatIdsForTelegramImportRun: mockListChatIdsForTelegramImportRun,
+		listContactIdsForTelegramImportRun: mockListContactIdsForTelegramImportRun,
+		listMessageIdsByTelegramIds: mockListMessageIdsByTelegramIds,
 		or: vi.fn(),
-		recordTelegramImportPage: vi.fn(),
+		recordTelegramImportPage: mockRecordTelegramImportPage,
+		updateMessageSenderMetadataByTelegramIds: vi.fn(() => Promise.resolve(0)),
 		updateTelegramImportDiscoveryCounts: mockUpdateTelegramImportDiscoveryCounts,
 		updateTelegramImportRunChatStatus: mockUpdateTelegramImportRunChatStatus,
 		updateTelegramImportRunStatus: mockUpdateTelegramImportRunStatus,
@@ -253,23 +313,50 @@ async function loadModule() {
 	return await import('../telegram-history-import');
 }
 
-function job(attemptsMade = 0) {
+function job(
+	attemptsMade = 0,
+	overrides: Partial<typeof DATA & { importMode: 'recent' | 'backfill' }> = {},
+) {
 	return {
 		attemptsMade,
-		data: DATA,
+		data: { ...DATA, ...overrides },
 		opts: { attempts: 3 },
 	};
 }
 
-function pageJob(attemptsMade = 0) {
+function pageJob(
+	attemptsMade = 0,
+	overrides: Partial<
+		typeof DATA & {
+			runChatId: string;
+			localAnalysisMode: 'deferred' | 'inline';
+			importMode: 'recent' | 'backfill';
+			newerThanMessageId: number;
+			pageNumber: number;
+			preserveBackfillOffset: boolean;
+			existingHistoryComplete: boolean;
+			targetNewestImportedMessageId: number;
+		}
+	> = {},
+) {
 	return {
 		attemptsMade,
 		data: {
 			...DATA,
 			runChatId: '33333333-3333-4333-8333-333333333333',
+			...overrides,
 		},
 		opts: { attempts: 3 },
 	};
+}
+
+function fullMessagePage(startId = 200) {
+	return Array.from({ length: 100 }, (_, index) => ({
+		id: startId - index,
+		text: `message ${startId - index}`,
+		date: 1771111111 - index,
+		isOutgoing: false,
+	}));
 }
 
 beforeEach(() => {
@@ -277,12 +364,15 @@ beforeEach(() => {
 	state.rlsDepth = 0;
 	state.lockDepth = 0;
 	state.hasConsent = true;
+	state.hasAiConsent = true;
 	state.decryptError = null;
 	state.getMessagesError = null;
 	state.messagesResult = { type: 'messages-result', messages: [], users: [] };
 	state.contactRows = [];
+	state.messageIdentityRows = [];
 	state.dialogs = [];
 	state.importState = null;
+	state.runMessagesInserted = 0;
 	state.runChatType = 'private';
 	state.runChatNextOffsetMessageId = 100;
 	state.runStatuses = [];
@@ -292,9 +382,39 @@ beforeEach(() => {
 	state.workerProcessor = undefined;
 	Reflect.deleteProperty(process.env, 'TELEGRAM_MTPROTO_PER_INTERACTION_UNLOCK');
 	mockCreateContact.mockResolvedValue({ id: 'created-contact-id' });
+	mockGetCalibration.mockResolvedValue({ commitmentSensitivity: 'specific' });
+	mockGetNullContactSenderMetadataGap.mockResolvedValue(0);
+	mockRecordTelegramImportPage.mockResolvedValue(undefined);
 	mockLinkMessagesToContact.mockResolvedValue(0);
 	mockLinkMessagesToContactsByTelegramIds.mockResolvedValue(0);
+	mockListChatIdsForTelegramImportRun.mockResolvedValue([]);
+	mockListContactIdsForTelegramImportRun.mockResolvedValue([]);
+	mockListMessageIdsByTelegramIds.mockImplementation(async () => state.messageIdentityRows);
 	mockUpsertMessages.mockResolvedValue(0);
+	mockBufferMessage.mockClear();
+	mockScheduleKnowledgeAnalysis.mockResolvedValue({ jobId: 'knowledge-analysis-job' });
+	mockQueueCommitmentReprocess.mockResolvedValue({
+		contactsProcessed: 4,
+		messagesQueued: 120,
+		batchSize: 200,
+		contactLimit: 100,
+		maxAgeDays: 7,
+	});
+	mockQueueIntroductionReprocess.mockResolvedValue({
+		chatsProcessed: 3,
+		messagesQueued: 90,
+		batchSize: 200,
+		chatLimit: 100,
+		maxAgeDays: 30,
+	});
+	mockQueueConnectionReprocess.mockResolvedValue({
+		contactsProcessed: 5,
+		messagesQueued: 140,
+		batchSize: 200,
+		contactLimit: 100,
+		maxAgeDays: 30,
+	});
+	mockAppendAuditLog.mockClear();
 	mockTerminateUser.mockResolvedValue(undefined);
 	mockDisconnectUser.mockResolvedValue(undefined);
 });
@@ -426,10 +546,92 @@ describe('telegram history import queue', () => {
 			'import-page',
 			expect.objectContaining({
 				runChatId: '33333333-3333-4333-8333-333333333333',
+				importMode: 'recent',
 				newerThanMessageId: 100,
+				preserveBackfillOffset: true,
+				existingHistoryComplete: true,
+				targetNewestImportedMessageId: 125,
 			}),
 			expect.objectContaining({ delay: expect.any(Number) }),
 		);
+	});
+
+	it('skips completed chats without newer messages during recent imports', async () => {
+		state.dialogs = [
+			{
+				chatId: '123456',
+				type: 'supergroup',
+				title: 'Existing group',
+				topMessage: 100,
+				unreadCount: 0,
+				isBot: false,
+			},
+		];
+		state.importState = {
+			historyComplete: true,
+			nextOffsetMessageId: 1,
+			newestImportedMessageId: 100,
+		};
+		mockGetNullContactSenderMetadataGap.mockResolvedValueOnce(42);
+		await loadModule();
+
+		await state.workerProcessor?.(job());
+
+		expect(mockGetNullContactSenderMetadataGap).not.toHaveBeenCalled();
+		expect(mockUpdateTelegramImportDiscoveryCounts).toHaveBeenCalledWith(
+			WORKSPACE_ID,
+			RUN_ID,
+			expect.objectContaining({ chatsQueued: 0, skippedDialogs: 1 }),
+		);
+		expect(mockQueueAdd).not.toHaveBeenCalledWith(
+			'import-page',
+			expect.anything(),
+			expect.anything(),
+		);
+	});
+
+	it('queues completed chats again when sender metadata is missing during backfill', async () => {
+		state.dialogs = [
+			{
+				chatId: '123456',
+				type: 'supergroup',
+				title: 'Existing group',
+				topMessage: 100,
+				unreadCount: 0,
+				isBot: false,
+			},
+		];
+		state.importState = {
+			historyComplete: true,
+			nextOffsetMessageId: 1,
+			newestImportedMessageId: 100,
+		};
+		mockGetNullContactSenderMetadataGap.mockResolvedValueOnce(42);
+		await loadModule();
+
+		await state.workerProcessor?.(job(0, { importMode: 'backfill' }));
+
+		expect(mockUpdateTelegramImportDiscoveryCounts).toHaveBeenCalledWith(
+			WORKSPACE_ID,
+			RUN_ID,
+			expect.objectContaining({ chatsQueued: 1, skippedDialogs: 0 }),
+		);
+		expect(mockUpsertTelegramImportRunChat).toHaveBeenCalledWith(
+			expect.objectContaining({
+				nextOffsetMessageId: 0,
+				oldestImportedMessageId: null,
+				newestImportedMessageId: 100,
+			}),
+		);
+		expect(mockQueueAdd).toHaveBeenCalledWith(
+			'import-page',
+			expect.objectContaining({
+				runChatId: '33333333-3333-4333-8333-333333333333',
+				importMode: 'backfill',
+			}),
+			expect.objectContaining({ delay: expect.any(Number) }),
+		);
+		expect(mockQueueAdd.mock.calls[0]?.[1]).not.toHaveProperty('newerThanMessageId');
 	});
 
 	it('fetches incremental pages with a minId lower bound', async () => {
@@ -454,6 +656,110 @@ describe('telegram history import queue', () => {
 				offsetId: 0,
 				minId: 100,
 			}),
+		);
+	});
+
+	it('finishes a recent import page at the configured page cap without marking history complete', async () => {
+		state.runChatNextOffsetMessageId = 0;
+		state.messagesResult = {
+			type: 'messages-result',
+			messages: fullMessagePage(200),
+			users: [],
+		};
+		await loadModule();
+
+		await state.workerProcessor?.(pageJob(0, { importMode: 'recent' }));
+
+		expect(mockRecordTelegramImportPage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				nextOffsetMessageId: 101,
+				messagesSeen: 100,
+				historyComplete: false,
+				chatComplete: true,
+				updateBackfillOffset: true,
+			}),
+		);
+		expect(mockQueueAdd).not.toHaveBeenCalledWith(
+			'import-page',
+			expect.anything(),
+			expect.anything(),
+		);
+		expect(mockUpdateTelegramImportRunStatus).toHaveBeenCalledWith(
+			WORKSPACE_ID,
+			RUN_ID,
+			'completed',
+		);
+	});
+
+	it('continues full pages during explicit backfill imports', async () => {
+		state.runChatNextOffsetMessageId = 0;
+		state.messagesResult = {
+			type: 'messages-result',
+			messages: fullMessagePage(200),
+			users: [],
+		};
+		await loadModule();
+
+		await state.workerProcessor?.(pageJob(0, { importMode: 'backfill' }));
+
+		expect(mockRecordTelegramImportPage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				nextOffsetMessageId: 101,
+				messagesSeen: 100,
+				historyComplete: false,
+				chatComplete: false,
+				updateBackfillOffset: true,
+			}),
+		);
+		expect(mockQueueAdd).toHaveBeenCalledWith(
+			'import-page',
+			expect.objectContaining({
+				importMode: 'backfill',
+				pageNumber: 1,
+			}),
+			expect.objectContaining({ delay: expect.any(Number) }),
+		);
+	});
+
+	it('preserves the historical backfill offset while catching up newer messages', async () => {
+		state.runChatNextOffsetMessageId = 0;
+		state.messagesResult = {
+			type: 'messages-result',
+			messages: fullMessagePage(250),
+			users: [],
+		};
+		await loadModule();
+
+		await state.workerProcessor?.(
+			pageJob(0, {
+				importMode: 'recent',
+				newerThanMessageId: 100,
+				preserveBackfillOffset: true,
+				existingHistoryComplete: true,
+				targetNewestImportedMessageId: 250,
+			}),
+		);
+
+		expect(mockRecordTelegramImportPage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				nextOffsetMessageId: 151,
+				newestImportedMessageId: null,
+				historyComplete: true,
+				chatComplete: false,
+				updateBackfillOffset: false,
+			}),
+		);
+		expect(mockQueueAdd).toHaveBeenCalledWith(
+			'import-page',
+			expect.objectContaining({
+				importMode: 'recent',
+				newerThanMessageId: 100,
+				preserveBackfillOffset: true,
+				existingHistoryComplete: true,
+				targetNewestImportedMessageId: 250,
+				pageNumber: 1,
+			}),
+			expect.objectContaining({ delay: expect.any(Number) }),
 		);
 	});
 
@@ -579,6 +885,324 @@ describe('telegram history import queue', () => {
 		);
 	});
 
+	it('defers newly inserted private messages by default instead of running local AI during import', async () => {
+		state.contactRows = [
+			{
+				id: '55555555-5555-4555-8555-555555555555',
+				telegramId: '123456',
+				sourceAccountId: SOURCE_ACCOUNT_ID,
+			},
+		];
+		state.messagesResult = {
+			type: 'messages-result',
+			messages: [
+				{
+					id: 101,
+					text: 'I will send the deck tomorrow',
+					date: 1771111111,
+					isOutgoing: true,
+				},
+			],
+			users: [],
+		};
+		mockListMessageIdsByTelegramIds.mockResolvedValueOnce([]);
+		mockUpsertMessages.mockResolvedValueOnce(1);
+		await loadModule();
+
+		await state.workerProcessor?.(pageJob());
+
+		expect(mockBufferMessage).not.toHaveBeenCalled();
+		expect(mockScheduleKnowledgeAnalysis).not.toHaveBeenCalledWith({
+			workspaceId: WORKSPACE_ID,
+			reason: 'small_sync',
+			mode: 'incremental',
+		});
+	});
+
+	it('buffers newly inserted private messages for local AI analysis when inline mode is enabled', async () => {
+		state.contactRows = [
+			{
+				id: '55555555-5555-4555-8555-555555555555',
+				telegramId: '123456',
+				sourceAccountId: SOURCE_ACCOUNT_ID,
+			},
+		];
+		state.messagesResult = {
+			type: 'messages-result',
+			messages: [
+				{
+					id: 101,
+					text: 'I will send the deck tomorrow',
+					date: 1771111111,
+					isOutgoing: true,
+				},
+			],
+			users: [],
+		};
+		mockListMessageIdsByTelegramIds
+			.mockResolvedValueOnce([])
+			.mockResolvedValueOnce([
+				{ id: '66666666-6666-4666-8666-666666666666', telegramMessageId: '101' },
+			]);
+		mockUpsertMessages.mockResolvedValueOnce(1);
+		await loadModule();
+
+		await state.workerProcessor?.(pageJob(0, { localAnalysisMode: 'inline' }));
+
+		expect(mockBufferMessage).toHaveBeenCalledWith(
+			USER_ID,
+			'55555555-5555-4555-8555-555555555555',
+			WORKSPACE_ID,
+			[
+				expect.objectContaining({
+					id: '66666666-6666-4666-8666-666666666666',
+					role: 'user',
+					content: 'encrypted:I will send the deck tomorrow',
+					sourceMessageId: '66666666-6666-4666-8666-666666666666',
+					chatId: '44444444-4444-4444-8444-444444444444',
+					contactId: '55555555-5555-4555-8555-555555555555',
+				}),
+			],
+			expect.objectContaining({
+				encryptedWrk: expect.any(String),
+				kmsContext: expect.any(Object),
+				wrkVersion: 1,
+			}),
+			Buffer.alloc(32, 3).toString('hex'),
+			'specific',
+			SOURCE_ACCOUNT_ID,
+		);
+		expect(mockScheduleKnowledgeAnalysis).toHaveBeenCalledWith({
+			workspaceId: WORKSPACE_ID,
+			reason: 'small_sync',
+			mode: 'incremental',
+		});
+	});
+
+	it('does not buffer post-import AI analysis when AI consent is disabled', async () => {
+		state.hasAiConsent = false;
+		state.contactRows = [
+			{
+				id: '55555555-5555-4555-8555-555555555555',
+				telegramId: '123456',
+				sourceAccountId: SOURCE_ACCOUNT_ID,
+			},
+		];
+		state.messagesResult = {
+			type: 'messages-result',
+			messages: [
+				{
+					id: 101,
+					text: 'I will send the deck tomorrow',
+					date: 1771111111,
+					isOutgoing: true,
+				},
+			],
+			users: [],
+		};
+		mockListMessageIdsByTelegramIds
+			.mockResolvedValueOnce([])
+			.mockResolvedValueOnce([
+				{ id: '66666666-6666-4666-8666-666666666666', telegramMessageId: '101' },
+			]);
+		mockUpsertMessages.mockResolvedValueOnce(1);
+		await loadModule();
+
+		await state.workerProcessor?.(pageJob(0, { localAnalysisMode: 'inline' }));
+
+		expect(mockHasUserAiAnalysisConsent).toHaveBeenCalledWith(USER_ID, WORKSPACE_ID);
+		expect(mockBufferMessage).not.toHaveBeenCalled();
+		expect(mockScheduleKnowledgeAnalysis).not.toHaveBeenCalled();
+	});
+
+	it('queues incremental knowledge analysis and commitment discovery for touched contacts after a small recent import', async () => {
+		state.runMessagesInserted = 42;
+		const touchedContactIds = [
+			'77777777-7777-4777-8777-777777777777',
+			'88888888-8888-4888-8888-888888888888',
+		];
+		const touchedChatIds = ['99999999-9999-4999-8999-999999999999'];
+		mockListContactIdsForTelegramImportRun
+			.mockResolvedValueOnce(touchedContactIds)
+			.mockResolvedValueOnce(touchedContactIds);
+		mockListChatIdsForTelegramImportRun.mockResolvedValueOnce(touchedChatIds);
+		mockQueueCommitmentReprocess.mockResolvedValueOnce({
+			contactsProcessed: 2,
+			messagesQueued: 16,
+			batchSize: 200,
+			contactLimit: 2,
+			maxAgeDays: 7,
+		});
+		mockQueueIntroductionReprocess.mockResolvedValueOnce({
+			chatsProcessed: 1,
+			messagesQueued: 9,
+			batchSize: 200,
+			chatLimit: 1,
+			maxAgeDays: 30,
+		});
+		mockQueueConnectionReprocess.mockResolvedValueOnce({
+			contactsProcessed: 2,
+			messagesQueued: 18,
+			batchSize: 200,
+			contactLimit: 2,
+			maxAgeDays: 30,
+		});
+		await loadModule();
+
+		await state.workerProcessor?.(pageJob());
+
+		expect(mockUpdateTelegramImportRunStatus).toHaveBeenCalledWith(
+			WORKSPACE_ID,
+			RUN_ID,
+			'completed',
+		);
+		expect(mockScheduleKnowledgeAnalysis).toHaveBeenCalledWith({
+			workspaceId: WORKSPACE_ID,
+			reason: 'history_import_completed',
+			mode: 'incremental',
+			limit: 50,
+			runId: RUN_ID,
+		});
+		expect(mockListContactIdsForTelegramImportRun).toHaveBeenCalledWith({
+			workspaceId: WORKSPACE_ID,
+			runId: RUN_ID,
+			limit: 100,
+		});
+		expect(mockListChatIdsForTelegramImportRun).toHaveBeenCalledWith({
+			workspaceId: WORKSPACE_ID,
+			runId: RUN_ID,
+			limit: 100,
+			chatTypes: ['group', 'supergroup'],
+		});
+		expect(mockQueueCommitmentReprocess).toHaveBeenCalledWith({
+			workspaceId: WORKSPACE_ID,
+			userId: USER_ID,
+			sourceAccountId: SOURCE_ACCOUNT_ID,
+			maxAgeDays: 7,
+			contactLimit: 2,
+			contactIds: touchedContactIds,
+			batchSize: 200,
+			skipWorkspaceRelationshipDerivation: true,
+		});
+		expect(mockQueueIntroductionReprocess).toHaveBeenCalledWith({
+			workspaceId: WORKSPACE_ID,
+			userId: USER_ID,
+			sourceAccountId: SOURCE_ACCOUNT_ID,
+			maxAgeDays: 30,
+			chatLimit: 1,
+			chatIds: touchedChatIds,
+			batchSize: 200,
+		});
+		expect(mockQueueConnectionReprocess).toHaveBeenCalledWith({
+			workspaceId: WORKSPACE_ID,
+			userId: USER_ID,
+			sourceAccountId: SOURCE_ACCOUNT_ID,
+			maxAgeDays: 30,
+			contactLimit: 2,
+			contactIds: touchedContactIds,
+			batchSize: 200,
+		});
+		expect(mockAppendAuditLog).toHaveBeenCalledWith({
+			workspaceId: WORKSPACE_ID,
+			actorType: 'system',
+			actorId: USER_ID,
+			action: 'generate',
+			resourceType: 'message',
+			metadata: expect.objectContaining({
+				operation: 'telegram_import_auto_commitment_reprocess',
+				runId: RUN_ID,
+				contactsProcessed: 2,
+				messagesQueued: 16,
+				batchSize: 200,
+				contactLimit: 2,
+				touchedContactCount: 2,
+				maxAgeDays: 7,
+				sourceAccountFiltered: true,
+			}),
+		});
+		expect(mockAppendAuditLog).toHaveBeenCalledWith({
+			workspaceId: WORKSPACE_ID,
+			actorType: 'system',
+			actorId: USER_ID,
+			action: 'generate',
+			resourceType: 'message',
+			metadata: expect.objectContaining({
+				operation: 'telegram_import_auto_introduction_reprocess',
+				runId: RUN_ID,
+				chatsProcessed: 1,
+				messagesQueued: 9,
+				batchSize: 200,
+				chatLimit: 1,
+				touchedChatCount: 1,
+				maxAgeDays: 30,
+				sourceAccountFiltered: true,
+			}),
+		});
+		expect(mockAppendAuditLog).toHaveBeenCalledWith({
+			workspaceId: WORKSPACE_ID,
+			actorType: 'system',
+			actorId: USER_ID,
+			action: 'generate',
+			resourceType: 'message',
+			metadata: expect.objectContaining({
+				operation: 'telegram_import_auto_connection_reprocess',
+				runId: RUN_ID,
+				contactsProcessed: 2,
+				messagesQueued: 18,
+				batchSize: 200,
+				contactLimit: 2,
+				touchedContactCount: 2,
+				maxAgeDays: 30,
+				sourceAccountFiltered: true,
+			}),
+		});
+	});
+
+	it('queues full knowledge analysis after a backfill import with inserted history', async () => {
+		state.runMessagesInserted = 42;
+		await loadModule();
+
+		await state.workerProcessor?.(pageJob(0, { importMode: 'backfill' }));
+
+		expect(mockScheduleKnowledgeAnalysis).toHaveBeenCalledWith({
+			workspaceId: WORKSPACE_ID,
+			reason: 'history_import_completed',
+			mode: 'full',
+			runId: RUN_ID,
+		});
+	});
+
+	it('does not run completed-import discovery when no new messages were inserted', async () => {
+		state.runMessagesInserted = 0;
+		await loadModule();
+
+		await state.workerProcessor?.(pageJob());
+
+		expect(mockScheduleKnowledgeAnalysis).not.toHaveBeenCalledWith({
+			workspaceId: WORKSPACE_ID,
+			reason: 'history_import_completed',
+			mode: 'full',
+			runId: RUN_ID,
+		});
+		expect(mockQueueCommitmentReprocess).not.toHaveBeenCalled();
+		expect(mockQueueIntroductionReprocess).not.toHaveBeenCalled();
+		expect(mockQueueConnectionReprocess).not.toHaveBeenCalled();
+		expect(mockAppendAuditLog).not.toHaveBeenCalledWith(
+			expect.objectContaining({
+				metadata: expect.objectContaining({
+					operation: 'telegram_import_auto_commitment_reprocess',
+				}),
+			}),
+		);
+		expect(mockAppendAuditLog).not.toHaveBeenCalledWith(
+			expect.objectContaining({
+				metadata: expect.objectContaining({
+					operation: 'telegram_import_auto_connection_reprocess',
+				}),
+			}),
+		);
+	});
+
 	it('marks the run failed but still rejects on the final BullMQ attempt', async () => {
 		state.hasConsent = false;
 		await loadModule();
@@ -620,6 +1244,27 @@ describe('telegram history import queue', () => {
 
 		await expect(state.workerProcessor?.(job(2))).rejects.toThrow(
 			'security find-generic-password -a [redacted] -s gordian-v2 -w',
+		);
+
+		expect(mockUpdateTelegramImportRunStatus).toHaveBeenCalledWith(
+			WORKSPACE_ID,
+			RUN_ID,
+			'failed',
+			expect.objectContaining({
+				errorCode: 'TELEGRAM_SESSION_KEY_UNAVAILABLE',
+				errorMessage: expect.stringContaining('Could not read the local Telegram session key'),
+			}),
+		);
+	});
+
+	it('classifies Keychain helper status-code failures as session-key failures', async () => {
+		state.decryptError = new Error(
+			'macOS Keychain helper failed: SecItemCopyMatching failed with status -25293',
+		);
+		await loadModule();
+
+		await expect(state.workerProcessor?.(job(2))).rejects.toThrow(
+			'SecItemCopyMatching failed with status -25293',
 		);
 
 		expect(mockUpdateTelegramImportRunStatus).toHaveBeenCalledWith(

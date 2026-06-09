@@ -1,3 +1,4 @@
+import { ConnectionFinder } from '@/components/connections/connection-finder';
 import { ConnectionList } from '@/components/connections/connection-list';
 import { EventFilter } from '@/components/connections/event-filter';
 import { CreateIntroForm } from '@/components/introductions/create-intro-form';
@@ -6,11 +7,23 @@ import {
 	type IntroSourceEvidence,
 } from '@/components/introductions/intro-card-collapsible';
 import { IntroducerLeaderboard } from '@/components/introductions/introducer-leaderboard';
+import {
+	ConnectionKeywordsEditor,
+	IntroKeywordsEditor,
+} from '@/components/settings/intro-keywords-editor';
 import { cn } from '@/lib/utils';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
-import { getContactsByIds, getDistinctEvents, getMessagesByIds, listIntroductions } from '@repo/db';
+import {
+	getContactsByIds,
+	getDistinctEvents,
+	getMessagesByIds,
+	getPreferences,
+	listIntroductions,
+} from '@repo/db';
 import Link from 'next/link';
 import { Suspense } from 'react';
+import { IntroductionFinder } from './introduction-finder';
+import { RelationshipScanStatusPanel } from './relationship-scan-status';
 
 type IntroStatusFilter = 'triage' | 'active' | 'archive' | 'all';
 
@@ -44,12 +57,20 @@ export default async function IntroductionsPage({
 				</p>
 			</div>
 
+			{workspaceId ? (
+				<Suspense fallback={<DetectionKeywordsSkeleton />}>
+					<DetectionKeywordsPanel workspaceId={workspaceId} userId={session.user.id} />
+				</Suspense>
+			) : null}
+
 			<div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
 				<div>
 					<div className="mb-4 flex items-center justify-between">
 						<h2 className="text-lg font-semibold text-foreground">Review queue</h2>
 						{workspaceId ? <CreateIntroForm /> : null}
 					</div>
+					{workspaceId ? <RelationshipScanStatusPanel /> : null}
+					{workspaceId ? <IntroductionFinder /> : null}
 					<IntroStatusTabs currentStatus={introStatus} event={event} />
 					<Suspense fallback={<ListSkeleton />}>
 						{workspaceId ? (
@@ -70,6 +91,7 @@ export default async function IntroductionsPage({
 						<h2 className="text-lg font-semibold text-foreground">New Connections</h2>
 						{workspaceId ? <EventFilter events={events} /> : null}
 					</div>
+					{workspaceId ? <ConnectionFinder /> : null}
 					<Suspense fallback={<ListSkeleton />}>
 						{workspaceId ? (
 							<ConnectionList workspaceId={workspaceId} event={event} />
@@ -80,6 +102,39 @@ export default async function IntroductionsPage({
 				</div>
 			</div>
 		</div>
+	);
+}
+
+async function DetectionKeywordsPanel({
+	workspaceId,
+	userId,
+}: {
+	workspaceId: string;
+	userId: string;
+}) {
+	const prefs = await getPreferences(workspaceId, userId);
+
+	return (
+		<section className="mb-6 rounded-lg border border-border bg-card p-5">
+			<div className="mb-4">
+				<h2 className="text-lg font-semibold text-foreground">Detection keywords</h2>
+				<p className="mt-1 text-sm text-muted-foreground">
+					Tune the phrases used before running introduction and new-connection searches.
+				</p>
+			</div>
+			<div className="grid gap-6 lg:grid-cols-2">
+				<IntroKeywordsEditor
+					currentKeywords={prefs.introKeywords}
+					title="Introductions"
+					description="One person connecting two other people."
+				/>
+				<ConnectionKeywordsEditor
+					currentKeywords={prefs.connectionKeywords}
+					title="New connections"
+					description="First-meeting signals between you and one contact."
+				/>
+			</div>
+		</section>
 	);
 }
 
@@ -259,47 +314,8 @@ function EmptyState({ status = 'triage' }: { status?: IntroStatusFilter }) {
 				<p className="mt-1 text-sm text-muted-foreground">{copy.description}</p>
 			</div>
 
-			<div className="divide-y divide-border rounded-lg border border-dashed border-muted-foreground/30 opacity-60">
-				<div className="p-4">
-					<div className="flex items-center justify-between">
-						<div className="flex items-center gap-2">
-							<p className="text-sm font-medium text-foreground">
-								Alice Chen introduced Bob Park to Carol Lee
-							</p>
-							<span className="rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-medium text-purple-700">
-								deal
-							</span>
-							<span className="rounded-full bg-yellow-100 px-2 py-0.5 text-[10px] font-medium text-yellow-700">
-								triage
-							</span>
-						</div>
-						<span className="text-xs text-muted-foreground">87% confidence</span>
-					</div>
-				</div>
-				<div className="p-4">
-					<div className="flex items-center justify-between">
-						<div className="flex items-center gap-2">
-							<p className="text-sm font-medium text-foreground">
-								Dave Kim introduced Eva Ross to Frank Wu
-							</p>
-							<span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-700">
-								hiring
-							</span>
-							<span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-medium text-green-700">
-								active
-							</span>
-						</div>
-						<span className="text-xs text-muted-foreground">92% confidence</span>
-					</div>
-				</div>
-			</div>
-
 			<p className="text-center text-xs text-muted-foreground">
-				Tip: Configure detection keywords in{' '}
-				<Link href="/settings" className="font-medium text-primary hover:underline">
-					Settings
-				</Link>{' '}
-				to improve accuracy.
+				Tip: tune Detection keywords above before running a wider search.
 			</p>
 		</div>
 	);
@@ -351,13 +367,13 @@ function getEmptyStateCopy(status: IntroStatusFilter): {
 		return {
 			title: 'No introductions detected yet',
 			description:
-				'Gordian automatically detects introductions from your group chats, or you can record them manually.',
+				'Run Find introductions to scan recent group chats, or record an introduction manually.',
 		};
 	}
 	return {
 		title: 'No introductions need review',
 		description:
-			'Newly detected introductions will appear here before they become active relationship records.',
+			'Newly detected introductions will appear here before they become active relationship records. Use Find introductions to scan recent group chats.',
 	};
 }
 
@@ -387,5 +403,18 @@ function ListSkeleton() {
 				</div>
 			))}
 		</div>
+	);
+}
+
+function DetectionKeywordsSkeleton() {
+	return (
+		<section className="mb-6 rounded-lg border border-border bg-card p-5">
+			<div className="h-5 w-44 rounded bg-muted" />
+			<div className="mt-2 h-4 w-80 max-w-full rounded bg-muted" />
+			<div className="mt-5 grid gap-6 lg:grid-cols-2">
+				<div className="h-40 animate-pulse rounded-md bg-muted" />
+				<div className="h-40 animate-pulse rounded-md bg-muted" />
+			</div>
+		</section>
 	);
 }

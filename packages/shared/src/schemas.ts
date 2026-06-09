@@ -325,6 +325,8 @@ export const userPreferencesSchema = z.object({
 	briefTime: z.number().int().min(0).max(23),
 	briefDays: z.array(briefDaySchema).min(0).max(7),
 	digestFocus: digestFocusSchema,
+	introKeywords: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
+	connectionKeywords: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
 });
 export type UserPreferences = z.infer<typeof userPreferencesSchema>;
 

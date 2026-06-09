@@ -4,9 +4,24 @@ import { listKnowledgeNodesAction } from '@/app/actions/knowledge';
 import { searchAction } from '@/app/actions/search';
 import { GOAL_STATUS_COLORS, KNOWLEDGE_TYPE_COLORS } from '@/lib/colors';
 import type { KnowledgeNodePublic } from '@repo/db';
-import { Loader2, Search as SearchIcon } from 'lucide-react';
+import { BrainCircuit, Database, Loader2, Search as SearchIcon, ShieldCheck } from 'lucide-react';
 import Link from 'next/link';
 import * as React from 'react';
+
+interface SearchMeta {
+	queryLength: number;
+	embedding: {
+		enabled: boolean;
+		used: boolean;
+		providerMode: 'disabled' | 'local' | 'cloud';
+		providerLabel: string;
+		model?: string;
+		dimensions?: number;
+		queryMasked: boolean;
+		skippedReason?: string;
+	};
+	sources: Record<string, string>;
+}
 
 interface SearchResults {
 	contacts: Array<Record<string, unknown>>;
@@ -15,6 +30,7 @@ interface SearchResults {
 	deals: Array<Record<string, unknown>>;
 	knowledge: KnowledgeNodePublic[];
 	goals: Array<Record<string, unknown>>;
+	meta?: SearchMeta;
 }
 
 type TabKey = 'all' | 'contacts' | 'memories' | 'commitments' | 'deals' | 'knowledge' | 'goals';
@@ -130,6 +146,8 @@ export function SearchInterface() {
 							</button>
 						))}
 					</div>
+
+					<SearchProvenance meta={results.meta} />
 
 					{totalResults === 0 ? (
 						<div className="rounded-lg border border-border bg-muted p-8 text-center text-sm text-muted-foreground">
@@ -273,6 +291,74 @@ export function SearchInterface() {
 					)}
 				</div>
 			) : null}
+		</div>
+	);
+}
+
+function SearchProvenance({ meta }: { meta?: SearchMeta }) {
+	if (!meta) return null;
+
+	const embedding = meta.embedding;
+	const semanticLabel = embedding.used
+		? `${embedding.providerLabel}${embedding.dimensions ? `, ${embedding.dimensions}d` : ''}`
+		: 'Text and exact search';
+	const privacyLabel = embedding.used
+		? embedding.queryMasked
+			? 'Query masked before embeddings'
+			: 'Query sent to embedding runtime'
+		: 'No embedding request';
+	const details = [
+		`Contacts: ${meta.sources.contacts}`,
+		`Memories: ${meta.sources.memories}`,
+		`Commitments: ${meta.sources.commitments}`,
+		`Deals: ${meta.sources.deals}`,
+	];
+
+	return (
+		<div className="mb-4 rounded-lg border border-border bg-muted/30 p-3 text-sm">
+			<div className="grid gap-3 md:grid-cols-3">
+				<ProvenanceItem
+					icon={<BrainCircuit aria-hidden="true" className="h-4 w-4" />}
+					label="Semantic"
+					value={semanticLabel}
+					detail={embedding.skippedReason}
+				/>
+				<ProvenanceItem
+					icon={<ShieldCheck aria-hidden="true" className="h-4 w-4" />}
+					label="Privacy"
+					value={privacyLabel}
+					detail={embedding.providerMode === 'local' ? 'Local runtime' : undefined}
+				/>
+				<ProvenanceItem
+					icon={<Database aria-hidden="true" className="h-4 w-4" />}
+					label="Sources"
+					value={`${details.length} search paths`}
+					detail={details.join(' | ')}
+				/>
+			</div>
+		</div>
+	);
+}
+
+function ProvenanceItem({
+	icon,
+	label,
+	value,
+	detail,
+}: {
+	icon: React.ReactNode;
+	label: string;
+	value: string;
+	detail?: string;
+}) {
+	return (
+		<div className="min-w-0">
+			<div className="flex items-center gap-2 text-muted-foreground">
+				{icon}
+				<span className="text-xs font-medium uppercase">{label}</span>
+			</div>
+			<p className="mt-1 truncate font-medium text-foreground">{value}</p>
+			{detail ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{detail}</p> : null}
 		</div>
 	);
 }

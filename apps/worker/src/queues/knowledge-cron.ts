@@ -13,6 +13,8 @@ import {
 	knowledgeEvidence,
 	linkContactToKnowledge,
 	sql,
+	updateKnowledgeBackfillProgress,
+	upsertExtractionLog,
 } from '@repo/db';
 import {
 	type KnowledgeEmbeddingMode,
@@ -20,18 +22,33 @@ import {
 	getKnowledgeEmbeddingRuntime,
 	getKnowledgeLlmRuntime,
 	isKnowledgeLlmEnabled,
+	redactSensitive,
 } from '@repo/shared';
+import { Queue, Worker } from 'bullmq';
 
 import { BatchRelationshipExtractor } from '../ai/batch-relationship';
 import { keywordPreFilter } from '../ai/knowledge-extraction';
 import { extractKnowledgeForContact } from '../ai/knowledge-extraction';
+import { withRLS } from '../middleware/rls';
+import { connection } from '../redis';
 
 /** Max LLM calls per nightly run across all workspaces (controls batch spend). */
 const DEFAULT_LLM_BUDGET = 50;
 const DEFAULT_CONTACT_LIMIT = 50;
+const DEFAULT_SYNC_INCREMENTAL_DELAY_MS = 90_000;
+const DEFAULT_IMPORT_COMPLETION_DELAY_MS = 5_000;
+const DEFAULT_IMPORT_FULL_CONTACT_LIMIT = 500;
+const DEFAULT_MESSAGES_PER_CONTACT_LIMIT = 200;
+const DEFAULT_IMPORT_FULL_MAX_BATCHES = 20;
+const DEFAULT_IMPORT_FULL_CONTINUATION_DELAY_MS = 1_000;
 const MANUAL_TOPIC_SCAN_PAGE_SIZE = 500;
 const MANUAL_TOPIC_MAX_EVIDENCE_PER_CONTACT = 3;
 const MANUAL_TOPIC_DEFAULT_MAX_EVIDENCE = 200;
+const MANUAL_TOPIC_NODE_LOOKUP_ATTEMPTS = 3;
+const MANUAL_TOPIC_NODE_LOOKUP_RETRY_MS = 100;
+const DEFAULT_KNOWLEDGE_WORKER_LOCK_DURATION_MS = 30 * 60 * 1000;
+const DEFAULT_KNOWLEDGE_WORKER_STALLED_INTERVAL_MS = 60 * 1000;
+const DEFAULT_KNOWLEDGE_WORKER_MAX_STALLED_COUNT = 2;
 
 const MANUAL_TOPIC_STOPWORDS = new Set([
 	'about',
@@ -55,6 +72,22 @@ const MANUAL_TOPIC_STOPWORDS = new Set([
 ]);
 
 export type KnowledgeAnalysisMode = 'incremental' | 'evidence' | 'full';
+export type KnowledgeAnalysisQueueReason =
+	| 'small_sync'
+	| 'history_import_completed'
+	| 'manual'
+	| 'nightly';
+
+export interface KnowledgeAnalysisQueueJobData {
+	workspaceId: string;
+	mode: KnowledgeAnalysisMode;
+	limit?: number;
+	llmBudget?: number;
+	reason: KnowledgeAnalysisQueueReason;
+	runId?: string;
+	batch?: number;
+	requestedAt: string;
+}
 
 export interface KnowledgeAnalysisEstimate {
 	workspaceId: string;
@@ -64,6 +97,9 @@ export interface KnowledgeAnalysisEstimate {
 	canRun: boolean;
 	contactsEstimated: number;
 	staleContactsEstimated: number;
+	backfillContactsEstimated: number;
+	backfillContactsCompletedEstimated: number;
+	backfillMessagesScannedEstimated: number;
 	messagesEstimated: number;
 	embeddingRequestsEstimated: number;
 	embeddingInputsEstimated: number;
@@ -84,6 +120,9 @@ export interface KnowledgeAnalysisResult {
 	embeddingProviderMode: KnowledgeEmbeddingMode;
 	embeddingProviderLabel: string;
 	llmQueued: number;
+	messagesScanned: number;
+	backfillContactsCompleted: number;
+	backfillRemainingContacts: number;
 	batchLinked: number;
 	batchUsed: boolean;
 	llmProviderMode: KnowledgeLlmMode;
@@ -91,6 +130,26 @@ export interface KnowledgeAnalysisResult {
 	elapsedMs: number;
 	skippedWorkspaces: Array<{ workspaceId: string; reason: string }>;
 }
+
+function positiveIntegerEnv(name: string, fallback: number): number {
+	const value = Number(process.env[name]);
+	return Number.isFinite(value) && value > 0 ? Math.trunc(value) : fallback;
+}
+
+const KNOWLEDGE_ANALYSIS_WORKER_OPTS = {
+	lockDuration: positiveIntegerEnv(
+		'KNOWLEDGE_ANALYSIS_WORKER_LOCK_DURATION_MS',
+		DEFAULT_KNOWLEDGE_WORKER_LOCK_DURATION_MS,
+	),
+	stalledInterval: positiveIntegerEnv(
+		'KNOWLEDGE_ANALYSIS_WORKER_STALLED_INTERVAL_MS',
+		DEFAULT_KNOWLEDGE_WORKER_STALLED_INTERVAL_MS,
+	),
+	maxStalledCount: positiveIntegerEnv(
+		'KNOWLEDGE_ANALYSIS_WORKER_MAX_STALLED_COUNT',
+		DEFAULT_KNOWLEDGE_WORKER_MAX_STALLED_COUNT,
+	),
+};
 
 export interface ManualKnowledgeEvidenceBuildResult {
 	workspaceId: string;
@@ -109,6 +168,11 @@ export interface ManualKnowledgeEvidenceBuildResult {
 type KnowledgeAnalysisContactCandidate = {
 	id: string;
 	messageCount: number;
+	latestMessageAt?: Date | null;
+	messageHorizon?: Date | null;
+	backfillOldestMessageAt?: Date | null;
+	backfillOldestMessageId?: string | null;
+	backfillCompletedAt?: Date | null;
 	stale: boolean;
 };
 
@@ -196,11 +260,161 @@ async function getManualKnowledgeEvidenceTotals(
 	};
 }
 
+function waitForManualTopicNodeLookupRetry(): Promise<void> {
+	if (process.env.NODE_ENV === 'test') return Promise.resolve();
+	return new Promise((resolve) => setTimeout(resolve, MANUAL_TOPIC_NODE_LOOKUP_RETRY_MS));
+}
+
 let cronInterval: ReturnType<typeof setInterval> | null = null;
+
+function latestSentAt(messages: Array<{ sentAt?: Date | null }>): Date | undefined {
+	let latest: Date | undefined;
+	for (const message of messages) {
+		if (!message.sentAt) continue;
+		if (!latest || message.sentAt > latest) latest = message.sentAt;
+	}
+	return latest;
+}
+
+function oldestSentAt(messages: Array<{ sentAt?: Date | null }>): Date | undefined {
+	let oldest: Date | undefined;
+	for (const message of messages) {
+		if (!message.sentAt) continue;
+		if (!oldest || message.sentAt < oldest) oldest = message.sentAt;
+	}
+	return oldest;
+}
+
+function oldestMessageCursor(
+	messages: Array<{ id: string; sentAt?: Date | null }>,
+): { id: string; sentAt: Date } | undefined {
+	let oldest: { id: string; sentAt: Date } | undefined;
+	for (const message of messages) {
+		if (!message.sentAt) continue;
+		if (
+			!oldest ||
+			message.sentAt < oldest.sentAt ||
+			(message.sentAt.getTime() === oldest.sentAt.getTime() && message.id < oldest.id)
+		) {
+			oldest = { id: message.id, sentAt: message.sentAt };
+		}
+	}
+	return oldest;
+}
+
+function shouldMarkBackfillComplete(input: {
+	mode: KnowledgeAnalysisMode;
+	messagesReturned: number;
+	messageLimit: number;
+	hadExistingBackfillCursor: boolean;
+	fetchedOlderPage: boolean;
+	contactWasStale: boolean;
+}): boolean {
+	if (input.mode !== 'full') return false;
+	if (input.messagesReturned >= input.messageLimit) return false;
+	if (input.fetchedOlderPage) return true;
+	if (!input.hadExistingBackfillCursor) return true;
+	return !input.contactWasStale;
+}
 
 async function isKnowledgeExtractionEnabled(workspaceId: string): Promise<boolean> {
 	if (process.env.KNOWLEDGE_EXTRACTION_ENABLED === 'true') return true;
 	return isFeatureEnabled('knowledge_extraction', workspaceId);
+}
+
+function parsePositiveIntEnv(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
+	const raw = env[key];
+	if (!raw) return fallback;
+	const parsed = Number.parseInt(raw, 10);
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export function isPostSyncKnowledgeAnalysisEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+	const raw = env.KNOWLEDGE_POST_SYNC_ANALYSIS_ENABLED?.trim().toLowerCase();
+	return raw !== 'false' && raw !== '0';
+}
+
+export function defaultKnowledgeAnalysisDelayMsForReason(
+	reason: KnowledgeAnalysisQueueReason,
+	env: NodeJS.ProcessEnv = process.env,
+): number {
+	return reason === 'small_sync'
+		? parsePositiveIntEnv(
+				env,
+				'KNOWLEDGE_SYNC_INCREMENTAL_DELAY_MS',
+				DEFAULT_SYNC_INCREMENTAL_DELAY_MS,
+			)
+		: parsePositiveIntEnv(
+				env,
+				'KNOWLEDGE_IMPORT_COMPLETION_DELAY_MS',
+				DEFAULT_IMPORT_COMPLETION_DELAY_MS,
+			);
+}
+
+export function defaultKnowledgeAnalysisLimitForReason(
+	reason: KnowledgeAnalysisQueueReason,
+	env: NodeJS.ProcessEnv = process.env,
+): number {
+	return reason === 'history_import_completed'
+		? parsePositiveIntEnv(
+				env,
+				'KNOWLEDGE_IMPORT_FULL_CONTACT_LIMIT',
+				DEFAULT_IMPORT_FULL_CONTACT_LIMIT,
+			)
+		: parsePositiveIntEnv(env, 'KNOWLEDGE_SYNC_INCREMENTAL_CONTACT_LIMIT', DEFAULT_CONTACT_LIMIT);
+}
+
+function messagesPerContactLimitForMode(
+	mode: KnowledgeAnalysisMode,
+	env: NodeJS.ProcessEnv = process.env,
+): number {
+	return mode === 'full'
+		? parsePositiveIntEnv(
+				env,
+				'KNOWLEDGE_IMPORT_FULL_MESSAGES_PER_CONTACT_LIMIT',
+				DEFAULT_MESSAGES_PER_CONTACT_LIMIT,
+			)
+		: parsePositiveIntEnv(
+				env,
+				'KNOWLEDGE_INCREMENTAL_MESSAGES_PER_CONTACT_LIMIT',
+				DEFAULT_MESSAGES_PER_CONTACT_LIMIT,
+			);
+}
+
+function importFullMaxBatches(env: NodeJS.ProcessEnv = process.env): number {
+	return parsePositiveIntEnv(
+		env,
+		'KNOWLEDGE_IMPORT_FULL_MAX_BATCHES',
+		DEFAULT_IMPORT_FULL_MAX_BATCHES,
+	);
+}
+
+function importFullContinuationDelayMs(env: NodeJS.ProcessEnv = process.env): number {
+	return parsePositiveIntEnv(
+		env,
+		'KNOWLEDGE_IMPORT_FULL_CONTINUATION_DELAY_MS',
+		DEFAULT_IMPORT_FULL_CONTINUATION_DELAY_MS,
+	);
+}
+
+function jobIdPart(value: string): string {
+	return value.replace(/[^A-Za-z0-9_-]/g, '_');
+}
+
+export function knowledgeAnalysisJobId(input: {
+	workspaceId: string;
+	reason: KnowledgeAnalysisQueueReason;
+	runId?: string;
+	batch?: number;
+}): string {
+	const batchSuffix = input.batch && input.batch > 0 ? `-batch-${input.batch}` : '';
+	if (input.reason === 'small_sync') {
+		return `knowledge-analysis-small-sync-${jobIdPart(input.workspaceId)}${batchSuffix}`;
+	}
+	if (input.runId) {
+		return `knowledge-analysis-${jobIdPart(input.reason)}-${jobIdPart(input.workspaceId)}-${jobIdPart(input.runId)}${batchSuffix}`;
+	}
+	return `knowledge-analysis-${jobIdPart(input.reason)}-${jobIdPart(input.workspaceId)}${batchSuffix}`;
 }
 
 /**
@@ -231,6 +445,64 @@ async function getWorkspaceEnvelope(workspaceId: string): Promise<SealedEnvelope
 	};
 }
 
+export const knowledgeAnalysisQueue = new Queue<KnowledgeAnalysisQueueJobData>(
+	'knowledge-analysis',
+	{
+		connection,
+		prefix: '{ai-flow}',
+		defaultJobOptions: {
+			attempts: 2,
+			backoff: { type: 'exponential', delay: 10_000 },
+			removeOnComplete: true,
+			removeOnFail: { count: 25, age: 3600 },
+		},
+	},
+);
+
+export async function scheduleKnowledgeAnalysis(input: {
+	workspaceId: string;
+	mode?: KnowledgeAnalysisMode;
+	limit?: number;
+	llmBudget?: number;
+	reason: KnowledgeAnalysisQueueReason;
+	runId?: string;
+	batch?: number;
+	delayMs?: number;
+}): Promise<{ jobId: string; mode: KnowledgeAnalysisMode; limit: number } | null> {
+	if (!isPostSyncKnowledgeAnalysisEnabled() && input.reason !== 'manual') {
+		console.log(
+			`[knowledge-analysis] Post-sync analysis disabled, skipping reason=${input.reason} workspace=${input.workspaceId.slice(0, 8)}`,
+		);
+		return null;
+	}
+
+	const mode = input.mode ?? (input.reason === 'history_import_completed' ? 'full' : 'incremental');
+	const limit = input.limit ?? defaultKnowledgeAnalysisLimitForReason(input.reason);
+	const delay = input.delayMs ?? defaultKnowledgeAnalysisDelayMsForReason(input.reason);
+	const jobId = knowledgeAnalysisJobId(input);
+
+	await knowledgeAnalysisQueue.add(
+		'run-knowledge-analysis',
+		{
+			workspaceId: input.workspaceId,
+			mode,
+			limit,
+			llmBudget: input.llmBudget,
+			reason: input.reason,
+			runId: input.runId,
+			batch: input.batch,
+			requestedAt: new Date().toISOString(),
+		},
+		{ jobId, delay },
+	);
+
+	console.log(
+		`[knowledge-analysis] Queued ${mode} analysis reason=${input.reason} workspace=${input.workspaceId.slice(0, 8)} delayMs=${delay} limit=${limit}`,
+	);
+
+	return { jobId, mode, limit };
+}
+
 /**
  * Run knowledge extraction for a single workspace.
  * Embedding-first matching runs inline. LLM requests are collected into
@@ -246,6 +518,9 @@ async function processWorkspace(
 	contactsProcessed: number;
 	embeddingMatches: number;
 	llmQueued: number;
+	messagesScanned: number;
+	backfillContactsCompleted: number;
+	backfillRemainingContacts: number;
 	skippedReason?: string;
 }> {
 	const enabled = await isKnowledgeExtractionEnabled(workspaceId);
@@ -255,6 +530,9 @@ async function processWorkspace(
 			contactsProcessed: 0,
 			embeddingMatches: 0,
 			llmQueued: 0,
+			messagesScanned: 0,
+			backfillContactsCompleted: 0,
+			backfillRemainingContacts: 0,
 			skippedReason: 'feature_disabled',
 		};
 	}
@@ -265,6 +543,9 @@ async function processWorkspace(
 			contactsProcessed: 0,
 			embeddingMatches: 0,
 			llmQueued: 0,
+			messagesScanned: 0,
+			backfillContactsCompleted: 0,
+			backfillRemainingContacts: 0,
 			skippedReason: 'ai_consent_missing',
 		};
 	}
@@ -276,6 +557,9 @@ async function processWorkspace(
 			contactsProcessed: 0,
 			embeddingMatches: 0,
 			llmQueued: 0,
+			messagesScanned: 0,
+			backfillContactsCompleted: 0,
+			backfillRemainingContacts: 0,
 			skippedReason: 'workspace_envelope_missing',
 		};
 	}
@@ -286,40 +570,116 @@ async function processWorkspace(
 
 	const mode = options.mode ?? 'incremental';
 	const contactLimit = options.limit ?? Math.max(llmBudget, DEFAULT_CONTACT_LIMIT);
-	const contactIds =
+	const messageLimit = messagesPerContactLimitForMode(mode);
+	const contactCandidates: KnowledgeAnalysisContactCandidate[] =
 		mode === 'full' || mode === 'evidence'
 			? (
 					await getKnowledgeAnalysisContactCandidates(workspaceId, {
 						includeFresh: true,
 						limit: contactLimit,
 					})
-				).map((contact) => contact.id)
-			: await getContactsNeedingExtraction(workspaceId, contactLimit);
-	if (contactIds.length === 0) {
+				).filter((contact) =>
+					mode === 'full' ? contact.stale || !contact.backfillCompletedAt : true,
+				)
+			: (await getContactsNeedingExtraction(workspaceId, contactLimit)).map((id) => ({
+					id,
+					messageCount: 0,
+					stale: true,
+				}));
+	if (contactCandidates.length === 0) {
 		console.log(`[knowledge-cron] No stale contacts for workspace=${workspaceId.slice(0, 8)}`);
-		return { contactsProcessed: 0, embeddingMatches: 0, llmQueued: 0 };
+		return {
+			contactsProcessed: 0,
+			embeddingMatches: 0,
+			llmQueued: 0,
+			messagesScanned: 0,
+			backfillContactsCompleted: 0,
+			backfillRemainingContacts: 0,
+		};
 	}
 
 	console.log(
-		`[knowledge-cron] Processing ${contactIds.length} contacts for workspace=${workspaceId.slice(0, 8)}`,
+		`[knowledge-cron] Processing ${contactCandidates.length} contacts for workspace=${workspaceId.slice(0, 8)}`,
 	);
 
 	let totalEmbeddingMatches = 0;
 	let llmQueued = 0;
 	let llmBudgetRemaining = llmBudget;
+	let messagesScanned = 0;
+	let backfillContactsCompleted = 0;
+	let backfillRemainingContacts = 0;
 
-	for (const contactId of contactIds) {
+	for (const contact of contactCandidates) {
+		const contactId = contact.id;
 		try {
+			const isBackfillIncomplete = mode === 'full' && !contact.backfillCompletedAt;
+			const hadExistingBackfillCursor =
+				isBackfillIncomplete && Boolean(contact.backfillOldestMessageAt);
+			const fetchBefore = isBackfillIncomplete
+				? (contact.backfillOldestMessageAt ?? undefined)
+				: undefined;
+			const fetchBeforeMessageId =
+				isBackfillIncomplete && fetchBefore
+					? (contact.backfillOldestMessageId ?? undefined)
+					: undefined;
+			const fetchedOlderPage = Boolean(fetchBefore);
 			// Fetch decrypted messages for this contact
 			const msgs = await getMessagesByContact(workspaceId, contactId, envelope, {
-				limit: 200,
+				limit: messageLimit,
+				beforeSentAt: fetchBefore,
+				beforeMessageId: fetchBeforeMessageId,
 			});
-			if (msgs.length === 0) continue;
+			if (msgs.length === 0) {
+				if (isBackfillIncomplete) {
+					await updateKnowledgeBackfillProgress(workspaceId, contactId, {
+						completedAt: new Date(),
+					});
+					backfillContactsCompleted++;
+				}
+				continue;
+			}
 
 			const messageInputs = msgs
 				.filter((m): m is typeof m & { text: string } => Boolean(m.text))
 				.map((m) => ({ id: m.id, text: m.text, timestamp: m.sentAt }));
-			if (messageInputs.length === 0) continue;
+			const pageNewestSentAt = latestSentAt(msgs);
+			const pageOldestSentAt = oldestSentAt(msgs);
+			const pageOldestCursor = oldestMessageCursor(msgs);
+			messagesScanned += msgs.length;
+			const completedAt =
+				isBackfillIncomplete &&
+				shouldMarkBackfillComplete({
+					mode,
+					messagesReturned: msgs.length,
+					messageLimit,
+					hadExistingBackfillCursor,
+					fetchedOlderPage,
+					contactWasStale: contact.stale,
+				})
+					? new Date()
+					: undefined;
+			if (isBackfillIncomplete) {
+				await updateKnowledgeBackfillProgress(workspaceId, contactId, {
+					oldestMessageAt: pageOldestSentAt,
+					oldestMessageId: pageOldestCursor?.id,
+					messagesScanned: msgs.length,
+					completedAt,
+				});
+				if (completedAt) {
+					backfillContactsCompleted++;
+				} else if (!contact.backfillCompletedAt) {
+					backfillRemainingContacts++;
+				}
+			}
+
+			if (messageInputs.length === 0) {
+				await upsertExtractionLog(workspaceId, contactId, {
+					messageHorizon: pageNewestSentAt,
+					entitiesExtracted: 0,
+					llmCalled: false,
+				});
+				continue;
+			}
 			const texts = messageInputs.map((m) => m.text);
 
 			// Embedding-first match runs inline (cheap, always on)
@@ -356,9 +716,12 @@ async function processWorkspace(
 	}
 
 	return {
-		contactsProcessed: contactIds.length,
+		contactsProcessed: contactCandidates.length,
 		embeddingMatches: totalEmbeddingMatches,
 		llmQueued,
+		messagesScanned,
+		backfillContactsCompleted,
+		backfillRemainingContacts,
 	};
 }
 
@@ -366,6 +729,7 @@ async function estimateKeywordFilteredLlmRequests(
 	workspaceId: string,
 	contacts: KnowledgeAnalysisContactCandidate[],
 	llmBudget: number,
+	mode: KnowledgeAnalysisMode,
 ): Promise<number> {
 	if (contacts.length === 0 || llmBudget <= 0) return 0;
 
@@ -379,7 +743,7 @@ async function estimateKeywordFilteredLlmRequests(
 		if (llmRequests >= llmBudget) break;
 		try {
 			const msgs = await getMessagesByContact(workspaceId, contact.id, envelope, {
-				limit: 200,
+				limit: messagesPerContactLimitForMode(mode),
 			});
 			const texts = msgs
 				.filter((m): m is typeof m & { text: string } => Boolean(m.text))
@@ -413,9 +777,13 @@ export async function estimateKnowledgeAnalysis(
 		limit,
 	});
 	const eligibleContacts =
-		mode === 'full' || mode === 'evidence'
-			? candidates
-			: candidates.filter((contact) => contact.stale);
+		mode === 'full'
+			? candidates.filter((contact) => contact.stale || !contact.backfillCompletedAt)
+			: mode === 'evidence'
+				? candidates
+				: candidates.filter((contact) => contact.stale);
+	const backfillContacts =
+		mode === 'full' ? eligibleContacts.filter((contact) => !contact.backfillCompletedAt) : [];
 	const messagesEstimated = eligibleContacts.reduce(
 		(sum, contact) => sum + contact.messageCount,
 		0,
@@ -430,7 +798,7 @@ export async function estimateKnowledgeAnalysis(
 	const llmRequestsEstimated =
 		mode === 'evidence' || llmRuntime.mode === 'disabled'
 			? 0
-			: await estimateKeywordFilteredLlmRequests(workspaceId, eligibleContacts, llmBudget);
+			: await estimateKeywordFilteredLlmRequests(workspaceId, eligibleContacts, llmBudget, mode);
 
 	return {
 		workspaceId,
@@ -440,6 +808,13 @@ export async function estimateKnowledgeAnalysis(
 		canRun: enabled && hasConsent && eligibleContacts.length > 0,
 		contactsEstimated: eligibleContacts.length,
 		staleContactsEstimated: eligibleContacts.filter((contact) => contact.stale).length,
+		backfillContactsEstimated: backfillContacts.length,
+		backfillContactsCompletedEstimated:
+			mode === 'full' ? candidates.filter((contact) => contact.backfillCompletedAt).length : 0,
+		backfillMessagesScannedEstimated:
+			mode === 'full'
+				? candidates.reduce((sum, contact) => sum + (contact.backfillMessagesScanned ?? 0), 0)
+				: 0,
 		messagesEstimated,
 		embeddingRequestsEstimated: eligibleContacts.length,
 		embeddingInputsEstimated,
@@ -506,7 +881,11 @@ export async function runManualKnowledgeEvidenceBuild(options: {
 		};
 	}
 
-	const node = await getKnowledgeNode(options.workspaceId, options.nodeId, envelope);
+	let node = await getKnowledgeNode(options.workspaceId, options.nodeId, envelope);
+	for (let attempt = 1; !node && attempt < MANUAL_TOPIC_NODE_LOOKUP_ATTEMPTS; attempt++) {
+		await waitForManualTopicNodeLookupRetry();
+		node = await getKnowledgeNode(options.workspaceId, options.nodeId, envelope);
+	}
 	if (!node) {
 		return {
 			...baseResult,
@@ -663,6 +1042,9 @@ export async function runKnowledgeAnalysis(
 	let totalContacts = 0;
 	let totalEmbedding = 0;
 	let totalLlmQueued = 0;
+	let totalMessagesScanned = 0;
+	let totalBackfillContactsCompleted = 0;
+	let totalBackfillRemainingContacts = 0;
 	let llmBudget = mode === 'evidence' ? 0 : (options.llmBudget ?? DEFAULT_LLM_BUDGET);
 	const embeddingRuntime = getKnowledgeEmbeddingRuntime(process.env);
 	const llmRuntime = getKnowledgeLlmRuntime(process.env);
@@ -684,6 +1066,9 @@ export async function runKnowledgeAnalysis(
 		totalContacts += result.contactsProcessed;
 		totalEmbedding += result.embeddingMatches;
 		totalLlmQueued += result.llmQueued;
+		totalMessagesScanned += result.messagesScanned;
+		totalBackfillContactsCompleted += result.backfillContactsCompleted;
+		totalBackfillRemainingContacts += result.backfillRemainingContacts;
 		llmBudget -= result.llmQueued;
 	}
 
@@ -729,6 +1114,9 @@ export async function runKnowledgeAnalysis(
 		workspacesScanned: allWorkspaces.length,
 		contactsProcessed: totalContacts,
 		embeddingMatches: totalEmbedding,
+		messagesScanned: totalMessagesScanned,
+		backfillContactsCompleted: totalBackfillContactsCompleted,
+		backfillRemainingContacts: totalBackfillRemainingContacts,
 		embeddingProviderMode: embeddingRuntime.mode,
 		embeddingProviderLabel: embeddingRuntime.label,
 		llmQueued: totalLlmQueued,
@@ -740,6 +1128,67 @@ export async function runKnowledgeAnalysis(
 		skippedWorkspaces,
 	};
 }
+
+export const knowledgeAnalysisWorker = new Worker<KnowledgeAnalysisQueueJobData>(
+	'knowledge-analysis',
+	withRLS(async (job) => {
+		const data = job.data;
+		console.log(
+			`[knowledge-analysis] Processing ${data.mode} analysis reason=${data.reason} workspace=${data.workspaceId.slice(0, 8)}`,
+		);
+		const llmBudget =
+			data.reason === 'history_import_completed' && (data.batch ?? 0) > 0 && data.llmBudget == null
+				? 0
+				: data.llmBudget;
+		const result = await runKnowledgeAnalysis({
+			workspaceId: data.workspaceId,
+			mode: data.mode,
+			limit: data.limit,
+			llmBudget,
+		});
+		if (
+			data.mode === 'full' &&
+			data.reason === 'history_import_completed' &&
+			result.backfillRemainingContacts > 0
+		) {
+			const nextBatch = (data.batch ?? 0) + 1;
+			const maxBatches = importFullMaxBatches();
+			if (nextBatch <= maxBatches) {
+				await scheduleKnowledgeAnalysis({
+					workspaceId: data.workspaceId,
+					mode: 'full',
+					limit: data.limit,
+					llmBudget: data.llmBudget ?? 0,
+					reason: data.reason,
+					runId: data.runId,
+					batch: nextBatch,
+					delayMs: importFullContinuationDelayMs(),
+				});
+			} else {
+				console.warn(
+					`[knowledge-analysis] Backfill continuation limit reached workspace=${data.workspaceId.slice(0, 8)} run=${data.runId ?? 'none'} remaining=${result.backfillRemainingContacts}`,
+				);
+			}
+		}
+		return result;
+	}),
+	{ connection, prefix: '{ai-flow}', concurrency: 1, ...KNOWLEDGE_ANALYSIS_WORKER_OPTS },
+);
+
+knowledgeAnalysisWorker.on('completed', (job) => {
+	const data = job.data as KnowledgeAnalysisQueueJobData;
+	console.log(
+		`[knowledge-analysis] Job ${job.id} completed reason=${data.reason} workspace=${data.workspaceId.slice(0, 8)}`,
+	);
+});
+
+knowledgeAnalysisWorker.on('failed', (job, err) => {
+	const data = job?.data as KnowledgeAnalysisQueueJobData | undefined;
+	console.error(
+		`[knowledge-analysis] Job ${job?.id ?? 'unknown'} failed reason=${data?.reason ?? 'unknown'} workspace=${data?.workspaceId?.slice(0, 8) ?? 'unknown'}:`,
+		redactSensitive(err),
+	);
+});
 
 async function runNightlyExtraction(): Promise<void> {
 	await runKnowledgeAnalysis({ mode: 'incremental' });

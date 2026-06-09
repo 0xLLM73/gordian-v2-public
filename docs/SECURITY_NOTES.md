@@ -61,6 +61,8 @@ Keep `TELEGRAM_ALLOW_SESSION_UNWRAP_OUTSIDE_IMPORTS=false` for personal accounts
 
 Real local workspaces should also use `WORKSPACE_KEY_PROVIDER=os-keychain` on macOS. That moves the workspace root key used for encrypted messages, commitments, memories, and related local data into macOS Keychain and leaves only a marker in `workspaces.encrypted_wrk`. Existing local demo workspaces can be migrated with `pnpm workspace-key:migrate-local-keychain -- --apply`. `WORKSPACE_KEY_CACHE_TTL_MINUTES` controls how long an unwrapped workspace key may remain in process memory; use `60` for smooth local use or a lower value for stricter local custody.
 
+Postgres can create temporary scratch files for large joins and sorts. Gordian's encrypted text/session columns remain ciphertext inside Postgres because plaintext decryption happens in the app layer, but scratch files can still contain metadata such as workspace IDs, chat IDs, contact IDs, timestamps, counts, and embedding/vector values used by SQL queries. Local personal-account users should keep FileVault enabled and use a local encrypted Docker/Postgres volume. `POSTGRES_TEMP_FILE_LIMIT` defaults to `256MB` and is applied transaction-scoped before heavy local metadata derivation queries when the database allows it; set `0` or `off` to disable. This is a growth guardrail, not an encryption control.
+
 For OpenAI embeddings, normal macOS local users should run `pnpm openai:setup`
 and use `OPENAI_API_KEY_PROVIDER=os-keychain`. This stores the API key in macOS
 Keychain and keeps `OPENAI_API_KEY` blank in `.env.local`. ChatGPT OAuth is not

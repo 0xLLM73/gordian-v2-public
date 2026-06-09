@@ -57,6 +57,8 @@ const CODE_RE = /^\d{1,8}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TELEGRAM_ACCOUNT_ID_RE = /^\d{1,20}$/;
 const AUTH_PHONE_CODE_TTL_SECONDS = 5 * 60;
+type TelegramImportLocalAnalysisMode = 'deferred' | 'inline';
+type TelegramHistoryImportMode = 'recent' | 'backfill';
 
 function phoneSecret(): string {
 	const secret =
@@ -388,11 +390,17 @@ telegram.post('/history-import/start', async (c) => {
 			workspaceId?: unknown;
 			sourceAccountId?: unknown;
 			largeImportConfirmed?: unknown;
+			localAnalysisMode?: unknown;
+			importMode?: unknown;
 		}>();
 		const userId = typeof body.userId === 'string' ? body.userId : '';
 		const workspaceId = typeof body.workspaceId === 'string' ? body.workspaceId : '';
 		const sourceAccountId = typeof body.sourceAccountId === 'string' ? body.sourceAccountId : '';
 		const largeImportConfirmed = body.largeImportConfirmed === true;
+		const localAnalysisMode: TelegramImportLocalAnalysisMode =
+			body.localAnalysisMode === 'inline' ? 'inline' : 'deferred';
+		const importMode: TelegramHistoryImportMode =
+			body.importMode === 'backfill' ? 'backfill' : 'recent';
 
 		if (
 			!UUID_RE.test(userId) ||
@@ -431,6 +439,8 @@ telegram.post('/history-import/start', async (c) => {
 					userId,
 					workspaceId,
 					sourceAccountId,
+					localAnalysisMode,
+					importMode,
 				});
 			} catch (err) {
 				await updateTelegramImportRunStatus(workspaceId, run.id, 'failed', {
@@ -482,9 +492,18 @@ telegram.post('/history-import/:runId/resume', async (c) => {
 	}
 
 	const runId = c.req.param('runId');
-	const body = await c.req.json<{ userId?: unknown; workspaceId?: unknown }>();
+	const body = await c.req.json<{
+		userId?: unknown;
+		workspaceId?: unknown;
+		localAnalysisMode?: unknown;
+		importMode?: unknown;
+	}>();
 	const userId = typeof body.userId === 'string' ? body.userId : '';
 	const workspaceId = typeof body.workspaceId === 'string' ? body.workspaceId : '';
+	const localAnalysisMode: TelegramImportLocalAnalysisMode =
+		body.localAnalysisMode === 'inline' ? 'inline' : 'deferred';
+	const importMode: TelegramHistoryImportMode =
+		body.importMode === 'backfill' ? 'backfill' : 'recent';
 	if (!UUID_RE.test(runId) || !UUID_RE.test(userId) || !UUID_RE.test(workspaceId)) {
 		return c.json({ error: 'Invalid runId, userId, or workspaceId format' }, 400);
 	}
@@ -504,6 +523,8 @@ telegram.post('/history-import/:runId/resume', async (c) => {
 		userId,
 		workspaceId,
 		sourceAccountId: run.sourceAccountId,
+		localAnalysisMode,
+		importMode,
 	});
 	return c.json({ status: run.status, importRunId: run.id });
 });

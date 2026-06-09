@@ -8,6 +8,7 @@ import {
 	DEFAULT_KEYCHAIN_SERVICE,
 	DEFAULT_TELEGRAM_KEYCHAIN_SERVICE,
 	envValue,
+	getGordianKeychainHelperPath,
 	getTelegramApiKeychainAccount,
 	parseArgs,
 	parseEnvText,
@@ -89,6 +90,7 @@ async function main() {
 	);
 	const apply = Boolean(args.apply);
 	const deleteOld = Boolean(args['delete-old']);
+	const helperPath = getGordianKeychainHelperPath(env);
 
 	if (fromService === toService) {
 		console.log(
@@ -122,7 +124,7 @@ async function main() {
 		return;
 	}
 
-	await writeKeychainSecret({ account, secret, service: toService });
+	await writeKeychainSecret({ account, helperPath, secret, service: toService });
 	validateCredentialJson(await readKeychainSecret(target));
 	console.log(
 		`[telegram-api-keychain-migrate] Copied account ${account} from ${fromService} to ${toService}.`,

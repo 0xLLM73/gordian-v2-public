@@ -16,6 +16,7 @@ import {
 	linkMessagesToContactsByTelegramIds,
 	listMessageIdsByTelegramIds,
 	updateChatLastSync,
+	updateMessageSenderMetadataByTelegramIds,
 	upsertChat,
 	upsertMessages,
 } from '@repo/db';
@@ -142,6 +143,8 @@ interface GramJSMessage {
 	text: string;
 	date: number;
 	senderId?: string;
+	senderPeerId?: string;
+	senderPeerType?: 'user' | 'chat' | 'channel';
 	isOutgoing: boolean;
 }
 
@@ -755,6 +758,8 @@ export const syncWorker = new Worker<SyncJobData>(
 				const messagesToInsert = messagesResult.messages.map((m) => ({
 					telegramMessageId: String(m.id),
 					contactId: (m.senderId ? contactMap.get(m.senderId) : undefined) ?? peerContactId,
+					telegramSenderId: m.senderPeerId ?? m.senderId,
+					telegramSenderType: m.senderPeerType ?? (m.senderId ? ('user' as const) : undefined),
 					text: m.text || undefined,
 					isOutgoing: m.isOutgoing,
 					sentAt: new Date(m.date * 1000),
@@ -764,11 +769,29 @@ export const syncWorker = new Worker<SyncJobData>(
 						? [{ telegramMessageId: message.telegramMessageId, contactId: message.contactId }]
 						: [],
 				);
+				const messageSenderMetadataLinks = messagesToInsert.flatMap((message) =>
+					message.telegramSenderId && message.telegramSenderType
+						? [
+								{
+									telegramMessageId: message.telegramMessageId,
+									telegramSenderId: message.telegramSenderId,
+									telegramSenderType: message.telegramSenderType,
+								},
+							]
+						: [],
+				);
 
 				// e. Bulk insert messages via DAL (dedup via ON CONFLICT DO NOTHING)
 				const inserted = await upsertMessages(workspaceId, chat.id, messagesToInsert, envelope);
 				if (messageContactLinks.length > 0) {
 					await linkMessagesToContactsByTelegramIds(workspaceId, chat.id, messageContactLinks);
+				}
+				if (messageSenderMetadataLinks.length > 0) {
+					await updateMessageSenderMetadataByTelegramIds(
+						workspaceId,
+						chat.id,
+						messageSenderMetadataLinks,
+					);
 				}
 				if (peerContactId) {
 					const linked = await linkMessagesToContact(workspaceId, chat.id, peerContactId);
