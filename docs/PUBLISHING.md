@@ -12,14 +12,26 @@ As of the 2026-06-08 readiness audit:
 
 - `0xLLM73/gordian-v2` is the private source of truth and includes the current
   MTProto Touch ID hardening baseline.
-- `0xLLM73/gordian-v2-public` exists, but it is also private and must be synced
-  to the selected release commit before it is made public.
+- `0xLLM73/gordian-v2` `main` now requires one approving review, strict
+  `validate` and `demo-smoke` checks, linear history, admin enforcement,
+  conversation resolution, and blocks force pushes/deletions.
+- `0xLLM73/gordian-v2-public` exists, is also private, and has private mirror
+  PR #36 open from source commit `fe97ac196451`.
+- Mirror PR #36 passed GitHub `validate`, `demo-smoke`, and `postgres-smoke`;
+  it remains blocked by the expected required human review.
+- A GitHub push warning reported 4 moderate Dependabot alerts on the mirror
+  default branch. The synced branch passed `pnpm audit` and `pnpm audit --prod`;
+  recheck Dependabot after PR #36 merges.
 
 Before launch, sync the mirror as a sanitized release tree, verify absolute
 GitHub links point at `gordian-v2-public`, and run every local and GitHub
 publication gate against the mirror checkout and origin. Do not force-push the
 private source repository history into the public mirror unless that history has
 been separately approved for public release.
+
+Notification-product tweaks are intentionally not part of the publication gate
+itself, but they remain queued release work before any announcement because they
+affect the first-run user experience.
 
 ## Local Release Gate
 
@@ -35,6 +47,7 @@ pnpm typecheck
 pnpm test
 pnpm demo:setup
 pnpm demo:smoke
+pnpm security:local-runtime-smoke
 ```
 
 If the public demo is intended to run without hosted AI provider accounts, use

@@ -10,6 +10,16 @@ release owner intentionally makes the mirror public. Treat
 `0xLLM73/gordian-v2-public` only after it has been synced as a sanitized release
 tree and all release gates have been rerun against that checkout.
 
+As of the 2026-06-08 PT readiness pass, the mirror remains private and PR #36
+contains a sanitized snapshot from source commit `fe97ac196451`. The mirror
+checkout passed `pnpm install --frozen-lockfile`, `pnpm audit:open-source`,
+`pnpm audit`, `pnpm audit --prod`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
+`pnpm demo:smoke`, and `pnpm security:local-runtime-smoke`. GitHub CI for PR
+#36 passed `validate`, `demo-smoke`, and `postgres-smoke`, and the PR is waiting
+on the required human review. Do not make the mirror public until follow-up
+notification tweaks, provider-side rotation/cleanup, and final sign-off are
+complete.
+
 ## What Is Not Live
 
 - The original Telegram bot has been deleted.
@@ -103,4 +113,6 @@ data, embeddings, audit logs, Redis state, or BullMQ queue payloads.
 - Confirm any example deployment config has new app names, volume names, endpoints, and secrets for the fork.
 - Keep Telegram flags disabled in `.env.example`.
 - Choose the publication target and confirm it is synced to the selected release commit.
+- Confirm the mirror PR has the required human approval and no unresolved
+  Dependabot alerts on `main` after merge.
 - Run `pnpm check:publication` against the selected target after it is public and GitHub-side security settings are available.

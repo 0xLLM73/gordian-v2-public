@@ -12,40 +12,44 @@ data into this file. Record only status, date, owner, and short evidence notes.
 
 | Field | Value |
 | --- | --- |
-| Release candidate commit | TODO |
+| Release candidate commit | `fe97ac196451` |
 | Source repository | `0xLLM73/gordian-v2` |
-| Attestation owner | TODO |
-| Attestation date | TODO |
-| Publication target | `0xLLM73/gordian-v2-public` synced mirror |
+| Attestation owner | `0xLLM73` release owner, assisted by Codex |
+| Attestation date | 2026-06-08 PT |
+| Publication target | `0xLLM73/gordian-v2-public` private synced mirror PR #36 |
+
+This is a readiness attestation, not a final public-release approval. The mirror
+remains private. Follow-up notification-product tweaks and provider-side human
+sign-off are still pending before any public announcement.
 
 ## Repository Validation
 
 | Gate | Required result | Status | Evidence |
 | --- | --- | --- | --- |
-| Clean checkout | `git status --short --branch` shows a clean release branch | TODO | TODO |
-| Frozen install | `pnpm install --frozen-lockfile` passes | TODO | TODO |
-| Dependency audit | `pnpm audit` and `pnpm audit --prod` pass | TODO | TODO |
-| Open-source audit | `pnpm audit:open-source` passes on a full-depth checkout | TODO | TODO |
-| Lint | `pnpm lint` passes | TODO | TODO |
-| Typecheck | `pnpm typecheck` passes | TODO | TODO |
-| Tests | `pnpm test` passes | TODO | TODO |
-| Demo smoke | `pnpm demo:smoke` passes with synthetic demo data | TODO | TODO |
-| Local runtime safety | `pnpm security:local-runtime-smoke` passes | TODO | TODO |
-| Publication check | `pnpm check:publication` passes after the repo is public | TODO | TODO |
+| Clean checkout | `git status --short --branch` shows a clean release branch | PASS | Source `main` clean at `fe97ac196451`; mirror branch was clean before this attestation update. |
+| Frozen install | `pnpm install --frozen-lockfile` passes | PASS | Passed from the private mirror checkout on 2026-06-08 PT. |
+| Dependency audit | `pnpm audit` and `pnpm audit --prod` pass | PASS | Both passed from the source checkout and private mirror checkout on 2026-06-08 PT. |
+| Open-source audit | `pnpm audit:open-source` passes on a full-depth checkout | PASS | Passed from a full-depth private mirror checkout on 2026-06-08 PT. |
+| Lint | `pnpm lint` passes | PASS | Passed from the private mirror checkout on 2026-06-08 PT. |
+| Typecheck | `pnpm typecheck` passes | PASS | Passed from the private mirror checkout on 2026-06-08 PT. |
+| Tests | `pnpm test` passes | PASS | Passed from the private mirror checkout on 2026-06-08 PT. |
+| Demo smoke | `pnpm demo:smoke` passes with synthetic demo data | PASS | Passed 7 Playwright demo-route checks from the private mirror checkout on 2026-06-08 PT. |
+| Local runtime safety | `pnpm security:local-runtime-smoke` passes | PASS | Passed from the private mirror checkout on 2026-06-08 PT. |
+| Publication check | `pnpm check:publication` passes after the repo is public | PENDING | Ran against the private mirror and failed only on expected private-repo/publication-only settings: visibility, secret scanning, push protection, and private vulnerability reporting. |
 
 ## GitHub Settings
 
 | Gate | Required result | Status | Evidence |
 | --- | --- | --- | --- |
-| Repository visibility | Repository is public only when intentionally ready | TODO | TODO |
-| Secret scanning | Enabled | TODO | TODO |
-| Push protection | Enabled | TODO | TODO |
-| Private vulnerability reporting | Enabled | TODO | TODO |
-| Dependabot alerts | Enabled | TODO | TODO |
-| Dependabot security updates | Enabled and unpaused | TODO | TODO |
-| Branch checks | `main` requires strict `validate` and `demo-smoke` checks | TODO | TODO |
-| Review policy | `main` requires at least one approval and CODEOWNER review | TODO | TODO |
-| Protected history | `main` blocks force pushes and deletion, enforces admins and linear history | TODO | TODO |
+| Repository visibility | Repository is public only when intentionally ready | PASS | Source and mirror were confirmed private on 2026-06-08 PT. |
+| Secret scanning | Enabled | PENDING | GitHub API reports this as unavailable while the mirror remains private; re-run `pnpm check:publication` after intentional publication. |
+| Push protection | Enabled | PENDING | GitHub API reports this as unavailable while the mirror remains private; re-run `pnpm check:publication` after intentional publication. |
+| Private vulnerability reporting | Enabled | PENDING | GitHub API returns 404 while the mirror remains private; re-run `pnpm check:publication` after intentional publication. |
+| Dependabot alerts | Enabled | NEEDS REVIEW | `gh api` returned 404 for alert listing, but GitHub push output reported 4 moderate alerts on the mirror default branch. Local `pnpm audit` and `pnpm audit --prod` pass on the synced branch; recheck after PR #36 merges. |
+| Dependabot security updates | Enabled and unpaused | NEEDS REVIEW | Confirm in GitHub settings after PR #36 merges and before publication. |
+| Branch checks | `main` requires strict `validate` and `demo-smoke` checks | PASS | Source and mirror `main` require strict `validate` and `demo-smoke` checks. |
+| Review policy | `main` requires at least one approval | PASS | Source and mirror `main` now require one approving review. CODEOWNER review is not enabled because no public CODEOWNERS policy is finalized. |
+| Protected history | `main` blocks force pushes and deletion, enforces admins and linear history | PASS | Source and mirror branch protection confirms admins enforced, linear history required, force pushes blocked, deletions blocked, and conversation resolution required. |
 
 ## Provider And Secret Rotation
 
@@ -76,12 +80,12 @@ data into this file. Record only status, date, owner, and short evidence notes.
 
 | Gate | Required result | Status | Evidence |
 | --- | --- | --- | --- |
-| Send disabled | `TELEGRAM_SEND_ENABLED=false` in release/demo defaults | TODO | TODO |
-| Backfill disabled | `TELEGRAM_FULL_BACKFILL_ENABLED=false` in release/demo defaults | TODO | TODO |
-| Periodic sync disabled | `TELEGRAM_PERIODIC_SYNC_ENABLED=false` in release/demo defaults | TODO | TODO |
-| Keychain custody | Real local macOS workspaces use `os-keychain` providers | TODO | TODO |
-| Telegram smoke | `pnpm telegram:security-smoke` passes against the intended local environment | TODO | TODO |
-| Purged-runtime smoke | `pnpm telegram:security-smoke --expect-purged` passes where runtime purge was required | TODO | TODO |
+| Send disabled | `TELEGRAM_SEND_ENABLED=false` in release/demo defaults | PASS | Safe default is enforced by `.env.example` and `pnpm audit:open-source`. |
+| Backfill disabled | `TELEGRAM_FULL_BACKFILL_ENABLED=false` in release/demo defaults | PASS | Safe default is enforced by `.env.example` and `pnpm audit:open-source`. |
+| Periodic sync disabled | `TELEGRAM_PERIODIC_SYNC_ENABLED=false` in release/demo defaults | PASS | Safe default is enforced by `.env.example` and `pnpm audit:open-source`. |
+| Keychain custody | Real local macOS workspaces use `os-keychain` providers | PASS | Documented in `docs/OPEN_SOURCE.md`, `docs/PUBLIC_STATUS.md`, and `docs/MACOS_TOUCH_ID_MTPROTO.md`; local personal-account testing uses explicit per-import unlock. |
+| Telegram smoke | `pnpm telegram:security-smoke` passes against the intended local environment | PENDING | Requires the intended local Telegram environment and user approval; do before any real-account release test. |
+| Purged-runtime smoke | `pnpm telegram:security-smoke --expect-purged` passes where runtime purge was required | PENDING | Requires provider/runtime cleanup first; do before any public announcement. |
 
 ## Final Sign-Off
 
