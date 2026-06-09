@@ -11,19 +11,20 @@ release owner intentionally makes the mirror public. Treat
 tree and all release gates have been rerun against that checkout.
 
 As of the 2026-06-08 PT readiness pass, the mirror remains private and PR #36
-contains a sanitized snapshot from source commit `fe97ac196451`. The mirror
-checkout passed `pnpm install --frozen-lockfile`, `pnpm audit:open-source`,
-`pnpm audit`, `pnpm audit --prod`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
-`pnpm demo:smoke`, and `pnpm security:local-runtime-smoke`. GitHub CI for PR
-#36 passed `validate`, `demo-smoke`, and `postgres-smoke`, and the PR is waiting
-on the required human review. Do not make the mirror public until follow-up
-notification tweaks, provider-side rotation/cleanup, and final sign-off are
-complete.
+merged a sanitized snapshot from source commit `fe97ac196451` into mirror
+`main` at `be88d03dbcc1`. The merged mirror checkout passed `pnpm install
+--frozen-lockfile`, `pnpm audit:open-source`, `pnpm audit`, `pnpm audit
+--prod`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm demo:smoke`, and
+`pnpm security:local-runtime-smoke`. GitHub CI for PR #36 passed `validate`,
+`demo-smoke`, and `postgres-smoke` before merge. Do not make the mirror public
+until follow-up notification tweaks, provider-side rotation/cleanup, and final
+sign-off are complete.
 
-The current mirror default branch still reports 4 moderate Hono advisories
-because it pins `hono 4.12.18`. The synced PR #36 branch pins `hono 4.12.23`,
-which is above the patched `4.12.21` floor, and passes both `pnpm audit` and
-`pnpm audit --prod`. Recheck GitHub Dependabot after PR #36 merges.
+The previous mirror default branch reported 4 moderate Hono advisories because
+it pinned `hono 4.12.18`. Merged mirror `main` now pins `hono 4.12.23`, which
+is above the patched `4.12.21` floor, and passes both `pnpm audit` and `pnpm
+audit --prod`. The GitHub Dependabot alerts API still returns 404 while the
+mirror remains private, so recheck in GitHub before publication.
 
 ## What Is Not Live
 

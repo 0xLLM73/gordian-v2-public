@@ -16,7 +16,7 @@ data into this file. Record only status, date, owner, and short evidence notes.
 | Source repository | `0xLLM73/gordian-v2` |
 | Attestation owner | `0xLLM73` release owner, assisted by Codex |
 | Attestation date | 2026-06-08 PT |
-| Publication target | `0xLLM73/gordian-v2-public` private synced mirror PR #36 |
+| Publication target | `0xLLM73/gordian-v2-public` private mirror `main` at `be88d03dbcc1` |
 
 This is a readiness attestation, not a final public-release approval. The mirror
 remains private. Follow-up notification-product tweaks and provider-side human
@@ -26,10 +26,10 @@ sign-off are still pending before any public announcement.
 
 | Gate | Required result | Status | Evidence |
 | --- | --- | --- | --- |
-| Clean checkout | `git status --short --branch` shows a clean release branch | PASS | Source `main` clean at `fe97ac196451`; mirror branch was clean before this attestation update. |
+| Clean checkout | `git status --short --branch` shows a clean release branch | PASS | Source release tree was clean at `fe97ac196451`; mirror `main` was clean at `be88d03dbcc1` after PR #36 merged. |
 | Frozen install | `pnpm install --frozen-lockfile` passes | PASS | Passed from the private mirror checkout on 2026-06-08 PT. |
-| Dependency audit | `pnpm audit` and `pnpm audit --prod` pass | PASS | Both passed from the source checkout and private mirror checkout on 2026-06-08 PT. |
-| Open-source audit | `pnpm audit:open-source` passes on a full-depth checkout | PASS | Passed from a full-depth private mirror checkout on 2026-06-08 PT. |
+| Dependency audit | `pnpm audit` and `pnpm audit --prod` pass | PASS | Both passed from merged private mirror `main` at `be88d03dbcc1` on 2026-06-08 PT. |
+| Open-source audit | `pnpm audit:open-source` passes on a full-depth checkout | PASS | Passed from a full-depth private mirror `main` checkout at `be88d03dbcc1` on 2026-06-08 PT. |
 | Lint | `pnpm lint` passes | PASS | Passed from the private mirror checkout on 2026-06-08 PT. |
 | Typecheck | `pnpm typecheck` passes | PASS | Passed from the private mirror checkout on 2026-06-08 PT. |
 | Tests | `pnpm test` passes | PASS | Passed from the private mirror checkout on 2026-06-08 PT. |
@@ -45,8 +45,8 @@ sign-off are still pending before any public announcement.
 | Secret scanning | Enabled | PENDING | GitHub API reports this as unavailable while the mirror remains private; re-run `pnpm check:publication` after intentional publication. |
 | Push protection | Enabled | PENDING | GitHub API reports this as unavailable while the mirror remains private; re-run `pnpm check:publication` after intentional publication. |
 | Private vulnerability reporting | Enabled | PENDING | GitHub API returns 404 while the mirror remains private; re-run `pnpm check:publication` after intentional publication. |
-| Dependabot alerts | Enabled | NEEDS REVIEW | GitHub push output reported 4 moderate alerts on the mirror default branch. Direct audits of current mirror `main` identify four Hono advisories against `hono 4.12.18`: GHSA-xrhx-7g5j-rcj5, GHSA-3hrh-pfw6-9m5x, GHSA-f577-qrjj-4474, and GHSA-2gcr-mfcq-wcc3. The synced branch pins `hono 4.12.23` and passes `pnpm audit` plus `pnpm audit --prod`; recheck after PR #36 merges. |
-| Dependabot security updates | Enabled and unpaused | NEEDS REVIEW | Confirm in GitHub settings after PR #36 merges and before publication. |
+| Dependabot alerts | Enabled | NEEDS REVIEW | The stale mirror default-branch Hono advisories were resolved by merging PR #36. Merged mirror `main` pins `hono 4.12.23` and passes `pnpm audit` plus `pnpm audit --prod`; the Dependabot alerts API still returns 404 while the mirror remains private, so recheck in GitHub before publication. |
+| Dependabot security updates | Enabled and unpaused | NEEDS REVIEW | Confirm in GitHub settings before publication. |
 | Branch checks | `main` requires strict `validate` and `demo-smoke` checks | PASS | Source and mirror `main` require strict `validate` and `demo-smoke` checks. |
 | Review policy | `main` requires at least one approval | PASS | Source and mirror `main` now require one approving review. CODEOWNER review is not enabled because no public CODEOWNERS policy is finalized. |
 | Protected history | `main` blocks force pushes and deletion, enforces admins and linear history | PASS | Source and mirror branch protection confirms admins enforced, linear history required, force pushes blocked, deletions blocked, and conversation resolution required. |

@@ -15,15 +15,17 @@ As of the 2026-06-08 readiness audit:
 - `0xLLM73/gordian-v2` `main` now requires one approving review, strict
   `validate` and `demo-smoke` checks, linear history, admin enforcement,
   conversation resolution, and blocks force pushes/deletions.
-- `0xLLM73/gordian-v2-public` exists, is also private, and has private mirror
-  PR #36 open from source commit `fe97ac196451`.
-- Mirror PR #36 passed GitHub `validate`, `demo-smoke`, and `postgres-smoke`;
-  it remains blocked by the expected required human review.
-- A GitHub push warning reported 4 moderate Dependabot alerts on the mirror
-  default branch. Direct audits identify them as Hono advisories against stale
-  mirror `main` lockfile version `hono 4.12.18`; the synced branch pins
-  `hono 4.12.23`, passes `pnpm audit` and `pnpm audit --prod`, and should clear
-  those alerts after PR #36 merges. Recheck Dependabot after the merge.
+- `0xLLM73/gordian-v2-public` exists, is also private, and PR #36 merged a
+  sanitized mirror snapshot from source commit `fe97ac196451` into mirror
+  `main` at `be88d03dbcc1`.
+- Mirror PR #36 passed GitHub `validate`, `demo-smoke`, and `postgres-smoke`
+  before merge.
+- A GitHub push warning previously reported 4 moderate Dependabot alerts on the
+  mirror default branch. Direct audits identified them as Hono advisories
+  against stale mirror `main` lockfile version `hono 4.12.18`; merged mirror
+  `main` now pins `hono 4.12.23` and passes `pnpm audit` plus `pnpm audit
+  --prod`. The Dependabot alerts API still returns 404 while the mirror remains
+  private, so recheck GitHub before publication.
 
 Before launch, sync the mirror as a sanitized release tree, verify absolute
 GitHub links point at `gordian-v2-public`, and run every local and GitHub
