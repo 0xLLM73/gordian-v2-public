@@ -20,6 +20,11 @@ on the required human review. Do not make the mirror public until follow-up
 notification tweaks, provider-side rotation/cleanup, and final sign-off are
 complete.
 
+The current mirror default branch still reports 4 moderate Hono advisories
+because it pins `hono 4.12.18`. The synced PR #36 branch pins `hono 4.12.23`,
+which is above the patched `4.12.21` floor, and passes both `pnpm audit` and
+`pnpm audit --prod`. Recheck GitHub Dependabot after PR #36 merges.
+
 ## What Is Not Live
 
 - The original Telegram bot has been deleted.

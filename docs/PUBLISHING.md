@@ -20,8 +20,10 @@ As of the 2026-06-08 readiness audit:
 - Mirror PR #36 passed GitHub `validate`, `demo-smoke`, and `postgres-smoke`;
   it remains blocked by the expected required human review.
 - A GitHub push warning reported 4 moderate Dependabot alerts on the mirror
-  default branch. The synced branch passed `pnpm audit` and `pnpm audit --prod`;
-  recheck Dependabot after PR #36 merges.
+  default branch. Direct audits identify them as Hono advisories against stale
+  mirror `main` lockfile version `hono 4.12.18`; the synced branch pins
+  `hono 4.12.23`, passes `pnpm audit` and `pnpm audit --prod`, and should clear
+  those alerts after PR #36 merges. Recheck Dependabot after the merge.
 
 Before launch, sync the mirror as a sanitized release tree, verify absolute
 GitHub links point at `gordian-v2-public`, and run every local and GitHub
