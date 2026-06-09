@@ -1,42 +1,48 @@
 'use client';
 
 import { updatePreferencesAction } from '@/app/actions/preferences';
-import { useEffect, useRef, useState, useTransition } from 'react';
+import { BUILT_IN_CONNECTION_KEYWORDS, BUILT_IN_INTRO_KEYWORDS } from '@repo/shared';
+import type { KeyboardEvent } from 'react';
+import { useEffect, useId, useRef, useState, useTransition } from 'react';
 
 export const MAX_CUSTOM_INTRO_KEYWORDS = 20;
 export const MAX_INTRO_KEYWORD_LENGTH = 50;
 
-/** Built-in keywords (always active, shown as read-only reference) */
-export const BUILT_IN_KEYWORDS = [
-	'introduce',
-	'meet',
-	'connect',
-	'adding',
-	'cc',
-	'forwarded',
-	'reach out',
-	'in touch',
-	'put you in',
-	'loop in',
-];
+export const BUILT_IN_KEYWORDS = [...BUILT_IN_INTRO_KEYWORDS];
+export const BUILT_IN_NEW_CONNECTION_KEYWORDS = [...BUILT_IN_CONNECTION_KEYWORDS];
 
-const BUILT_IN_KEYWORD_SET = new Set(BUILT_IN_KEYWORDS);
+type DetectionKeywordPreferenceKey = 'introKeywords' | 'connectionKeywords';
 
-interface Props {
+interface DetectionKeywordsEditorProps {
 	currentKeywords: string[];
+	builtInKeywords: readonly string[];
+	preferenceKey: DetectionKeywordPreferenceKey;
+	title?: string;
+	description?: string;
+	customLabel?: string;
 }
 
-export function normalizeIntroKeyword(value: string): string {
+interface IntroKeywordsEditorProps {
+	currentKeywords: string[];
+	title?: string;
+	description?: string;
+}
+
+export function normalizeDetectionKeyword(value: string): string {
 	return value.trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
-export function normalizeIntroKeywords(values: string[]): string[] {
+export function normalizeDetectionKeywords(
+	values: string[],
+	builtInKeywords: readonly string[],
+): string[] {
 	const normalized: string[] = [];
 	const seen = new Set<string>();
+	const builtInSet = new Set(builtInKeywords.map((keyword) => normalizeDetectionKeyword(keyword)));
 
 	for (const rawValue of values) {
-		const keyword = normalizeIntroKeyword(rawValue);
-		if (!keyword || seen.has(keyword) || BUILT_IN_KEYWORD_SET.has(keyword)) continue;
+		const keyword = normalizeDetectionKeyword(rawValue);
+		if (!keyword || seen.has(keyword) || builtInSet.has(keyword)) continue;
 		seen.add(keyword);
 		normalized.push(keyword);
 		if (normalized.length >= MAX_CUSTOM_INTRO_KEYWORDS) break;
@@ -45,14 +51,19 @@ export function normalizeIntroKeywords(values: string[]): string[] {
 	return normalized;
 }
 
-export function getIntroKeywordValidationError(value: string, keywords: string[]): string | null {
-	const normalized = normalizeIntroKeyword(value);
+export function getDetectionKeywordValidationError(
+	value: string,
+	keywords: string[],
+	builtInKeywords: readonly string[],
+): string | null {
+	const normalized = normalizeDetectionKeyword(value);
+	const builtInSet = new Set(builtInKeywords.map((keyword) => normalizeDetectionKeyword(keyword)));
 	if (!normalized) return 'Enter a keyword.';
 	if (/[\r\n\t]/.test(value)) return 'Use one keyword or phrase per entry.';
 	if (normalized.length > MAX_INTRO_KEYWORD_LENGTH) {
 		return `Keywords must be ${MAX_INTRO_KEYWORD_LENGTH} characters or fewer.`;
 	}
-	if (BUILT_IN_KEYWORD_SET.has(normalized)) return 'This keyword is already built in.';
+	if (builtInSet.has(normalized)) return 'This keyword is already built in.';
 	if (keywords.includes(normalized)) return 'This custom keyword already exists.';
 	if (keywords.length >= MAX_CUSTOM_INTRO_KEYWORDS) {
 		return `You can add up to ${MAX_CUSTOM_INTRO_KEYWORDS} custom keywords.`;
@@ -60,8 +71,90 @@ export function getIntroKeywordValidationError(value: string, keywords: string[]
 	return null;
 }
 
-export function IntroKeywordsEditor({ currentKeywords }: Props) {
-	const [keywords, setKeywords] = useState<string[]>(() => normalizeIntroKeywords(currentKeywords));
+export function normalizeIntroKeyword(value: string): string {
+	return normalizeDetectionKeyword(value);
+}
+
+export function normalizeIntroKeywords(values: string[]): string[] {
+	return normalizeDetectionKeywords(values, BUILT_IN_KEYWORDS);
+}
+
+export function getIntroKeywordValidationError(value: string, keywords: string[]): string | null {
+	return getDetectionKeywordValidationError(value, keywords, BUILT_IN_KEYWORDS);
+}
+
+export function prepareDetectionKeywordsForSave(
+	keywords: string[],
+	pendingValue: string,
+	builtInKeywords: readonly string[],
+): { keywords: string[]; error: string | null; shouldClearInput: boolean } {
+	const normalized = normalizeDetectionKeywords(keywords, builtInKeywords);
+	if (!pendingValue.trim()) {
+		return { keywords: normalized, error: null, shouldClearInput: false };
+	}
+
+	const validationError = getDetectionKeywordValidationError(
+		pendingValue,
+		normalized,
+		builtInKeywords,
+	);
+	if (validationError) {
+		return { keywords: normalized, error: validationError, shouldClearInput: false };
+	}
+
+	const withPending = normalizeDetectionKeywords(
+		[...normalized, normalizeDetectionKeyword(pendingValue)],
+		builtInKeywords,
+	);
+	return { keywords: withPending, error: null, shouldClearInput: true };
+}
+
+export function IntroKeywordsEditor({
+	currentKeywords,
+	title,
+	description,
+}: IntroKeywordsEditorProps) {
+	return (
+		<DetectionKeywordsEditor
+			currentKeywords={currentKeywords}
+			builtInKeywords={BUILT_IN_KEYWORDS}
+			preferenceKey="introKeywords"
+			title={title}
+			description={description}
+			customLabel="Custom introduction keywords"
+		/>
+	);
+}
+
+export function ConnectionKeywordsEditor({
+	currentKeywords,
+	title,
+	description,
+}: IntroKeywordsEditorProps) {
+	return (
+		<DetectionKeywordsEditor
+			currentKeywords={currentKeywords}
+			builtInKeywords={BUILT_IN_NEW_CONNECTION_KEYWORDS}
+			preferenceKey="connectionKeywords"
+			title={title}
+			description={description}
+			customLabel="Custom new-connection keywords"
+		/>
+	);
+}
+
+export function DetectionKeywordsEditor({
+	currentKeywords,
+	builtInKeywords,
+	preferenceKey,
+	title,
+	description,
+	customLabel = 'Custom keywords',
+}: DetectionKeywordsEditorProps) {
+	const errorId = useId();
+	const [keywords, setKeywords] = useState<string[]>(() =>
+		normalizeDetectionKeywords(currentKeywords, builtInKeywords),
+	);
 	const [inputValue, setInputValue] = useState('');
 	const [error, setError] = useState<string | null>(null);
 	const [isPending, startTransition] = useTransition();
@@ -69,8 +162,8 @@ export function IntroKeywordsEditor({ currentKeywords }: Props) {
 	const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	useEffect(() => {
-		setKeywords(normalizeIntroKeywords(currentKeywords));
-	}, [currentKeywords]);
+		setKeywords(normalizeDetectionKeywords(currentKeywords, builtInKeywords));
+	}, [currentKeywords, builtInKeywords]);
 
 	useEffect(
 		() => () => {
@@ -86,8 +179,12 @@ export function IntroKeywordsEditor({ currentKeywords }: Props) {
 	}
 
 	function addKeyword() {
-		const normalized = normalizeIntroKeyword(inputValue);
-		const validationError = getIntroKeywordValidationError(inputValue, keywords);
+		const normalized = normalizeDetectionKeyword(inputValue);
+		const validationError = getDetectionKeywordValidationError(
+			inputValue,
+			keywords,
+			builtInKeywords,
+		);
 		if (validationError) {
 			setError(validationError);
 			setSaved(false);
@@ -106,7 +203,7 @@ export function IntroKeywordsEditor({ currentKeywords }: Props) {
 		setSaved(false);
 	}
 
-	function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+	function handleKeyDown(e: KeyboardEvent<HTMLInputElement>) {
 		if (e.key === 'Enter') {
 			e.preventDefault();
 			addKeyword();
@@ -115,17 +212,29 @@ export function IntroKeywordsEditor({ currentKeywords }: Props) {
 
 	function handleSave() {
 		startTransition(async () => {
-			const normalized = normalizeIntroKeywords(keywords);
+			const prepared = prepareDetectionKeywordsForSave(keywords, inputValue, builtInKeywords);
+			if (prepared.error) {
+				setKeywords(prepared.keywords);
+				setError(prepared.error);
+				setSaved(false);
+				return;
+			}
+			const normalized = prepared.keywords;
 			setKeywords(normalized);
 			setError(null);
 			try {
-				const result = await updatePreferencesAction({ introKeywords: normalized });
+				const result = await updatePreferencesAction(
+					preferenceKey === 'introKeywords'
+						? { introKeywords: normalized }
+						: { connectionKeywords: normalized },
+				);
 				const saveError = getSaveError(result);
 				if (saveError) {
 					setError(saveError);
 					setSaved(false);
 					return;
 				}
+				if (prepared.shouldClearInput) setInputValue('');
 				showSaved();
 			} catch {
 				setError('Unable to save keywords. Try again.');
@@ -135,13 +244,20 @@ export function IntroKeywordsEditor({ currentKeywords }: Props) {
 	}
 
 	return (
-		<div className="space-y-4">
+		<div className="space-y-4" data-testid={`detection-keywords-${preferenceKey}`}>
+			{title || description ? (
+				<div>
+					{title ? <h3 className="text-sm font-semibold text-foreground">{title}</h3> : null}
+					{description ? <p className="mt-1 text-sm text-muted-foreground">{description}</p> : null}
+				</div>
+			) : null}
+
 			<div>
 				<p className="mb-2 text-xs font-medium text-muted-foreground">
 					Built-in keywords (always active)
 				</p>
 				<div className="flex flex-wrap gap-1.5">
-					{BUILT_IN_KEYWORDS.map((kw) => (
+					{builtInKeywords.map((kw) => (
 						<span
 							key={kw}
 							className="rounded-full bg-muted px-2.5 py-0.5 text-xs text-muted-foreground"
@@ -154,7 +270,7 @@ export function IntroKeywordsEditor({ currentKeywords }: Props) {
 
 			<div>
 				<p className="mb-2 text-xs font-medium text-foreground">
-					Custom keywords ({keywords.length}/{MAX_CUSTOM_INTRO_KEYWORDS})
+					{customLabel} ({keywords.length}/{MAX_CUSTOM_INTRO_KEYWORDS})
 				</p>
 				<div className="flex flex-wrap gap-1.5">
 					{keywords.map((kw) => (
@@ -190,8 +306,8 @@ export function IntroKeywordsEditor({ currentKeywords }: Props) {
 					maxLength={MAX_INTRO_KEYWORD_LENGTH}
 					disabled={keywords.length >= MAX_CUSTOM_INTRO_KEYWORDS}
 					aria-invalid={Boolean(error)}
-					aria-describedby={error ? 'intro-keyword-error' : undefined}
-					className="flex-1 rounded-md border border-border px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+					aria-describedby={error ? errorId : undefined}
+					className="min-w-0 flex-1 rounded-md border border-border px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
 				/>
 				<button
 					type="button"
@@ -204,7 +320,7 @@ export function IntroKeywordsEditor({ currentKeywords }: Props) {
 			</div>
 
 			{error ? (
-				<p id="intro-keyword-error" role="alert" className="text-sm text-destructive">
+				<p id={errorId} role="alert" className="text-sm text-destructive">
 					{error}
 				</p>
 			) : null}

@@ -57,16 +57,24 @@ function readTelegramApiCredentialsFromKeychain(): { apiId: string; apiHash: str
 		throw new Error('TELEGRAM_API_CREDENTIAL_PROVIDER=os-keychain requires macOS Keychain');
 	}
 
+	const account =
+		process.env.TELEGRAM_API_KEYCHAIN_ACCOUNT?.trim() || DEFAULT_TELEGRAM_API_KEYCHAIN_ACCOUNT;
+	const service = process.env.TELEGRAM_KEYCHAIN_SERVICE?.trim() || DEFAULT_KEYCHAIN_SERVICE;
+	const helperPath = process.env.GORDIAN_KEYCHAIN_HELPER_PATH?.trim();
+	if (helperPath) {
+		const stdout = execFileSync(helperPath, ['get', service, account, 'standard'], {
+			encoding: 'utf8',
+		});
+		const parsed = JSON.parse(stdout.trim()) as { apiHash?: unknown; apiId?: unknown };
+		return {
+			apiHash: String(parsed.apiHash ?? ''),
+			apiId: String(parsed.apiId ?? ''),
+		};
+	}
+
 	const stdout = execFileSync(
 		'security',
-		[
-			'find-generic-password',
-			'-a',
-			process.env.TELEGRAM_API_KEYCHAIN_ACCOUNT?.trim() || DEFAULT_TELEGRAM_API_KEYCHAIN_ACCOUNT,
-			'-s',
-			process.env.TELEGRAM_KEYCHAIN_SERVICE?.trim() || DEFAULT_KEYCHAIN_SERVICE,
-			'-w',
-		],
+		['find-generic-password', '-a', account, '-s', service, '-w'],
 		{ encoding: 'utf8' },
 	);
 	const parsed = JSON.parse(stdout.trim()) as { apiHash?: unknown; apiId?: unknown };
@@ -101,6 +109,8 @@ function telegramMtProtoConfigCacheKey(): string {
 			provider === 'os-keychain'
 				? process.env.TELEGRAM_KEYCHAIN_SERVICE?.trim() || DEFAULT_KEYCHAIN_SERVICE
 				: '',
+		helperPath:
+			provider === 'os-keychain' ? process.env.GORDIAN_KEYCHAIN_HELPER_PATH?.trim() || '' : '',
 	});
 }
 

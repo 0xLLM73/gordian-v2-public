@@ -1,5 +1,5 @@
 import { _resetForTesting as resetRateLimit } from '@/lib/rate-limit';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('next/headers', () => ({
 	headers: vi.fn(() => Promise.resolve(new Headers())),
@@ -108,6 +108,8 @@ const mockGetCommitmentForFeedback = vi.fn().mockResolvedValue({
 	extractionContext: 'test context',
 	quote: 'test quote',
 });
+const mockFetch = vi.fn();
+vi.stubGlobal('fetch', mockFetch);
 
 vi.mock('@repo/db', () => ({
 	withWorkspaceRLS: vi.fn((_wsId: string, fn: (tx: unknown) => unknown) => fn({})),
@@ -128,6 +130,10 @@ describe('commitment actions', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		resetRateLimit();
+	});
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
 	});
 
 	function expectNoSensitiveCommitmentFields(value: Record<string, unknown>) {
@@ -173,6 +179,109 @@ describe('commitment actions', () => {
 				expect.objectContaining({ limit: 10 }),
 			);
 			expectNoSensitiveCommitmentFields(result?.data?.[0] as Record<string, unknown>);
+		});
+	});
+
+	describe('findCommitmentsForPeriodAction', () => {
+		beforeEach(() => {
+			vi.stubEnv('WORKER_URL', 'http://localhost:3001');
+			vi.stubEnv('WORKER_INTERNAL_SECRET', 'test-secret');
+		});
+
+		it('estimates a bounded commitment search from the server-derived workspace', async () => {
+			mockFetch.mockResolvedValueOnce({
+				ok: true,
+				json: () =>
+					Promise.resolve({
+						status: 'dry_run',
+						workspaceId: WORKSPACE_ID,
+						contactLimit: 100,
+						batchSize: 200,
+						wouldProcessContacts: 4,
+						wouldProcessMessages: 123,
+						maxAgeDays: 14,
+						confirmToken: 'confirm-token',
+					}),
+			});
+			const { findCommitmentsForPeriodAction } = await import('@/app/actions/commitments');
+
+			const result = await findCommitmentsForPeriodAction({
+				periodValue: 2,
+				periodUnit: 'weeks',
+				contactLimit: 100,
+				batchSize: 200,
+			});
+
+			expect(result?.data).toEqual(
+				expect.objectContaining({
+					status: 'dry_run',
+					wouldProcessContacts: 4,
+					wouldProcessMessages: 123,
+					maxAgeDays: 14,
+					confirmToken: 'confirm-token',
+				}),
+			);
+			expect(mockFetch).toHaveBeenCalledWith(
+				'http://localhost:3001/admin/reprocess-messages',
+				expect.objectContaining({
+					method: 'POST',
+					headers: expect.objectContaining({
+						'X-Internal-Secret': 'test-secret',
+					}),
+				}),
+			);
+			const body = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+			expect(body).toMatchObject({
+				workspaceId: WORKSPACE_ID,
+				userId: 'user-1',
+				maxAgeDays: 14,
+				contactLimit: 100,
+				batchSize: 200,
+				dryRun: true,
+				confirm: false,
+			});
+		});
+
+		it('queues the exact estimated commitment search when confirmed', async () => {
+			mockFetch.mockResolvedValueOnce({
+				ok: true,
+				json: () =>
+					Promise.resolve({
+						status: 'queued',
+						contactsProcessed: 3,
+						messagesQueued: 72,
+						maxAgeDays: 30,
+					}),
+			});
+			const { findCommitmentsForPeriodAction } = await import('@/app/actions/commitments');
+
+			const result = await findCommitmentsForPeriodAction({
+				periodValue: 1,
+				periodUnit: 'months',
+				contactLimit: 25,
+				batchSize: 150,
+				confirmToken: 'confirm-token',
+			});
+
+			expect(result?.data).toEqual(
+				expect.objectContaining({
+					status: 'queued',
+					contactsProcessed: 3,
+					messagesQueued: 72,
+					maxAgeDays: 30,
+				}),
+			);
+			const body = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+			expect(body).toMatchObject({
+				workspaceId: WORKSPACE_ID,
+				userId: 'user-1',
+				maxAgeDays: 30,
+				contactLimit: 25,
+				batchSize: 150,
+				dryRun: false,
+				confirm: true,
+				confirmToken: 'confirm-token',
+			});
 		});
 	});
 

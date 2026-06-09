@@ -33,7 +33,11 @@ import {
 } from '@repo/shared';
 import { generateEmbeddingCached } from './embeddings';
 import type { KnowledgeExtractionMessage } from './knowledge-extraction';
-import { evidenceSourceSelectionMetadata, selectEvidenceMessage } from './knowledge-extraction';
+import {
+	buildKnowledgeEvidenceFromSelection,
+	evidenceSelectionHasDirectSource,
+	selectEvidenceMessage,
+} from './knowledge-extraction';
 import { inferKnowledgeEntitiesJson, normalizeKnowledgeEntities } from './knowledge-llm';
 import { prefilterEntities } from './prefilter';
 
@@ -440,20 +444,12 @@ export class BatchRelationshipExtractor {
 			try {
 				const normalizedName = entity.name.toLowerCase();
 				const evidenceSelection = selectEvidenceMessage(entity, request.sourceMessages);
-				const evidenceMessage = evidenceSelection.message;
-				const evidence = {
-					messageId: evidenceMessage?.id,
-					snippet: evidenceMessage?.text.slice(0, 1000),
-					occurredAt: evidenceMessage?.occurredAt,
-					evidenceKind: 'llm_extracted' as const,
-					confidence: entity.confidence,
-					metadata: {
-						source: result.source ?? 'anthropic_batch',
-						entityType: entity.type,
-						sourceMessageSelection: evidenceSourceSelectionMetadata(evidenceSelection),
-					},
-					envelope: request.envelope,
-				};
+				let evidence = buildKnowledgeEvidenceFromSelection(
+					entity,
+					evidenceSelection,
+					result.source ?? 'anthropic_batch',
+					request.envelope,
+				);
 
 				// Cross-type dedup
 				const existingAnyType = await findNodeByNameAnyType(
@@ -519,8 +515,35 @@ export class BatchRelationshipExtractor {
 				if (closest?.similarity !== undefined) {
 					warnIfEmbeddingFingerprintChanged('batch_dedup', closest);
 				}
-				if (closest?.similarity !== undefined && closest.similarity > COSINE_DEDUP_THRESHOLD) {
+				const matchedNodeEvidenceSelection = closest
+					? selectEvidenceMessage(
+							{
+								name: closest.name,
+								displayName: closest.displayName ?? closest.name,
+								aliases: closest.aliases ?? [],
+							},
+							request.sourceMessages,
+						)
+					: null;
+				if (
+					closest?.similarity !== undefined &&
+					closest.similarity > COSINE_DEDUP_THRESHOLD &&
+					matchedNodeEvidenceSelection &&
+					evidenceSelectionHasDirectSource(matchedNodeEvidenceSelection)
+				) {
 					nodeId = closest.id;
+					evidence = buildKnowledgeEvidenceFromSelection(
+						{
+							name: closest.name,
+							displayName: closest.displayName,
+							aliases: closest.aliases ?? [],
+							type: closest.type,
+							confidence: entity.confidence,
+						},
+						matchedNodeEvidenceSelection,
+						result.source ?? 'anthropic_batch',
+						request.envelope,
+					);
 					await incrementNodeMentionCount(request.workspaceId, nodeId);
 				} else {
 					const node = await createKnowledgeNode(

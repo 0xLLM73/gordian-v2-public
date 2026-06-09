@@ -141,6 +141,7 @@ app.get('/metrics', async (c) => {
 	}
 
 	// Gather queue depths in parallel (including relationship-extraction and health-scoring)
+	const { knowledgeAnalysisQueue } = await import('./queues/knowledge-cron');
 	const [
 		syncCounts,
 		backfillCounts,
@@ -149,6 +150,7 @@ app.get('/metrics', async (c) => {
 		digestCounts,
 		healthScoringCounts,
 		relationshipExtractionCounts,
+		knowledgeAnalysisCounts,
 		telegramHistoryImportCounts,
 		redisInfo,
 	] = await Promise.allSettled([
@@ -159,6 +161,7 @@ app.get('/metrics', async (c) => {
 		digestQueue.getJobCounts('active', 'waiting', 'delayed', 'failed'),
 		healthScoringQueue.getJobCounts('active', 'waiting', 'delayed', 'failed'),
 		relationshipExtractionQueue.getJobCounts('active', 'waiting', 'delayed', 'failed'),
+		knowledgeAnalysisQueue.getJobCounts('active', 'waiting', 'delayed', 'failed'),
 		telegramHistoryImportQueue.getJobCounts('active', 'waiting', 'delayed', 'failed'),
 		connection.info('memory'),
 	]);
@@ -188,6 +191,8 @@ app.get('/metrics', async (c) => {
 				relationshipExtractionCounts.status === 'fulfilled'
 					? relationshipExtractionCounts.value
 					: null,
+			knowledgeAnalysis:
+				knowledgeAnalysisCounts.status === 'fulfilled' ? knowledgeAnalysisCounts.value : null,
 			telegramHistoryImport:
 				telegramHistoryImportCounts.status === 'fulfilled'
 					? telegramHistoryImportCounts.value
@@ -258,7 +263,7 @@ async function main() {
 	const { decisionRecordingWorker } = await import('./queues/decision-recording');
 	void decisionRecordingWorker; // CGC: decision recording worker
 	console.log(
-		'BullMQ queues initialized (sync, backfill, telegram-history-import, ai-flow: orchestrator/extraction/embeddings/summaries/fulfillment/style-analysis/style-aggregation/decision-recording, briefs, rotation, digests, knowledge-extraction, relationship-extraction, health-scoring, outcome-evaluation, embedding-backfill, rationale-extraction).',
+		'BullMQ queues initialized (sync, backfill, telegram-history-import, ai-flow: orchestrator/extraction/embeddings/summaries/fulfillment/style-analysis/style-aggregation/decision-recording, briefs, rotation, digests, knowledge-extraction, knowledge-analysis, relationship-extraction, health-scoring, outcome-evaluation, embedding-backfill, rationale-extraction).',
 	);
 
 	// 2. Schedule batch flush (every 15 minutes)
@@ -314,7 +319,10 @@ async function main() {
 	scheduleStyleAggregation();
 
 	// 2h. Nightly knowledge extraction cron (cost-optimized: embedding-first + Haiku)
-	const { scheduleKnowledgeCron } = await import('./queues/knowledge-cron');
+	const { knowledgeAnalysisWorker, scheduleKnowledgeCron } = await import(
+		'./queues/knowledge-cron'
+	);
+	void knowledgeAnalysisWorker; // ensure post-sync knowledge analysis worker is active
 	scheduleKnowledgeCron();
 
 	// 3. Initialize grammY bot and start long polling only when explicitly enabled.

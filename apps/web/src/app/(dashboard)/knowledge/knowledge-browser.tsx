@@ -73,6 +73,9 @@ interface KnowledgeAnalysisEstimate {
 	canRun?: boolean;
 	contactsEstimated?: number;
 	staleContactsEstimated?: number;
+	backfillContactsEstimated?: number;
+	backfillContactsCompletedEstimated?: number;
+	backfillMessagesScannedEstimated?: number;
 	messagesEstimated?: number;
 	embeddingRequestsEstimated?: number;
 	embeddingInputsEstimated?: number;
@@ -84,6 +87,17 @@ interface KnowledgeAnalysisEstimate {
 	error?: string;
 }
 
+interface KnowledgeMessageCoverage {
+	totalMessages: number;
+	messagesWithSenderMetadata: number;
+	messagesWithUserSenderMetadata: number;
+	nullContactMessages: number;
+	nullContactMessagesWithSenderMetadata: number;
+	nullContactMessagesWithUserSenderMetadata: number;
+	linkedContactMessages: number;
+	chatsWithNullContactMessages: number;
+}
+
 interface KnowledgeAnalysisProgress {
 	stage?: 'queued' | 'contacts' | 'llm' | 'complete';
 	percent?: number;
@@ -92,6 +106,9 @@ interface KnowledgeAnalysisProgress {
 	llmCompleted?: number;
 	expectedLlmRequests?: number;
 	entitiesExtracted?: number;
+	backfillContactsCompleted?: number;
+	backfillContactsInProgress?: number;
+	backfillMessagesScanned?: number;
 	nodeCount?: number;
 	evidenceCount?: number;
 	linkCount?: number;
@@ -172,7 +189,14 @@ interface EnrichedNode {
 	messageMatchedAt?: Date | string | null;
 	messageRecallReasons?: string[];
 	evidenceCount?: number;
+	distinctEvidenceMessages?: number;
+	distinctEvidenceContacts?: number;
 	aggregateEvidenceCount?: number;
+	directEvidenceRows?: number;
+	directEvidenceMessages?: number;
+	directEvidenceContacts?: number;
+	possibleEvidenceRows?: number;
+	weakEvidenceRows?: number;
 	latestEvidenceAt?: Date | string | null;
 	topConfidence?: number | null;
 	connectedContactCount?: number;
@@ -220,7 +244,28 @@ function analysisLimitForMode(mode: AnalysisMode): number {
 	return mode === 'full' ? 500 : 50;
 }
 
-export function KnowledgeBrowser({ initialNodes }: { initialNodes: EnrichedNode[] }) {
+const compactNumberFormatter = new Intl.NumberFormat('en-US', {
+	compactDisplay: 'short',
+	maximumFractionDigits: 1,
+	notation: 'compact',
+});
+
+function formatCompactCount(value: number | undefined): string {
+	return compactNumberFormatter.format(value ?? 0);
+}
+
+function formatCoveragePercent(part: number | undefined, total: number | undefined): string {
+	if (!total || total <= 0) return '0%';
+	return `${Math.round(((part ?? 0) / total) * 100)}%`;
+}
+
+export function KnowledgeBrowser({
+	initialNodes,
+	messageCoverage,
+}: {
+	initialNodes: EnrichedNode[];
+	messageCoverage?: KnowledgeMessageCoverage;
+}) {
 	const [nodes, setNodes] = useState<EnrichedNode[]>(initialNodes);
 	const [activeType, setActiveType] = useState<NodeType | 'all'>('all');
 	const [query, setQuery] = useState('');
@@ -297,6 +342,11 @@ export function KnowledgeBrowser({ initialNodes }: { initialNodes: EnrichedNode[
 								messageRecallReasons: resultNode.messageRecallReasons,
 								evidenceCount: resultNode.evidenceCount,
 								aggregateEvidenceCount: resultNode.aggregateEvidenceCount,
+								directEvidenceRows: resultNode.directEvidenceRows,
+								directEvidenceMessages: resultNode.directEvidenceMessages,
+								directEvidenceContacts: resultNode.directEvidenceContacts,
+								possibleEvidenceRows: resultNode.possibleEvidenceRows,
+								weakEvidenceRows: resultNode.weakEvidenceRows,
 								latestEvidenceAt: resultNode.latestEvidenceAt,
 								topConfidence: resultNode.topConfidence,
 								connectedContactCount: resultNode.connectedContactCount,
@@ -357,6 +407,9 @@ export function KnowledgeBrowser({ initialNodes }: { initialNodes: EnrichedNode[
 				llmCompleted: 0,
 				expectedLlmRequests,
 				entitiesExtracted: 0,
+				backfillContactsCompleted: 0,
+				backfillContactsInProgress: 0,
+				backfillMessagesScanned: analysisEstimate?.backfillMessagesScannedEstimated ?? 0,
 				nodeCount: nodes.length,
 				evidenceCount: 0,
 				linkCount: 0,
@@ -512,6 +565,7 @@ export function KnowledgeBrowser({ initialNodes }: { initialNodes: EnrichedNode[
 
 		async function pollProgress() {
 			const result = await getKnowledgeAnalysisProgressAction({
+				mode: request.mode,
 				startedAt,
 				expectedContacts: request.expectedContacts,
 				expectedLlmRequests: request.expectedLlmRequests,
@@ -569,6 +623,7 @@ export function KnowledgeBrowser({ initialNodes }: { initialNodes: EnrichedNode[
 				progress={analysisProgress}
 				inferenceResult={inferenceResult}
 				inferenceError={inferenceError}
+				messageCoverage={messageCoverage}
 			/>
 			<ManualKnowledgeNodePanel
 				type={manualType}
@@ -759,6 +814,7 @@ function LocalKnowledgeAnalysisPanel({
 	progress,
 	inferenceResult,
 	inferenceError,
+	messageCoverage,
 }: {
 	nodes: EnrichedNode[];
 	mode: AnalysisMode;
@@ -779,6 +835,7 @@ function LocalKnowledgeAnalysisPanel({
 	progress: KnowledgeAnalysisProgress | null;
 	inferenceResult: KnowledgeInferenceRunResult | null;
 	inferenceError: string | null;
+	messageCoverage?: KnowledgeMessageCoverage;
 }) {
 	const evidenceRows = nodes.reduce((sum, node) => {
 		if (typeof node.evidenceCount === 'number') return sum + node.evidenceCount;
@@ -818,6 +875,9 @@ function LocalKnowledgeAnalysisPanel({
 					: 'Ready';
 	const contactsEstimated = estimate?.contactsEstimated ?? linkedContacts;
 	const messagesEstimated = estimate?.messagesEstimated ?? evidenceRows;
+	const backfillContactsEstimated = estimate?.backfillContactsEstimated ?? 0;
+	const backfillContactsCompletedEstimated = estimate?.backfillContactsCompletedEstimated ?? 0;
+	const backfillMessagesScannedEstimated = estimate?.backfillMessagesScannedEstimated ?? 0;
 	const embeddingInputsEstimated = estimate?.embeddingInputsEstimated ?? estimatedUnits;
 	const embeddingProviderLabel = estimate?.embeddingProviderLabel ?? 'embeddings';
 	const llmRequestsEstimated =
@@ -832,6 +892,38 @@ function LocalKnowledgeAnalysisPanel({
 	const progressContactTotal = progress?.expectedContacts ?? contactsEstimated;
 	const progressLlmTotal = progress?.expectedLlmRequests ?? llmRequestsEstimated;
 	const hasAiConsent = estimate?.hasConsent !== false;
+	const coverageStats = messageCoverage
+		? [
+				{
+					label: 'Imported',
+					value: formatCompactCount(messageCoverage.totalMessages),
+					detail: 'messages',
+				},
+				{
+					label: 'Contact-linked',
+					value: formatCoveragePercent(
+						messageCoverage.linkedContactMessages,
+						messageCoverage.totalMessages,
+					),
+					detail: `${formatCompactCount(messageCoverage.linkedContactMessages)} rows`,
+				},
+				{
+					label: 'Sender-attributed',
+					value: formatCoveragePercent(
+						messageCoverage.messagesWithUserSenderMetadata,
+						messageCoverage.totalMessages,
+					),
+					detail: `${formatCompactCount(
+						messageCoverage.messagesWithUserSenderMetadata,
+					)} user senders`,
+				},
+				{
+					label: 'Needs attribution',
+					value: formatCompactCount(messageCoverage.nullContactMessages),
+					detail: `${messageCoverage.chatsWithNullContactMessages} chats`,
+				},
+			]
+		: [];
 
 	return (
 		<section className="mb-4 rounded-lg border border-border bg-card p-4">
@@ -849,6 +941,17 @@ function LocalKnowledgeAnalysisPanel({
 					<div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
 						<span>{contactsEstimated} contacts</span>
 						<span>{messagesEstimated} messages</span>
+						{mode === 'full' && backfillContactsEstimated > 0 ? (
+							<span>
+								{backfillContactsCompletedEstimated} historical contacts complete,{' '}
+								{backfillContactsEstimated} need backfill
+							</span>
+						) : mode === 'full' && backfillContactsCompletedEstimated > 0 ? (
+							<span>{backfillContactsCompletedEstimated} historical contacts complete</span>
+						) : null}
+						{mode === 'full' && backfillMessagesScannedEstimated > 0 ? (
+							<span>{backfillMessagesScannedEstimated} messages already scanned</span>
+						) : null}
 						<span>{embeddingInputsEstimated} embedding inputs</span>
 						<span>{embeddingProviderLabel}</span>
 						<span>
@@ -929,6 +1032,22 @@ function LocalKnowledgeAnalysisPanel({
 				) : null}
 			</div>
 
+			{coverageStats.length > 0 ? (
+				<div className="mt-3 grid gap-2 border-t border-border pt-3 sm:grid-cols-2 xl:grid-cols-4">
+					{coverageStats.map((stat) => (
+						<div key={stat.label} className="min-w-0">
+							<div className="text-[11px] font-medium uppercase text-muted-foreground">
+								{stat.label}
+							</div>
+							<div className="mt-0.5 text-sm font-semibold text-foreground">{stat.value}</div>
+							<div className="truncate text-xs text-muted-foreground" title={stat.detail}>
+								{stat.detail}
+							</div>
+						</div>
+					))}
+				</div>
+			) : null}
+
 			{progress ? (
 				<div className="mt-3 rounded-md border border-border bg-muted/30 p-3">
 					<div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -960,6 +1079,17 @@ function LocalKnowledgeAnalysisPanel({
 							</span>
 						) : null}
 						<span>{progress.entitiesExtracted ?? 0} entities linked</span>
+						{mode === 'full' ? (
+							<>
+								<span>
+									Backfill {progress.backfillContactsCompleted ?? 0} complete
+									{progress.backfillContactsInProgress
+										? `, ${progress.backfillContactsInProgress} in progress`
+										: ''}
+								</span>
+								<span>{progress.backfillMessagesScanned ?? 0} messages scanned</span>
+							</>
+						) : null}
 						<span>{progress.nodeCount ?? 0} nodes</span>
 						<span>{progress.evidenceCount ?? 0} evidence rows</span>
 						{progress.latestUpdateAt ? (
@@ -1313,6 +1443,13 @@ function KnowledgeCard({
 	const latestEvidenceAt = coerceDate(node.latestEvidenceAt);
 	const messageMatchedAt = coerceDate(node.messageMatchedAt);
 	const messageHitCount = node.messageHitCount ?? 0;
+	const directSourceMessageCount = node.directEvidenceMessages ?? 0;
+	const directEvidenceRows = node.directEvidenceRows ?? 0;
+	const directEvidenceContacts = node.directEvidenceContacts ?? 0;
+	const rawSourceMessageCount = node.distinctEvidenceMessages ?? 0;
+	const rawEvidenceRows = node.evidenceCount ?? 0;
+	const possibleEvidenceRows = node.possibleEvidenceRows ?? 0;
+	const weakEvidenceRows = node.weakEvidenceRows ?? 0;
 	const messageMatchedEvidenceIds = new Set(node.messageMatchedEvidenceIds ?? []);
 	const hasSearchEvidenceFields =
 		typeof node.matchScore === 'number' ||
@@ -1374,12 +1511,39 @@ function KnowledgeCard({
 				</div>
 			) : null}
 			<div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-				<span>{node.mentionCount ?? 0} mentions</span>
-				{typeof node.evidenceCount === 'number' ? (
+				{directSourceMessageCount > 0 ? (
 					<span>
-						{node.evidenceCount} source evidence row{node.evidenceCount === 1 ? '' : 's'}
+						{directSourceMessageCount} direct source message
+						{directSourceMessageCount === 1 ? '' : 's'}
 					</span>
 				) : null}
+				{directEvidenceRows > 0 ? (
+					<span>
+						{directEvidenceRows} direct evidence row{directEvidenceRows === 1 ? '' : 's'}
+					</span>
+				) : null}
+				{directEvidenceContacts > 0 ? (
+					<span>
+						{directEvidenceContacts} direct evidence contact
+						{directEvidenceContacts === 1 ? '' : 's'}
+					</span>
+				) : null}
+				{possibleEvidenceRows > 0 ? (
+					<span>
+						{possibleEvidenceRows} possible row{possibleEvidenceRows === 1 ? '' : 's'}
+					</span>
+				) : null}
+				{weakEvidenceRows > 0 ? (
+					<span>
+						{weakEvidenceRows} weak row{weakEvidenceRows === 1 ? '' : 's'}
+					</span>
+				) : null}
+				{rawEvidenceRows > 0 && directEvidenceRows !== rawEvidenceRows ? (
+					<span>
+						{rawEvidenceRows} total evidence row{rawEvidenceRows === 1 ? '' : 's'}
+					</span>
+				) : null}
+				<span>{node.mentionCount ?? 0} extraction signals</span>
 				{latestEvidenceAt ? <span>Latest {formatRelativeDate(latestEvidenceAt)}</span> : null}
 				{messageHitCount > 0 ? (
 					<span>
@@ -1392,6 +1556,9 @@ function KnowledgeCard({
 						{previews.join(', ')}
 						{contactCount > 3 ? ` + ${contactCount - 3} more` : ''}
 					</span>
+				) : null}
+				{rawSourceMessageCount > 0 && directSourceMessageCount === 0 ? (
+					<span>{rawSourceMessageCount} source messages need review</span>
 				) : null}
 			</div>
 
@@ -1433,7 +1600,7 @@ function KnowledgeCard({
 						);
 					})}
 				</ul>
-			) : hasSearchEvidenceFields ? (
+			) : hasSearchEvidenceFields && rawEvidenceRows === 0 && rawSourceMessageCount === 0 ? (
 				<p className="mt-3 rounded-md border border-dashed border-border bg-muted/40 p-3 text-sm text-muted-foreground">
 					This topic exists, but no source message evidence has been stored yet.
 				</p>
@@ -1568,8 +1735,13 @@ function qualitySignalsForNode(node: EnrichedNode): string[] {
 	const signals = new Set<string>();
 	if (!node.reviewStatus) signals.add('Unreviewed');
 	if (node.reviewStatus === 'needs_review') signals.add('Needs review');
+	const directEvidenceCount = node.directEvidenceRows ?? 0;
+	const possibleEvidenceCount = node.possibleEvidenceRows ?? 0;
+	const weakEvidenceCount = node.weakEvidenceRows ?? 0;
 	const evidenceCount =
 		node.evidenceCount ?? node.aggregateEvidenceCount ?? node.evidence?.length ?? 0;
+	if (directEvidenceCount === 0) signals.add('Needs direct evidence');
+	if (possibleEvidenceCount > 0 || weakEvidenceCount > 0) signals.add('Review evidence quality');
 	if (evidenceCount === 0) signals.add('Needs source evidence');
 	if (typeof node.topConfidence === 'number' && node.topConfidence < 0.7) {
 		signals.add('Low confidence');

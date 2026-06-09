@@ -228,7 +228,9 @@ async function main() {
 			}
 			try {
 				const entitlements = await readEntitlements(helperPath);
-				if (/com\.apple\.application-identifier/.test(entitlements)) {
+				const hasApplicationIdentifier = /com\.apple\.application-identifier/.test(entitlements);
+				const hasKeychainAccessGroup = /keychain-access-groups/.test(entitlements);
+				if (hasApplicationIdentifier) {
 					add('pass', 'Helper application entitlement', 'application identifier is present');
 				} else if (hasEmbeddedProfile) {
 					try {
@@ -260,9 +262,29 @@ async function main() {
 					}
 				} else {
 					add(
-						'warn',
+						requireStrictReady ? 'fail' : 'warn',
 						'Helper application entitlement',
-						'missing com.apple.application-identifier; acceptable for local probing, but release helpers should have a stable app identity',
+						'missing com.apple.application-identifier; strict userPresence needs a profiled app identity, while compat mode can use this helper',
+					);
+				}
+				if (hasKeychainAccessGroup) {
+					add(
+						'pass',
+						'Helper Keychain access group',
+						'keychain-access-groups entitlement is present',
+					);
+				} else {
+					add(
+						requireStrictReady ? 'fail' : 'warn',
+						'Helper Keychain access group',
+						'missing keychain-access-groups entitlement; strict userPresence may fail with errSecMissingEntitlement',
+					);
+				}
+				if (requireStrictReady && appBundlePath && !hasEmbeddedProfile) {
+					add(
+						'fail',
+						'Helper provisioning profile',
+						'strict app-bundle helpers with restricted entitlements need a matching embedded provisioning profile',
 					);
 				}
 			} catch (error) {

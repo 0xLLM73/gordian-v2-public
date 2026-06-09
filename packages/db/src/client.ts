@@ -19,6 +19,11 @@ type Db = ReturnType<typeof drizzle<typeof schema>>;
 const rlsTxStore = new AsyncLocalStorage<Db>();
 
 let _db: Db | undefined;
+let tempFileLimitWarningEmitted = false;
+
+const DEFAULT_POSTGRES_TEMP_FILE_LIMIT = '256MB';
+const DISABLED_POSTGRES_TEMP_FILE_LIMITS = new Set(['', '0', 'off', 'false', 'disabled', 'none']);
+const POSTGRES_TEMP_FILE_LIMIT_PATTERN = /^-?1$|^\d+(?:B|kB|MB|GB|TB)?$/i;
 
 function getDatabaseUrl(): string {
 	const databaseUrl = process.env.DATABASE_URL;
@@ -36,6 +41,48 @@ function getDb(): Db {
 		_db = drizzle(client, { schema });
 	}
 	return _db;
+}
+
+export function getConfiguredPostgresTempFileLimit(): string | null {
+	const raw = process.env.POSTGRES_TEMP_FILE_LIMIT?.trim() ?? DEFAULT_POSTGRES_TEMP_FILE_LIMIT;
+	if (DISABLED_POSTGRES_TEMP_FILE_LIMITS.has(raw.toLowerCase())) return null;
+	if (!POSTGRES_TEMP_FILE_LIMIT_PATTERN.test(raw)) {
+		throw new Error(
+			`Invalid POSTGRES_TEMP_FILE_LIMIT="${raw}". Use values like 256MB, 1GB, -1, or disable with 0.`,
+		);
+	}
+	return raw;
+}
+
+async function setLocalPostgresTempFileLimit(tx: Db, limit: string): Promise<void> {
+	await tx.execute(sql`SELECT set_config('temp_file_limit', ${limit}, true)`);
+}
+
+export async function withPostgresTempFileLimit<T>(
+	context: string,
+	fn: (tx: Db) => Promise<T>,
+): Promise<T> {
+	const limit = getConfiguredPostgresTempFileLimit();
+	if (!limit) return fn(getDb());
+
+	let limitApplied = false;
+	try {
+		return await getDb().transaction(async (tx) => {
+			await setLocalPostgresTempFileLimit(tx as unknown as Db, limit);
+			limitApplied = true;
+			return fn(tx as unknown as Db);
+		});
+	} catch (error) {
+		if (limitApplied) throw error;
+		if (!tempFileLimitWarningEmitted) {
+			tempFileLimitWarningEmitted = true;
+			const message = error instanceof Error ? error.message : String(error);
+			console.warn(
+				`[db] Could not apply POSTGRES_TEMP_FILE_LIMIT=${limit} for ${context}; continuing without a DB temp-file cap. Cause: ${message}`,
+			);
+		}
+		return fn(getDb());
+	}
 }
 
 export const db: Db = new Proxy({} as Db, {

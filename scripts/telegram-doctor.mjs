@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import {
 	DEFAULT_ENV_PATH,
 	canConnectTcp,
@@ -17,6 +19,8 @@ import {
 	validateTelegramApiHash,
 	validateTelegramApiId,
 } from './lib/telegram-local-mode.mjs';
+
+const execFileAsync = promisify(execFile);
 
 function printHelp() {
 	console.log(`Usage: pnpm telegram:doctor [options]
@@ -71,6 +75,35 @@ async function addNetworkChecks(checks, env) {
 				name: target.name,
 			});
 		}
+	}
+}
+
+async function addFileVaultCheck(checks) {
+	if (process.platform !== 'darwin') {
+		checks.push({
+			detail: 'not a macOS host; use encrypted local storage for Postgres data and temp files',
+			level: 'warn',
+			name: 'Local disk encryption',
+		});
+		return;
+	}
+
+	try {
+		const { stdout, stderr } = await execFileAsync('fdesetup', ['status']);
+		const output = `${stdout}${stderr}`.trim();
+		checks.push({
+			detail: /FileVault is On/i.test(output)
+				? 'FileVault is On; Postgres scratch files inherit disk-level protection'
+				: output || 'could not confirm FileVault is on',
+			level: /FileVault is On/i.test(output) ? 'pass' : 'warn',
+			name: 'FileVault',
+		});
+	} catch (error) {
+		checks.push({
+			detail: `could not check FileVault; verify encrypted local storage manually (${error instanceof Error ? error.message : String(error)})`,
+			level: 'warn',
+			name: 'FileVault',
+		});
 	}
 }
 
@@ -175,6 +208,7 @@ async function main() {
 	await addTelegramApiCredentialChecks(checks, env, {
 		allowMissingCredentials: Boolean(args['allow-missing-credentials']),
 	});
+	await addFileVaultCheck(checks);
 
 	if (!args['skip-keychain']) {
 		const service = envValue(env, 'TELEGRAM_KEYCHAIN_SERVICE') || 'gordian-v2-telegram';
@@ -200,7 +234,7 @@ async function main() {
 					name: 'macOS Keychain',
 				});
 			} else {
-				await probeMacOsKeychain(service);
+				await probeMacOsKeychain(service, { helperPath });
 				checks.push({
 					detail: `write/read/delete probe passed for service ${service}`,
 					level: 'pass',

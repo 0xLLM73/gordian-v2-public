@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
@@ -21,6 +21,9 @@ Options:
                          or ~/Library/Application Support/Gordian/GordianKeychainBroker.app
                          with --app-bundle on macOS.
   --identity <name>      codesign identity. Use "auto" to select the first valid identity.
+  --team-id <id|auto|none>
+                         Apple Team ID for generated app-bundle entitlements.
+                         Defaults to auto when --app-bundle and --identity are used.
   --entitlements <path>  Optional entitlements plist for codesign.
   --app-bundle           Build an app-like helper bundle instead of a naked binary.
   --bundle-id <id>       Bundle id for --app-bundle. Defaults to dev.gordian.KeychainBroker.
@@ -39,6 +42,58 @@ async function listCodeSigningIdentities() {
 			return { hash: match[1], name: match[2] };
 		})
 		.filter(Boolean);
+}
+
+function detectAppleDevelopmentTeamId() {
+	if (process.platform !== 'darwin') return '';
+	try {
+		const identities = execFileSync('security', ['find-identity', '-v', '-p', 'codesigning'], {
+			encoding: 'utf8',
+			stdio: ['ignore', 'pipe', 'ignore'],
+		});
+		for (const line of String(identities).split(/\r?\n/)) {
+			const match = line.match(/"Apple Development:.+\(([A-Z0-9]{10})\)"$/);
+			if (match) return match[1];
+		}
+	} catch {
+		// Fall through to certificate parsing below.
+	}
+	try {
+		const certs = execFileSync(
+			'security',
+			['find-certificate', '-a', '-c', 'Apple Development', '-p'],
+			{
+				encoding: 'utf8',
+				stdio: ['ignore', 'pipe', 'ignore'],
+			},
+		);
+		const pemBlocks = String(certs).match(
+			/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g,
+		);
+		for (const pem of pemBlocks || []) {
+			const subject = execFileSync('openssl', ['x509', '-noout', '-subject'], {
+				encoding: 'utf8',
+				input: pem,
+				stdio: ['pipe', 'pipe', 'ignore'],
+			});
+			const match = String(subject).match(/OU\s*=\s*([A-Z0-9]{10})/);
+			if (match) return match[1];
+		}
+	} catch {
+		return '';
+	}
+	return '';
+}
+
+function resolveTeamId(rawTeamId, shouldAutoDetect) {
+	const requested = String(rawTeamId || (shouldAutoDetect ? 'auto' : 'none'));
+	if (requested === 'none') return '';
+	const teamId = requested === 'auto' ? detectAppleDevelopmentTeamId() : requested;
+	if (!teamId) return '';
+	if (!/^[A-Z0-9]{10}$/.test(teamId)) {
+		throw new Error(`Invalid Apple Team ID: ${teamId}`);
+	}
+	return teamId;
 }
 
 function helperInfoPlist(bundleId) {
@@ -69,6 +124,28 @@ function helperInfoPlist(bundleId) {
 `;
 }
 
+function helperEntitlements({ bundleId, teamId }) {
+	const applicationIdentifier = teamId ? `${teamId}.${bundleId}` : '';
+	if (!applicationIdentifier) return '';
+	return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+\t<key>com.apple.application-identifier</key>
+\t<string>${applicationIdentifier}</string>
+\t<key>com.apple.developer.team-identifier</key>
+\t<string>${teamId}</string>
+\t<key>keychain-access-groups</key>
+\t<array>
+\t\t<string>${applicationIdentifier}</string>
+\t</array>
+\t<key>com.apple.security.get-task-allow</key>
+\t<true/>
+</dict>
+</plist>
+`;
+}
+
 async function main() {
 	const args = parseArgs(process.argv.slice(2));
 	if (args.help) {
@@ -90,6 +167,7 @@ async function main() {
 	const source = resolve('scripts/native/gordian-keychain-helper.swift');
 	const appBundle = Boolean(args['app-bundle']);
 	const bundleId = String(args['bundle-id'] || 'dev.gordian.KeychainBroker');
+	const generatedTeamId = resolveTeamId(args['team-id'], appBundle && Boolean(args.identity));
 	const defaultAppBundleOut =
 		process.platform === 'darwin'
 			? resolve(homedir(), 'Library/Application Support/Gordian/GordianKeychainBroker.app')
@@ -130,6 +208,16 @@ async function main() {
 		const codesignArgs = ['--force', '--sign', identity];
 		if (args.entitlements) {
 			codesignArgs.push('--entitlements', resolve(String(args.entitlements)));
+		} else if (appBundle && generatedTeamId) {
+			const entitlementsPath = resolve(
+				moduleCachePath,
+				`gordian-keychain-helper-${bundleId.replace(/[^A-Za-z0-9.-]/g, '-')}.entitlements`,
+			);
+			writeFileSync(entitlementsPath, helperEntitlements({ bundleId, teamId: generatedTeamId }));
+			codesignArgs.push('--entitlements', entitlementsPath);
+			console.log(
+				`[keychain-helper:build] Using generated Keychain access group ${generatedTeamId}.${bundleId}`,
+			);
 		}
 		codesignArgs.push(appBundle ? out : binaryOut);
 		await execFileAsync('codesign', codesignArgs);

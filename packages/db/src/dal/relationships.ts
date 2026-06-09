@@ -1,7 +1,7 @@
 import { withKeys } from '@repo/crypto';
 import type { SealedEnvelope } from '@repo/crypto';
 import { and, eq, gte, or, sql } from 'drizzle-orm';
-import { db } from '../client';
+import { db, withPostgresTempFileLimit } from '../client';
 import { contactRelationships } from '../schema/relationships';
 
 export interface CreateRelationshipInput {
@@ -105,14 +105,57 @@ export async function getAllRelationships(
 	});
 }
 
+export interface DeriveGroupChatRelationshipsOptions {
+	contactId?: string;
+}
+
 /**
  * Derive relationships from group chat co-participation.
  * Two contacts who both sent messages in the same group/supergroup chat
  * are linked as 'colleague' with source='inferred'.
  * Strength is based on shared chat count: min(sharedChats / 3, 1.0).
  */
-export async function deriveGroupChatRelationships(workspaceId: string): Promise<number> {
-	const pairs = await db.execute(sql`
+export async function deriveGroupChatRelationships(
+	workspaceId: string,
+	options: DeriveGroupChatRelationshipsOptions = {},
+): Promise<number> {
+	const pairs = await withPostgresTempFileLimit('deriveGroupChatRelationships', async (tx) =>
+		options.contactId
+			? tx.execute(sql`
+		WITH group_pairs AS (
+			SELECT
+				LEAST(target_msg.contact_id, other_msg.contact_id) AS source_id,
+				GREATEST(target_msg.contact_id, other_msg.contact_id) AS target_id,
+				count(DISTINCT target_msg.chat_id) AS shared_chats
+			FROM messages target_msg
+			JOIN messages other_msg ON target_msg.chat_id = other_msg.chat_id
+				AND target_msg.workspace_id = other_msg.workspace_id
+				AND other_msg.contact_id IS NOT NULL
+				AND other_msg.contact_id <> target_msg.contact_id
+			JOIN chats c ON target_msg.chat_id = c.id AND c.type IN ('group', 'supergroup')
+			WHERE target_msg.workspace_id = ${workspaceId}::uuid
+				AND target_msg.contact_id = ${options.contactId}::uuid
+			GROUP BY LEAST(target_msg.contact_id, other_msg.contact_id), GREATEST(target_msg.contact_id, other_msg.contact_id)
+		)
+		INSERT INTO contact_relationships (id, workspace_id, source_contact_id, target_contact_id, relationship_type, strength, source, evidence)
+		SELECT
+			gen_random_uuid(),
+			${workspaceId}::uuid,
+			source_id,
+			target_id,
+			'colleague',
+			LEAST(shared_chats::real / 3.0, 1.0),
+			'inferred',
+			jsonb_build_object('shared_group_chats', shared_chats)
+		FROM group_pairs
+		ON CONFLICT (workspace_id, source_contact_id, target_contact_id, relationship_type)
+		DO UPDATE SET
+			strength = EXCLUDED.strength,
+			evidence = EXCLUDED.evidence,
+			updated_at = NOW()
+		RETURNING id
+	`)
+			: tx.execute(sql`
 		WITH group_pairs AS (
 			SELECT DISTINCT
 				LEAST(m1.contact_id, m2.contact_id) AS source_id,
@@ -145,7 +188,8 @@ export async function deriveGroupChatRelationships(workspaceId: string): Promise
 			evidence = EXCLUDED.evidence,
 			updated_at = NOW()
 		RETURNING id
-	`);
+	`),
+	);
 
 	return (pairs as unknown[]).length;
 }

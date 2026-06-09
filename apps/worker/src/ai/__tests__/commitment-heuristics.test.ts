@@ -39,6 +39,11 @@ describe('checkCommitmentHeuristic', () => {
 			expect(result.confidence).toBe(0.85);
 		});
 
+		it('does not match third-person "will do" phrases', () => {
+			const result = checkCommitmentHeuristic('Boba will do');
+			expect(result.matched).toBe(false);
+		});
+
 		it('matches "I can + verb + that"', () => {
 			const result = checkCommitmentHeuristic('I can handle that');
 			expect(result.matched).toBe(true);

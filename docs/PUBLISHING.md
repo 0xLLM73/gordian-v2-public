@@ -8,7 +8,7 @@ that cannot be proven by the repository alone.
 The selected publication target is the synced
 `0xLLM73/gordian-v2-public` mirror.
 
-As of the 2026-06-02 readiness audit:
+As of the 2026-06-08 readiness audit:
 
 - `0xLLM73/gordian-v2` is the private source of truth and includes the current
   MTProto Touch ID hardening baseline.

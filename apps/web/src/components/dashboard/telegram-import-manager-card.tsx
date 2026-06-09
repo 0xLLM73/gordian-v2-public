@@ -103,14 +103,27 @@ function importProgressDescription(progress: ImportProgress | null) {
 	}
 }
 
-const importSafetyItems = [
-	{ label: 'Message sending', value: 'Off' },
-	{ label: 'AI analysis', value: 'Off' },
-	{ label: 'Channels', value: 'Skipped' },
-	{ label: 'Exports', value: 'Skipped' },
-	{ label: 'Unlocks', value: 'Per import' },
-	{ label: 'Local worker', value: 'Required' },
-] as const;
+function importErrorMessage(progress: ImportProgress): string | null {
+	if (!progress.errorMessage) return null;
+	if (progress.errorCode === 'TELEGRAM_SESSION_KEY_UNAVAILABLE') {
+		return progress.errorMessage;
+	}
+	if (progress.errorCode === 'TELEGRAM_IMPORT_FAILED') {
+		return 'Telegram import failed. If macOS asked for Keychain access, approve the Gordian prompt and retry the import; the raw worker error stays redacted.';
+	}
+	return progress.errorMessage;
+}
+
+function importSafetyItems(runAiDuringImport: boolean, backfillOlderHistory: boolean) {
+	return [
+		{ label: 'Message sending', value: 'Off' },
+		{ label: 'History scope', value: backfillOlderHistory ? 'Backfill' : 'New only' },
+		{ label: 'AI during import', value: runAiDuringImport ? 'On' : 'Off' },
+		{ label: 'AI after import', value: 'Deferred' },
+		{ label: 'Unlocks', value: 'Per import' },
+		{ label: 'Local worker', value: 'Required' },
+	] as const;
+}
 
 export function TelegramImportManagerCard({ disabledReason }: { disabledReason?: string }) {
 	const confirmationId = useId();
@@ -120,6 +133,8 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 	const [mutating, setMutating] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [largeImportConfirmed, setLargeImportConfirmed] = useState(false);
+	const [runAiDuringImport, setRunAiDuringImport] = useState(false);
+	const [backfillOlderHistory, setBackfillOlderHistory] = useState(false);
 	const [telegramAccounts, setTelegramAccounts] = useState<TelegramAccountOption[]>([]);
 	const [telegramAccountKey, setTelegramAccountKey] = useState('0');
 
@@ -182,6 +197,8 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 		progress.chatsQueued === 0 &&
 		progress.messagesInserted === 0 &&
 		(lastDataImport.messagesInserted > 0 || lastDataImport.pagesFetched > 0);
+	const visibleImportError = progress ? importErrorMessage(progress) : null;
+	const safetyItems = importSafetyItems(runAiDuringImport, backfillOlderHistory);
 
 	async function mutate(action: () => Promise<unknown>) {
 		setMutating(true);
@@ -209,8 +226,8 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 						Telegram history import
 					</CardTitle>
 					<CardDescription>
-						Local import for eligible private chats and groups. Channels, bots, exports, message
-						sending, and AI analysis stay off.
+						Local import for eligible private chats and groups. Channels, bots, exports, and message
+						sending stay off; AI analysis is deferred until the import finishes by default.
 					</CardDescription>
 				</div>
 				<div className="flex shrink-0 items-center gap-2 text-sm text-muted-foreground">
@@ -231,9 +248,9 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 						{error}
 					</div>
 				) : null}
-				{progress?.errorMessage ? (
+				{visibleImportError ? (
 					<div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-						{progress.errorMessage}
+						{visibleImportError}
 					</div>
 				) : null}
 				{latestIsNoopAfterDataImport ? (
@@ -252,7 +269,7 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 						Import safety
 					</div>
 					<div className="mt-3 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
-						{importSafetyItems.map((item) => (
+						{safetyItems.map((item) => (
 							<div
 								key={item.label}
 								className="min-h-12 rounded-md border border-border bg-background px-3 py-2"
@@ -322,6 +339,34 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 					</span>
 				</label>
 
+				<label className="flex items-start gap-3 rounded-md border bg-background px-3 py-2 text-sm">
+					<input
+						type="checkbox"
+						className="mt-1 h-4 w-4 shrink-0"
+						checked={backfillOlderHistory}
+						disabled={Boolean(disabledReason) || active || busy}
+						onChange={(event) => setBackfillOlderHistory(event.currentTarget.checked)}
+					/>
+					<span>
+						Backfill older history. Leave this off for a faster recent sync that skips old
+						duplicate-heavy pages.
+					</span>
+				</label>
+
+				<label className="flex items-start gap-3 rounded-md border bg-background px-3 py-2 text-sm">
+					<input
+						type="checkbox"
+						className="mt-1 h-4 w-4 shrink-0"
+						checked={runAiDuringImport}
+						disabled={Boolean(disabledReason) || active || progress?.status === 'paused' || busy}
+						onChange={(event) => setRunAiDuringImport(event.currentTarget.checked)}
+					/>
+					<span>
+						Run AI while importing. Leave this off to keep Telegram sync faster and analyze after
+						the import finishes.
+					</span>
+				</label>
+
 				<div className="flex flex-wrap gap-2">
 					<Button
 						type="button"
@@ -331,6 +376,8 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 								startTelegramImportAction({
 									confirmLargeImport: true,
 									telegramAccountKey,
+									runAiDuringImport,
+									backfillOlderHistory,
 								}),
 							)
 						}
@@ -365,7 +412,13 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 								variant="outline"
 								onClick={() =>
 									progress?.runId
-										? mutate(() => resumeTelegramImportAction({ runId: progress.runId }))
+										? mutate(() =>
+												resumeTelegramImportAction({
+													runId: progress.runId,
+													runAiDuringImport,
+													backfillOlderHistory,
+												}),
+											)
 										: undefined
 								}
 								disabled={!canResume || busy}

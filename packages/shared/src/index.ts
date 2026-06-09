@@ -8,6 +8,11 @@ export {
 export type { TelegramSyncScope } from './telegram-safety';
 
 export {
+	BUILT_IN_CONNECTION_KEYWORDS,
+	BUILT_IN_INTRO_KEYWORDS,
+} from './detection-keywords';
+
+export {
 	ALLOW_NONLOCAL_AI_ENDPOINTS_ENV,
 	DEFAULT_LOCAL_AI_BASE_URL,
 	DEFAULT_LOCAL_EMBEDDING_MODEL,
@@ -90,6 +95,18 @@ export {
 	isLocalOnlyMode,
 	isVendorAiEgressEnabled,
 } from './ai-privacy';
+
+export {
+	classifyKnowledgeEvidenceQuality,
+	evidenceMatchesTopicTerms,
+	evidenceSupportsKnowledgeTopic,
+	normalizeKnowledgeEvidenceTerm,
+	sourceMessageSelectionMethod,
+} from './knowledge-evidence-quality';
+export type {
+	KnowledgeEvidenceQuality,
+	KnowledgeEvidenceQualityInput,
+} from './knowledge-evidence-quality';
 
 export { redactErrorMessage, redactSensitive, redactText } from './redaction';
 export type { RedactOptions } from './redaction';

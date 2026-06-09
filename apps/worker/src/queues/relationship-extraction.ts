@@ -3,6 +3,7 @@ import {
 	type SealedEnvelope,
 	decrypt,
 	deriveKeys,
+	generatePersonPseudonym,
 	maskContactAliases,
 	unwrapWrk,
 } from '@repo/crypto';
@@ -11,6 +12,7 @@ import {
 	createIntroduction,
 	createRelationship,
 	getMemoriesByContact,
+	getWorkspaceConnectionKeywords,
 	getWorkspaceIntroKeywords,
 	hasUserAiAnalysisConsent,
 	listContactMaskingAliases,
@@ -18,7 +20,7 @@ import {
 } from '@repo/db';
 import type { ContactMaskingAlias } from '@repo/db';
 import { redactSensitive } from '@repo/shared';
-import { Queue, Worker } from 'bullmq';
+import { type Job, Queue, Worker } from 'bullmq';
 import { detectConnections, hasConnectionKeywords } from '../ai/connection-detection';
 import {
 	type DetectedIntroduction,
@@ -73,6 +75,321 @@ export const relationshipExtractionQueue = new Queue('relationship-extraction', 
 		removeOnFail: { count: 50, age: 3600 },
 	},
 });
+
+const RELATIONSHIP_STATUS_STATES = ['active', 'waiting', 'delayed', 'failed'] as const;
+const DEFAULT_RELATIONSHIP_WORKER_LOCK_DURATION_MS = 10 * 60 * 1000;
+const DEFAULT_RELATIONSHIP_WORKER_STALLED_INTERVAL_MS = 60 * 1000;
+const DEFAULT_RELATIONSHIP_WORKER_MAX_STALLED_COUNT = 2;
+const RESOLVED_FAILURE_REASON_PATTERNS = [
+	'connection_keywords',
+	'column "connection_keywords" does not exist',
+] as const;
+
+export type RelationshipExtractionDiagnostics = {
+	targetType: 'contact' | 'chat' | 'unknown';
+	messagesInBatch: number;
+	freshSourceMessages: number;
+	memoriesLoaded: number;
+	hadSanitizedMemories: boolean;
+	relationshipModelCalls: number;
+	introductionKeywordMatched: boolean;
+	introductionModelCalls: number;
+	introductionRejectedLowConfidence: number;
+	introductionRejectedUnresolvedContacts: number;
+	introductionRejectedDuplicateContacts: number;
+	introductionRejectedCreateError: number;
+	introductionDetectionErrors: number;
+	connectionKeywordMatched: boolean;
+	connectionModelCalls: number;
+	connectionRejectedLowConfidence: number;
+	connectionRejectedCreateError: number;
+	connectionDetectionErrors: number;
+	completedAt?: string;
+};
+
+export type RelationshipExtractionQueueStatus = {
+	active: number;
+	waiting: number;
+	delayed: number;
+	retainedFailed: number;
+	resolvedFailed: number;
+	failed: number;
+	total: number;
+	introductionJobs: number;
+	connectionJobs: number;
+	unknownJobs: number;
+	progressReports: number;
+	diagnostics: {
+		messagesInBatch: number;
+		freshSourceMessages: number;
+		relationshipModelCalls: number;
+		introductionKeywordMatches: number;
+		introductionModelCalls: number;
+		introductionRejected: number;
+		connectionKeywordMatches: number;
+		connectionModelCalls: number;
+		connectionRejected: number;
+	};
+	oldestJobAt: string | null;
+	newestJobAt: string | null;
+	sampledAt: string;
+};
+
+export type RelationshipExtractionFailureCleanupResult = {
+	scanned: number;
+	removed: number;
+	retained: number;
+	sampledAt: string;
+};
+
+export function relationshipExtractionConcurrency(env: NodeJS.ProcessEnv = process.env): number {
+	const raw = env.RELATIONSHIP_EXTRACTION_CONCURRENCY;
+	if (!raw) return 1;
+	const parsed = Math.trunc(Number(raw));
+	if (!Number.isFinite(parsed)) return 1;
+	return Math.min(Math.max(parsed, 1), 4);
+}
+
+function positiveIntegerEnv(name: string, fallback: number): number {
+	const parsed = Number(process.env[name]);
+	return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : fallback;
+}
+
+const RELATIONSHIP_EXTRACTION_WORKER_OPTS = {
+	lockDuration: positiveIntegerEnv(
+		'RELATIONSHIP_EXTRACTION_WORKER_LOCK_DURATION_MS',
+		DEFAULT_RELATIONSHIP_WORKER_LOCK_DURATION_MS,
+	),
+	stalledInterval: positiveIntegerEnv(
+		'RELATIONSHIP_EXTRACTION_WORKER_STALLED_INTERVAL_MS',
+		DEFAULT_RELATIONSHIP_WORKER_STALLED_INTERVAL_MS,
+	),
+	maxStalledCount: positiveIntegerEnv(
+		'RELATIONSHIP_EXTRACTION_WORKER_MAX_STALLED_COUNT',
+		DEFAULT_RELATIONSHIP_WORKER_MAX_STALLED_COUNT,
+	),
+};
+
+export function isResolvedRelationshipExtractionFailureReason(reason: unknown): boolean {
+	if (typeof reason !== 'string') return false;
+	const normalized = reason.toLowerCase();
+	return RESOLVED_FAILURE_REASON_PATTERNS.some((pattern) =>
+		normalized.includes(pattern.toLowerCase()),
+	);
+}
+
+function matchesRelationshipJobScope(
+	job: Job<RelationshipExtractionJobData>,
+	input: { workspaceId: string; userId?: string },
+): boolean {
+	const data = job.data;
+	if (data.workspaceId !== input.workspaceId) return false;
+	if (input.userId && data.userId && data.userId !== input.userId) return false;
+	return true;
+}
+
+function relationshipDiagnosticsFromProgress(
+	progress: unknown,
+): RelationshipExtractionDiagnostics | null {
+	if (!progress || typeof progress !== 'object') return null;
+	const record = progress as Partial<RelationshipExtractionDiagnostics>;
+	if (
+		typeof record.messagesInBatch !== 'number' ||
+		typeof record.freshSourceMessages !== 'number'
+	) {
+		return null;
+	}
+	return {
+		targetType:
+			record.targetType === 'contact' || record.targetType === 'chat'
+				? record.targetType
+				: 'unknown',
+		messagesInBatch: record.messagesInBatch,
+		freshSourceMessages: record.freshSourceMessages,
+		memoriesLoaded: Number(record.memoriesLoaded ?? 0),
+		hadSanitizedMemories: Boolean(record.hadSanitizedMemories),
+		relationshipModelCalls: Number(record.relationshipModelCalls ?? 0),
+		introductionKeywordMatched: Boolean(record.introductionKeywordMatched),
+		introductionModelCalls: Number(record.introductionModelCalls ?? 0),
+		introductionRejectedLowConfidence: Number(record.introductionRejectedLowConfidence ?? 0),
+		introductionRejectedUnresolvedContacts: Number(
+			record.introductionRejectedUnresolvedContacts ?? 0,
+		),
+		introductionRejectedDuplicateContacts: Number(
+			record.introductionRejectedDuplicateContacts ?? 0,
+		),
+		introductionRejectedCreateError: Number(record.introductionRejectedCreateError ?? 0),
+		introductionDetectionErrors: Number(record.introductionDetectionErrors ?? 0),
+		connectionKeywordMatched: Boolean(record.connectionKeywordMatched),
+		connectionModelCalls: Number(record.connectionModelCalls ?? 0),
+		connectionRejectedLowConfidence: Number(record.connectionRejectedLowConfidence ?? 0),
+		connectionRejectedCreateError: Number(record.connectionRejectedCreateError ?? 0),
+		connectionDetectionErrors: Number(record.connectionDetectionErrors ?? 0),
+		completedAt: typeof record.completedAt === 'string' ? record.completedAt : undefined,
+	};
+}
+
+function emptyRelationshipDiagnostics(
+	data: RelationshipExtractionJobData,
+): RelationshipExtractionDiagnostics {
+	return {
+		targetType: data.contactId ? 'contact' : data.chatId ? 'chat' : 'unknown',
+		messagesInBatch: data.messages?.length ?? 0,
+		freshSourceMessages: 0,
+		memoriesLoaded: 0,
+		hadSanitizedMemories: false,
+		relationshipModelCalls: 0,
+		introductionKeywordMatched: false,
+		introductionModelCalls: 0,
+		introductionRejectedLowConfidence: 0,
+		introductionRejectedUnresolvedContacts: 0,
+		introductionRejectedDuplicateContacts: 0,
+		introductionRejectedCreateError: 0,
+		introductionDetectionErrors: 0,
+		connectionKeywordMatched: false,
+		connectionModelCalls: 0,
+		connectionRejectedLowConfidence: 0,
+		connectionRejectedCreateError: 0,
+		connectionDetectionErrors: 0,
+	};
+}
+
+async function updateRelationshipDiagnostics(
+	job: Job<RelationshipExtractionJobData>,
+	diagnostics: RelationshipExtractionDiagnostics,
+): Promise<void> {
+	if (typeof job.updateProgress !== 'function') return;
+	await job.updateProgress(diagnostics).catch((err) => {
+		console.warn(
+			'[relationship-extraction] Failed to update scan diagnostics:',
+			redactSensitive(err),
+		);
+	});
+}
+
+export async function getRelationshipExtractionQueueStatus(input: {
+	workspaceId: string;
+	userId?: string;
+	limit?: number;
+}): Promise<RelationshipExtractionQueueStatus> {
+	const limit = Math.min(Math.max(input.limit ?? 500, 1), 1000);
+	const status: RelationshipExtractionQueueStatus = {
+		active: 0,
+		waiting: 0,
+		delayed: 0,
+		retainedFailed: 0,
+		resolvedFailed: 0,
+		failed: 0,
+		total: 0,
+		introductionJobs: 0,
+		connectionJobs: 0,
+		unknownJobs: 0,
+		progressReports: 0,
+		diagnostics: {
+			messagesInBatch: 0,
+			freshSourceMessages: 0,
+			relationshipModelCalls: 0,
+			introductionKeywordMatches: 0,
+			introductionModelCalls: 0,
+			introductionRejected: 0,
+			connectionKeywordMatches: 0,
+			connectionModelCalls: 0,
+			connectionRejected: 0,
+		},
+		oldestJobAt: null,
+		newestJobAt: null,
+		sampledAt: new Date().toISOString(),
+	};
+
+	let oldestJobAt = Number.POSITIVE_INFINITY;
+	let newestJobAt = 0;
+
+	for (const state of RELATIONSHIP_STATUS_STATES) {
+		const jobs = await relationshipExtractionQueue.getJobs([state], 0, limit - 1, true);
+		for (const job of jobs) {
+			if (!matchesRelationshipJobScope(job, input)) continue;
+			const data = job.data;
+
+			if (state === 'failed') {
+				status.retainedFailed += 1;
+				if (isResolvedRelationshipExtractionFailureReason(job.failedReason)) {
+					status.resolvedFailed += 1;
+				} else {
+					status.failed += 1;
+				}
+			} else {
+				status[state] += 1;
+			}
+			status.total += 1;
+			if (state !== 'failed') {
+				if (data.chatId) {
+					status.introductionJobs += 1;
+				} else if (data.contactId) {
+					status.connectionJobs += 1;
+				} else {
+					status.unknownJobs += 1;
+				}
+			}
+			const progress = relationshipDiagnosticsFromProgress(job.progress);
+			if (state !== 'failed' && progress) {
+				status.progressReports += 1;
+				status.diagnostics.messagesInBatch += progress.messagesInBatch;
+				status.diagnostics.freshSourceMessages += progress.freshSourceMessages;
+				status.diagnostics.relationshipModelCalls += progress.relationshipModelCalls;
+				status.diagnostics.introductionKeywordMatches += progress.introductionKeywordMatched
+					? 1
+					: 0;
+				status.diagnostics.introductionModelCalls += progress.introductionModelCalls;
+				status.diagnostics.introductionRejected +=
+					progress.introductionRejectedLowConfidence +
+					progress.introductionRejectedUnresolvedContacts +
+					progress.introductionRejectedDuplicateContacts +
+					progress.introductionRejectedCreateError;
+				status.diagnostics.connectionKeywordMatches += progress.connectionKeywordMatched ? 1 : 0;
+				status.diagnostics.connectionModelCalls += progress.connectionModelCalls;
+				status.diagnostics.connectionRejected +=
+					progress.connectionRejectedLowConfidence + progress.connectionRejectedCreateError;
+			}
+
+			if (job.timestamp) {
+				oldestJobAt = Math.min(oldestJobAt, job.timestamp);
+				newestJobAt = Math.max(newestJobAt, job.timestamp);
+			}
+		}
+	}
+
+	status.oldestJobAt = Number.isFinite(oldestJobAt) ? new Date(oldestJobAt).toISOString() : null;
+	status.newestJobAt = newestJobAt > 0 ? new Date(newestJobAt).toISOString() : null;
+	return status;
+}
+
+export async function cleanupResolvedRelationshipExtractionFailures(input: {
+	workspaceId: string;
+	userId?: string;
+	limit?: number;
+}): Promise<RelationshipExtractionFailureCleanupResult> {
+	const limit = Math.min(Math.max(input.limit ?? 500, 1), 1000);
+	const jobs = await relationshipExtractionQueue.getJobs(['failed'], 0, limit - 1, true);
+	const result: RelationshipExtractionFailureCleanupResult = {
+		scanned: 0,
+		removed: 0,
+		retained: 0,
+		sampledAt: new Date().toISOString(),
+	};
+
+	for (const job of jobs) {
+		if (!matchesRelationshipJobScope(job, input)) continue;
+		result.scanned += 1;
+		if (!isResolvedRelationshipExtractionFailureReason(job.failedReason)) {
+			result.retained += 1;
+			continue;
+		}
+		await job.remove();
+		result.removed += 1;
+	}
+
+	return result;
+}
 
 type FreshBatchContext = {
 	content: string;
@@ -221,11 +538,18 @@ async function buildFreshBatchContext(
 		for (const alias of aliasMap) {
 			aliasToContactId.set(alias.pseudonym, alias.contactId);
 		}
+		const speakerAlias = msg.contactId ? generatePersonPseudonym(msg.contactId, salt) : undefined;
+		if (speakerAlias && msg.contactId) {
+			aliasToContactId.set(speakerAlias, msg.contactId);
+		}
 		const usernameMaskedText = maskUnresolvedUsernames(maskedText);
 		const redactedText = maskUnresolvedPersonLikeTokens(usernameMaskedText, customKeywordPhrases);
 		sourceMessageIds.push(msg.sourceMessageId);
-		lines.push(`[source:${msg.sourceMessageId}] [${msg.role}] ${redactedText}`);
-		keywordLines.push(`[source:${msg.sourceMessageId}] [${msg.role}] ${usernameMaskedText}`);
+		const speakerTag = speakerAlias ? ` [speaker:${speakerAlias}]` : '';
+		lines.push(`[source:${msg.sourceMessageId}]${speakerTag} [${msg.role}] ${redactedText}`);
+		keywordLines.push(
+			`[source:${msg.sourceMessageId}]${speakerTag} [${msg.role}] ${usernameMaskedText}`,
+		);
 	}
 
 	return {
@@ -249,8 +573,17 @@ function selectIntroSourceMessageIds(
 	return undefined;
 }
 
-function sourceMessageIdsOrUndefined(sourceMessageIds: string[]): string[] | undefined {
-	return sourceMessageIds.length > 0 ? sourceMessageIds : undefined;
+function selectConnectionSourceMessageIds(
+	connection: { source_message_ids?: string[] },
+	freshSourceMessageIds: string[],
+): string[] | undefined {
+	if (freshSourceMessageIds.length === 0) return undefined;
+
+	const allowed = new Set(freshSourceMessageIds);
+	const requested = [...new Set(connection.source_message_ids ?? [])];
+	const selected = requested.filter((id) => allowed.has(id));
+	if (requested.length > 0) return selected.length > 0 ? selected : undefined;
+	return undefined;
 }
 
 function isPseudonymRef(value: string): boolean {
@@ -295,23 +628,37 @@ export const relationshipExtractionWorker = new Worker<RelationshipExtractionJob
 		const { workspaceId, contactId, userId } = job.data;
 		const envelope = envelopeFromJob(job.data);
 		const targetLabel = jobTargetLabel(job.data);
+		const diagnostics = emptyRelationshipDiagnostics(job.data);
+		await updateRelationshipDiagnostics(job, diagnostics);
 
 		if (!userId && job.data.messages?.length) {
 			console.warn(
 				`[relationship-extraction] Missing userId on fresh encrypted batch for ${targetLabel}, skipping`,
 			);
-			return { skipped: true, reason: 'missing_user_id' };
+			diagnostics.completedAt = new Date().toISOString();
+			await updateRelationshipDiagnostics(job, diagnostics);
+			return { skipped: true, reason: 'missing_user_id', diagnostics };
 		}
 		if (userId && !(await hasUserAiAnalysisConsent(userId, workspaceId))) {
 			console.log(
 				`[relationship-extraction] AI consent no longer persisted for workspace=${workspaceId.slice(0, 8)} user=${userId.slice(0, 8)}, skipping`,
 			);
-			return { skipped: true, reason: 'no_ai_consent' };
+			diagnostics.completedAt = new Date().toISOString();
+			await updateRelationshipDiagnostics(job, diagnostics);
+			return { skipped: true, reason: 'no_ai_consent', diagnostics };
 		}
 
 		console.log(
 			`[relationship-extraction] Processing ${targetLabel} workspace=${workspaceId.slice(0, 8)}`,
 		);
+		let relationshipsFound = 0;
+		let relationshipsStored = 0;
+		let introductionsDetected = 0;
+		let introductionsCreated = 0;
+		let introductionsRejected = 0;
+		let connectionsDetected = 0;
+		let connectionsCreated = 0;
+		let connectionsRejected = 0;
 
 		// 1. Fetch entity-masked memories for this contact
 		// Use contentSanitized — already ELM-masked, safe to pass to LLM
@@ -319,35 +666,48 @@ export const relationshipExtractionWorker = new Worker<RelationshipExtractionJob
 			envelope && contactId
 				? await getMemoriesByContact(workspaceId, contactId, envelope, { limit: 20 })
 				: [];
+		diagnostics.memoriesLoaded = memories.length;
 
 		const sanitizedContent = memories
 			.map((m) => m.contentSanitized)
 			.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
 			.join('\n\n');
-		const customKeywords = await getWorkspaceIntroKeywords(workspaceId);
+		diagnostics.hadSanitizedMemories = Boolean(sanitizedContent);
+		const [customKeywords, customConnectionKeywords] = await Promise.all([
+			getWorkspaceIntroKeywords(workspaceId),
+			getWorkspaceConnectionKeywords(workspaceId),
+		]);
 		const freshBatch = await buildFreshBatchContext(
 			job.data,
 			workspaceId,
 			envelope,
 			customKeywords,
 		);
+		diagnostics.freshSourceMessages = freshBatch.sourceMessageIds.length;
+		await updateRelationshipDiagnostics(job, diagnostics);
 
 		// 2. Skip if no usable content
 		if (!sanitizedContent && !freshBatch.content) {
 			console.log(`[relationship-extraction] No sanitized content for ${targetLabel}, skipping`);
-			return;
+			diagnostics.completedAt = new Date().toISOString();
+			await updateRelationshipDiagnostics(job, diagnostics);
+			return { skipped: true, reason: 'no_content', diagnostics };
 		}
 
 		// 3. Extract relationships via AI
+		diagnostics.relationshipModelCalls = sanitizedContent ? 1 : 0;
 		const extracted = sanitizedContent ? await extractRelationships(sanitizedContent) : [];
 
 		// 4. Resolve pseudonym names back to contact IDs via blind-index lookup
 		// entity-masked names (e.g. PERSON_a1b2) won't match — we skip unresolvable names
 		if (!envelope) {
 			console.warn(`[relationship-extraction] No envelope for ${targetLabel}, skipping DB writes`);
-			return;
+			diagnostics.completedAt = new Date().toISOString();
+			await updateRelationshipDiagnostics(job, diagnostics);
+			return { skipped: true, reason: 'no_envelope', diagnostics };
 		}
 
+		relationshipsFound = extracted.length;
 		if (extracted.length === 0) {
 			console.log(`[relationship-extraction] No relationships found for ${targetLabel}`);
 		} else {
@@ -355,7 +715,6 @@ export const relationshipExtractionWorker = new Worker<RelationshipExtractionJob
 				`[relationship-extraction] Found ${extracted.length} relationships for ${targetLabel}`,
 			);
 
-			let upserted = 0;
 			for (const rel of extracted) {
 				// Attempt to resolve source and target names to real contact IDs
 				const [sourceCandidates, targetCandidates] = await Promise.all([
@@ -384,7 +743,7 @@ export const relationshipExtractionWorker = new Worker<RelationshipExtractionJob
 						},
 						envelope,
 					);
-					upserted++;
+					relationshipsStored++;
 				} catch (err) {
 					console.error(
 						'[relationship-extraction] Failed to upsert relationship:',
@@ -394,7 +753,7 @@ export const relationshipExtractionWorker = new Worker<RelationshipExtractionJob
 			}
 
 			console.log(
-				`[relationship-extraction] Upserted ${upserted}/${extracted.length} relationships for ${targetLabel}`,
+				`[relationship-extraction] Upserted ${relationshipsStored}/${extracted.length} relationships for ${targetLabel}`,
 			);
 		}
 
@@ -402,11 +761,19 @@ export const relationshipExtractionWorker = new Worker<RelationshipExtractionJob
 		// Keyword pre-filter: merge workspace-level custom keywords with built-in defaults
 		const introductionContent = freshBatch.content || sanitizedContent;
 		const keywordContent = freshBatch.keywordContent || introductionContent;
-		if (hasIntroKeywords(keywordContent, customKeywords)) {
+		diagnostics.introductionKeywordMatched = hasIntroKeywords(keywordContent, customKeywords);
+		await updateRelationshipDiagnostics(job, diagnostics);
+		if (diagnostics.introductionKeywordMatched) {
 			try {
+				diagnostics.introductionModelCalls += 1;
 				const intros = await detectIntroductions(introductionContent);
+				introductionsDetected = intros.length;
 				for (const intro of intros) {
-					if (intro.confidence < 0.3) continue;
+					if (intro.confidence < 0.3) {
+						introductionsRejected++;
+						diagnostics.introductionRejectedLowConfidence++;
+						continue;
+					}
 
 					const [introducerId, person1Id, person2Id] = await Promise.all([
 						resolveIntroContactId(
@@ -432,8 +799,16 @@ export const relationshipExtractionWorker = new Worker<RelationshipExtractionJob
 						),
 					]);
 
-					if (!introducerId || !person1Id || !person2Id) continue;
-					if (new Set([introducerId, person1Id, person2Id]).size < 3) continue;
+					if (!introducerId || !person1Id || !person2Id) {
+						introductionsRejected++;
+						diagnostics.introductionRejectedUnresolvedContacts++;
+						continue;
+					}
+					if (new Set([introducerId, person1Id, person2Id]).size < 3) {
+						introductionsRejected++;
+						diagnostics.introductionRejectedDuplicateContacts++;
+						continue;
+					}
 
 					try {
 						const autoConfirm = intro.confidence > 0.9;
@@ -459,14 +834,23 @@ export const relationshipExtractionWorker = new Worker<RelationshipExtractionJob
 						console.log(
 							`[relationship-extraction] Detected introduction by ${introducerId.slice(0, 8)}`,
 						);
+						introductionsCreated++;
 					} catch (err) {
+						introductionsRejected++;
+						diagnostics.introductionRejectedCreateError++;
 						console.error(
 							'[relationship-extraction] Failed to create introduction:',
 							redactSensitive(err),
 						);
 					}
 				}
+				if (intros.length > 0) {
+					console.log(
+						`[relationship-extraction] Introduction summary for ${targetLabel}: detected=${introductionsDetected}, created=${introductionsCreated}, rejected=${introductionsRejected}`,
+					);
+				}
 			} catch (err) {
+				diagnostics.introductionDetectionErrors++;
 				console.error(
 					'[relationship-extraction] Introduction detection error:',
 					redactSensitive(err),
@@ -476,11 +860,23 @@ export const relationshipExtractionWorker = new Worker<RelationshipExtractionJob
 
 		// 6. New connection detection — post-step
 		// Detects 2-person first-meeting signals (e.g., "great to meet you at ETHDenver")
-		if (contactId && hasConnectionKeywords(sanitizedContent)) {
+		const connectionContent = freshBatch.content || sanitizedContent;
+		const connectionKeywordContent = freshBatch.keywordContent || connectionContent;
+		diagnostics.connectionKeywordMatched =
+			Boolean(contactId) &&
+			hasConnectionKeywords(connectionKeywordContent, customConnectionKeywords);
+		await updateRelationshipDiagnostics(job, diagnostics);
+		if (contactId && diagnostics.connectionKeywordMatched) {
 			try {
-				const detected = await detectConnections(sanitizedContent);
+				diagnostics.connectionModelCalls += 1;
+				const detected = await detectConnections(connectionContent);
+				connectionsDetected = detected.length;
 				for (const conn of detected) {
-					if (conn.confidence < 0.3) continue;
+					if (conn.confidence < 0.3) {
+						connectionsRejected++;
+						diagnostics.connectionRejectedLowConfidence++;
+						continue;
+					}
 
 					// Try to resolve the masked name to a contact ID.
 					// In DMs, entity masking makes this impossible — fall back to the job's contactId
@@ -504,14 +900,20 @@ export const relationshipExtractionWorker = new Worker<RelationshipExtractionJob
 								context: conn.context,
 								confidence: conn.confidence,
 								reasoning: conn.reasoning,
-								sourceMessageIds: sourceMessageIdsOrUndefined(freshBatch.sourceMessageIds),
+								sourceMessageIds: selectConnectionSourceMessageIds(
+									conn,
+									freshBatch.sourceMessageIds,
+								),
 							},
 							envelope,
 						);
 						console.log(
 							`[relationship-extraction] Detected new connection with ${resolvedContactId.slice(0, 8)}`,
 						);
+						connectionsCreated++;
 					} catch (err) {
+						connectionsRejected++;
+						diagnostics.connectionRejectedCreateError++;
 						console.error(
 							'[relationship-extraction] Failed to create connection:',
 							redactSensitive(err),
@@ -519,16 +921,36 @@ export const relationshipExtractionWorker = new Worker<RelationshipExtractionJob
 					}
 				}
 			} catch (err) {
+				diagnostics.connectionDetectionErrors++;
 				console.error(
 					'[relationship-extraction] Connection detection error:',
 					redactSensitive(err),
 				);
 			}
 		}
+
+		diagnostics.completedAt = new Date().toISOString();
+		await updateRelationshipDiagnostics(job, diagnostics);
+		console.log(
+			`[relationship-extraction] Scan diagnostics for ${targetLabel}: messages=${diagnostics.messagesInBatch}, sources=${diagnostics.freshSourceMessages}, introKeyword=${diagnostics.introductionKeywordMatched}, connectionKeyword=${diagnostics.connectionKeywordMatched}, introRejected=${introductionsRejected}, connectionRejected=${connectionsRejected}`,
+		);
+
+		return {
+			relationshipsFound,
+			relationshipsStored,
+			introductionsDetected,
+			introductionsCreated,
+			introductionsRejected,
+			connectionsDetected,
+			connectionsCreated,
+			connectionsRejected,
+			diagnostics,
+		};
 	}),
 	{
 		connection,
 		prefix: '{ai-flow}',
-		concurrency: 1, // Low priority, not time-sensitive
+		concurrency: relationshipExtractionConcurrency(), // Low priority, not time-sensitive
+		...RELATIONSHIP_EXTRACTION_WORKER_OPTS,
 	},
 );

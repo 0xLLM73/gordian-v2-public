@@ -32,6 +32,9 @@ export const userPreferences = pgTable(
 		/** Custom intro-detection keywords (additive to built-in defaults) */
 		introKeywords: text('intro_keywords').array(),
 
+		/** Custom new-connection detection keywords (additive to built-in defaults) */
+		connectionKeywords: text('connection_keywords').array(),
+
 		/** Which health labels trigger ghosting alerts: 'cooling', 'dormant', etc. */
 		ghostingAlertStatuses: text('ghosting_alert_statuses')
 			.array()

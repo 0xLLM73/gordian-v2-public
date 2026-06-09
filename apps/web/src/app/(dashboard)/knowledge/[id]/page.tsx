@@ -237,7 +237,7 @@ export default async function KnowledgeNodePage({
 					<p className="mt-2 text-sm text-muted-foreground">{node.description}</p>
 				) : null}
 				<div className="mt-4 flex items-center gap-4 text-sm text-muted-foreground">
-					<span>{node.mentionCount ?? 0} mentions</span>
+					<span>{node.mentionCount ?? 0} extraction signals</span>
 					{node.lastSeenAt ? (
 						<span
 							className={
@@ -258,7 +258,7 @@ export default async function KnowledgeNodePage({
 			{/* Shared Context (Phase 32) — visible when viewing from a contact context */}
 			{fromContactId ? <SharedKnowledgeSection sharedByContact={sharedByContact} /> : null}
 
-			<PeopleEvidenceSection contacts={linkedContacts} />
+			<PeopleEvidenceSection contacts={linkedContacts} topicTerms={[node.name, node.displayName]} />
 
 			{/* Merge Candidates */}
 			{mergeCandidates.length > 0 ? (

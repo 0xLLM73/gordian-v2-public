@@ -26,9 +26,9 @@ test('seeded demo workspace loads deals', async ({ page }) => {
 
 test('seeded demo workspace loads commitments', async ({ page }) => {
 	await page.goto('/commitments', { waitUntil: 'domcontentloaded' });
-	await expect(page.getByRole('heading', { name: 'Commitments' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Commitments', exact: true })).toBeVisible();
 	await expect(page.getByText('Wire $2M for Aptos SAFT')).toBeVisible();
-	await expect(page.getByText('Schedule deep dive with MoveProtocol')).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Find commitments' })).toBeVisible();
 });
 
 test('seeded demo workspace loads goals', async ({ page }) => {
@@ -45,7 +45,12 @@ test('seeded demo workspace loads knowledge search', async ({ page }) => {
 test('seeded demo workspace loads safe local settings', async ({ page }) => {
 	await page.goto('/settings', { waitUntil: 'domcontentloaded' });
 	await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
-	await expect(page.getByText('Telegram linking is disabled for this deployment.')).toBeVisible();
+	await expect(page.getByText('Message sending disabled in this build.')).toBeVisible();
+	await expect(
+		page.getByText(
+			'The history import flow is the default path allowed to open the stored MTProto session.',
+		),
+	).toBeVisible();
 	await expect(
 		page.getByText('Morning brief delivery is disabled in this demo build.'),
 	).toBeVisible();

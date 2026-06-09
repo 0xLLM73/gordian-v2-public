@@ -21,6 +21,7 @@
 |----------|---------------|----------|---------|-------------|--------|
 | `DATABASE_URL` | SECRET | Yes | — | Supabase connection string (Transaction Mode pooler URL). Must include `?pgbouncer=true` for Supavisor. | pillar2 |
 | `DIRECT_URL` | SECRET | Yes | — | Supabase direct connection (for migrations only, not pooled). | pillar2 |
+| `POSTGRES_TEMP_FILE_LIMIT` | CONFIG | No | `256MB` | Transaction-scoped Postgres temp-file cap applied before heavy local metadata derivation queries when the database allows it. Set `0` or `off` to disable. This limits scratch-file growth; it does not provide encryption by itself. | local-security |
 | `BETTER_AUTH_SECRET` | SECRET | Yes | — | Better Auth signing secret. Min 32 chars, cryptographically random. | pillar4 |
 | `BETTER_AUTH_URL` | CONFIG | Yes | — | Base URL for Better Auth (e.g., `https://gordian.yourdomain.com`). | pillar4 |
 | `INTERNAL_AUTH_SECRET` | SECRET | Yes | — | Shared secret for web↔worker Handoff Token JWT signing. | followup1 |
@@ -55,6 +56,10 @@
 | `GORDIAN_KEYCHAIN_HELPER_PATH` | CONFIG | No | — | Optional path to a broker executable, for example `/Users/you/Library/Application Support/Gordian/GordianKeychainBrokerXcode/Build/Products/Debug/GordianKeychainBroker.app/Contents/MacOS/GordianKeychainBroker`. When set, strict Keychain reads use this helper so macOS prompts identify Gordian. | personal-tg |
 | `TELEGRAM_MTPROTO_PER_INTERACTION_UNLOCK` | CONFIG | No | `false` | When false, one user-presence unlock opens the MTProto session for an import run, and the worker disconnects the local Telegram client when the run completes, pauses, cancels, or finally fails. Set true only for repeated per-read unlocks. | personal-tg |
 | `TELEGRAM_ALLOW_SESSION_UNWRAP_OUTSIDE_IMPORTS` | CONFIG | No | `false` | Allows legacy sync/backfill workers to open the stored MTProto session. Keep false for personal accounts so stored session unwrap is limited to the explicit history import flow. | personal-tg |
+| `TELEGRAM_RECENT_IMPORT_MAX_PAGES_PER_CHAT` | CONFIG | No | `1` | Page cap for dashboard recent-only imports when old-history backfill is not explicitly selected. Keeps local MTProto imports focused on new messages instead of duplicate-heavy historical pages. | personal-tg |
+| `TELEGRAM_IMPORT_WORKER_LOCK_DURATION_MS` | CONFIG | No | `600000` | BullMQ lock duration for Telegram history import jobs. Increase if local imports log lock-renewal errors while pages are still completing. | personal-tg |
+| `TELEGRAM_IMPORT_WORKER_STALLED_INTERVAL_MS` | CONFIG | No | `60000` | BullMQ stalled-job scan interval for Telegram history import jobs. | personal-tg |
+| `TELEGRAM_IMPORT_WORKER_MAX_STALLED_COUNT` | CONFIG | No | `2` | Number of stalled recoveries allowed before BullMQ fails a Telegram import job. | personal-tg |
 | `TELEGRAM_API_CREDENTIAL_PROVIDER` | CONFIG | Only if `TELEGRAM_MTPROTO_ENABLED=true` | `env` in `.env.example`; `os-keychain` from setup | Controls where the Telegram API app `api_id` and `api_hash` are read from. Use `os-keychain` for normal macOS local use. | personal-tg |
 | `TELEGRAM_API_KEYCHAIN_ACCOUNT` | CONFIG | Only if `TELEGRAM_API_CREDENTIAL_PROVIDER=os-keychain` | `telegram-api-credentials` | macOS Keychain account name for the Telegram API app credential JSON. | personal-tg |
 | `TELEGRAM_API_ID` | SECRET | Only if `TELEGRAM_MTPROTO_ENABLED=true` and `TELEGRAM_API_CREDENTIAL_PROVIDER=env` | — | Telegram API ID from `my.telegram.org`. `pnpm telegram:setup` stores this in macOS Keychain by default and clears the env value. | personal-tg |
@@ -74,6 +79,7 @@
 |----------|---------------|----------|---------|-------------|--------|
 | `DATABASE_URL` | SECRET | Yes | — | Same as web — Supabase pooler URL with `prepare: false`. | pillar2 |
 | `DRAGONFLY_URL` | SECRET | Yes | — | DragonflyDB or Redis-compatible connection URL. Prefer a private network endpoint in deployed environments. | followup6 |
+| `POSTGRES_TEMP_FILE_LIMIT` | CONFIG | No | `256MB` | Transaction-scoped Postgres temp-file cap applied before heavy local metadata derivation queries when the database allows it. Set `0` or `off` to disable. This limits scratch-file growth; it does not provide encryption by itself. | local-security |
 | `TELEGRAM_BOT_ENABLED` | CONFIG | No | `false` | Starts grammY long polling only when explicitly enabled. Leave disabled in public forks unless using a dedicated test bot. | open-source |
 | `TELEGRAM_MTPROTO_ENABLED` | CONFIG | No | `false` | Enables MTProto session creation and sync. Leave disabled until the user has reviewed session custody and revocation steps. | open-source |
 | `TELEGRAM_SEND_ENABLED` | CONFIG | No | `false` | Enables outbound Telegram sends. Keep disabled unless the deployment has reviewed rate limits, audit logging, and user confirmation flows. | open-source |
@@ -87,6 +93,10 @@
 | `GORDIAN_KEYCHAIN_HELPER_PATH` | CONFIG | No | — | Optional path to a broker executable, for example `/Users/you/Library/Application Support/Gordian/GordianKeychainBrokerXcode/Build/Products/Debug/GordianKeychainBroker.app/Contents/MacOS/GordianKeychainBroker`. When set, strict Keychain reads use this helper so macOS prompts identify Gordian. | personal-tg |
 | `TELEGRAM_MTPROTO_PER_INTERACTION_UNLOCK` | CONFIG | No | `false` | When false, one user-presence unlock opens the MTProto session for an import run, and the worker disconnects the local Telegram client when the run completes, pauses, cancels, or finally fails. Set true only for repeated per-read unlocks. | personal-tg |
 | `TELEGRAM_ALLOW_SESSION_UNWRAP_OUTSIDE_IMPORTS` | CONFIG | No | `false` | Allows legacy sync/backfill workers to open the stored MTProto session. Keep false for personal accounts so stored session unwrap is limited to the explicit history import flow. | personal-tg |
+| `TELEGRAM_RECENT_IMPORT_MAX_PAGES_PER_CHAT` | CONFIG | No | `1` | Page cap for dashboard recent-only imports when old-history backfill is not explicitly selected. Keeps local MTProto imports focused on new messages instead of duplicate-heavy historical pages. | personal-tg |
+| `TELEGRAM_IMPORT_WORKER_LOCK_DURATION_MS` | CONFIG | No | `600000` | BullMQ lock duration for Telegram history import jobs. Increase if local imports log lock-renewal errors while pages are still completing. | personal-tg |
+| `TELEGRAM_IMPORT_WORKER_STALLED_INTERVAL_MS` | CONFIG | No | `60000` | BullMQ stalled-job scan interval for Telegram history import jobs. | personal-tg |
+| `TELEGRAM_IMPORT_WORKER_MAX_STALLED_COUNT` | CONFIG | No | `2` | Number of stalled recoveries allowed before BullMQ fails a Telegram import job. | personal-tg |
 | `BOT_TOKEN` | SECRET | Only if `TELEGRAM_BOT_ENABLED=true` | — | Telegram Bot API token from @BotFather. The original bot has been deleted; create a new dedicated test bot for public forks. | pillar6 |
 | `TELEGRAM_API_CREDENTIAL_PROVIDER` | CONFIG | Only if `TELEGRAM_MTPROTO_ENABLED=true` | `env` in `.env.example`; `os-keychain` from setup | Controls where the worker reads the Telegram API app credentials from. Use `os-keychain` for normal macOS local use. | personal-tg |
 | `TELEGRAM_API_KEYCHAIN_ACCOUNT` | CONFIG | Only if `TELEGRAM_API_CREDENTIAL_PROVIDER=os-keychain` | `telegram-api-credentials` | macOS Keychain account name for the Telegram API app credential JSON. | personal-tg |
@@ -112,6 +122,24 @@
 | `OPENAI_KEYCHAIN_SERVICE` | CONFIG | No | `gordian-v2` | macOS Keychain service name for the local OpenAI API key when `OPENAI_API_KEY_PROVIDER=os-keychain`. | openai-local |
 | `OPENAI_API_KEYCHAIN_ACCOUNT` | CONFIG | No | `openai-api-key` | macOS Keychain account name for the local OpenAI API key when `OPENAI_API_KEY_PROVIDER=os-keychain`. | openai-local |
 | `GEMINI_API_KEY` | SECRET | Conditional | — | Gemini API key for default KG inline extraction. Used only when `AI_PROCESSING_ENABLED=true`; not required when `KNOWLEDGE_LLM_PROVIDER=local` or `disabled`. | open-source |
+| `KNOWLEDGE_POST_SYNC_ANALYSIS_ENABLED` | CONFIG | No | `true` | Queues workspace knowledge analysis after Telegram imports that insert new messages. Execution still requires KG extraction to be enabled and AI-analysis consent to be persisted. | local-ai |
+| `KNOWLEDGE_SYNC_INCREMENTAL_DELAY_MS` | CONFIG | No | `90000` | Debounce delay for small post-sync incremental KG analysis jobs. Jobs dedupe per workspace while waiting/running. | local-ai |
+| `KNOWLEDGE_SYNC_INCREMENTAL_CONTACT_LIMIT` | CONFIG | No | `50` | Contact limit for small post-sync incremental KG analysis jobs. | local-ai |
+| `KNOWLEDGE_INCREMENTAL_MESSAGES_PER_CONTACT_LIMIT` | CONFIG | No | `200` | Newest-message page size per contact for incremental KG analysis. | local-ai |
+| `KNOWLEDGE_IMPORT_COMPLETION_DELAY_MS` | CONFIG | No | `5000` | Delay before KG analysis is queued when a Telegram history import completes with inserted messages. | local-ai |
+| `KNOWLEDGE_IMPORT_INCREMENTAL_MESSAGE_THRESHOLD` | CONFIG | No | `100` | Recent imports at or below this inserted-message count queue incremental KG analysis instead of a full completed-import backfill. | local-ai |
+| `KNOWLEDGE_IMPORT_INCREMENTAL_CONTACT_LIMIT` | CONFIG | No | `50` | Contact limit for incremental KG analysis after small recent Telegram imports. | local-ai |
+| `KNOWLEDGE_IMPORT_FULL_CONTACT_LIMIT` | CONFIG | No | `500` | Contact limit for the completed-import full KG analysis pass. Increase for large first-time imports if local model latency is acceptable. | local-ai |
+| `KNOWLEDGE_IMPORT_FULL_MESSAGES_PER_CONTACT_LIMIT` | CONFIG | No | `200` | Historical message page size per contact for completed-import KG backfill continuations. | local-ai |
+| `KNOWLEDGE_IMPORT_FULL_MAX_BATCHES` | CONFIG | No | `20` | Maximum continuation batches for a completed-import KG backfill run. | local-ai |
+| `KNOWLEDGE_IMPORT_FULL_CONTINUATION_DELAY_MS` | CONFIG | No | `1000` | Delay between resumable completed-import KG backfill batches. | local-ai |
+| `KNOWLEDGE_ANALYSIS_WORKER_LOCK_DURATION_MS` | CONFIG | No | `1800000` | BullMQ lock duration for long-running local KG analysis jobs. Increase if local Qwen/Nomic jobs renew too slowly under load. | local-ai |
+| `KNOWLEDGE_ANALYSIS_WORKER_STALLED_INTERVAL_MS` | CONFIG | No | `60000` | BullMQ stalled-job scan interval for the KG analysis worker. | local-ai |
+| `KNOWLEDGE_ANALYSIS_WORKER_MAX_STALLED_COUNT` | CONFIG | No | `2` | Number of stalled recoveries allowed before BullMQ fails a KG analysis job. | local-ai |
+| `RELATIONSHIP_EXTRACTION_CONCURRENCY` | CONFIG | No | `1` | Local introduction/new-connection scan worker concurrency. Values are capped from 1 to 4; keep `1` for personal-account testing unless local model latency requires more throughput. | local-ai |
+| `RELATIONSHIP_EXTRACTION_WORKER_LOCK_DURATION_MS` | CONFIG | No | `600000` | BullMQ lock duration for local introduction/new-connection relationship extraction jobs. | local-ai |
+| `RELATIONSHIP_EXTRACTION_WORKER_STALLED_INTERVAL_MS` | CONFIG | No | `60000` | BullMQ stalled-job scan interval for relationship extraction jobs. | local-ai |
+| `RELATIONSHIP_EXTRACTION_WORKER_MAX_STALLED_COUNT` | CONFIG | No | `2` | Number of stalled recoveries allowed before BullMQ fails a relationship extraction job. | local-ai |
 | `KNOWLEDGE_EMBEDDING_PROVIDER` | CONFIG | No | `openai` | KG embedding provider: `openai` or `local`. Local mode uses an OpenAI-compatible `/v1/embeddings` endpoint. | local-ai |
 | `KNOWLEDGE_EMBEDDING_PRESET` | CONFIG | No | `custom` | Optional local KG embedding preset label. Use `nomic` for the recommended local setup, `qwen` for the vector-only Qwen setup, or `custom` for explicit model settings. | local-ai |
 | `KNOWLEDGE_EMBEDDING_BASE_URL` | CONFIG | No | `https://api.openai.com/v1` | KG embedding base URL. Use `http://localhost:11434/v1` for local OpenAI-compatible servers. | local-ai |
@@ -128,6 +156,8 @@
 | `COMMITMENT_LLM_BASE_URL` | CONFIG | No | `http://localhost:11434` | Local commitment chat base URL. Must be loopback/private unless `ALLOW_NONLOCAL_AI_ENDPOINTS=true`. | local-ai |
 | `COMMITMENT_LLM_MODEL` | CONFIG | No | `qwen3.5:4b` | JSON-capable local chat model for commitment extraction. This is independent from the 512-dimensional KG embedding model. | local-ai |
 | `COMMITMENT_LLM_API_KEY` | SECRET | No | — | Optional bearer token for local/proxy commitment extraction endpoints. Omit for local servers that do not require auth. | local-ai |
+| `COMMITMENT_V2_SHADOW_ENABLED` | CONFIG | No | `true` | Runs the v2 commitment candidate/validator path in shadow mode and emits privacy-safe aggregate route/failure counts without changing stored commitments. Set `false` to disable. | local-ai |
+| `COMMITMENT_V2_ACTIVE_AUTOCREATE` | CONFIG | No | `false` | Allows the v2 router to classify exact, high-confidence explicit evidence as active during shadow analysis. Stored local commitments remain draft until the product path is explicitly migrated. | local-ai |
 | `CHAT_LLM_PROVIDER` | CONFIG | No | `cloud` | Chat assistant provider: `cloud` or `local`. If unset, chat preserves older behavior by falling back to local `COMMITMENT_LLM_*` when that provider is local. | local-ai |
 | `CHAT_LLM_API` | CONFIG | No | `ollama` | Local chat API: `ollama` uses native `/api/chat` with `think=false`; `openai-compatible` uses `/v1/chat/completions`. | local-ai |
 | `CHAT_LLM_BASE_URL` | CONFIG | No | `http://localhost:11434` | Local chat base URL. Must be loopback/private unless `ALLOW_NONLOCAL_AI_ENDPOINTS=true`. | local-ai |

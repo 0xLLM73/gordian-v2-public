@@ -18,6 +18,7 @@ import { track } from '@/lib/track';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
 import {
 	getCalibrationCompletionStatus,
+	getCommitmentsByWorkspace,
 	getContactsByIds,
 	getDashboardStats,
 	getHealthScoresByWorkspace,
@@ -208,9 +209,10 @@ async function ActNowDataSection({ workspaceId }: { workspaceId: string }) {
 	const envelope = await getWorkspaceEnvelope(workspaceId);
 	if (!envelope) return null;
 
-	const [commitments, drafts] = await Promise.all([
+	const [commitments, drafts, draftCommitments] = await Promise.all([
 		getUpcomingCommitments(workspaceId, envelope, { limit: 50 }),
 		getPendingDrafts(workspaceId, envelope, { limit: 5 }),
+		getCommitmentsByWorkspace(workspaceId, envelope, { status: 'draft', limit: 5 }),
 	]);
 
 	const overdue = commitments.filter((c) => c.isOverdue);
@@ -238,7 +240,7 @@ async function ActNowDataSection({ workspaceId }: { workspaceId: string }) {
 		<>
 			<ActNowViewTracker
 				overdueCount={overdue.length}
-				pendingDraftCount={drafts.length}
+				pendingDraftCount={drafts.length + draftCommitments.length}
 				followUpCount={dueToday.length}
 			/>
 
@@ -281,6 +283,46 @@ async function ActNowDataSection({ workspaceId }: { workspaceId: string }) {
 					</CardContent>
 				</Card>
 			)}
+
+			{/* Suggested Commitments */}
+			{draftCommitments.length > 0 ? (
+				<Card className="border-blue-200 shadow-stripe-sm">
+					<CardHeader className="pb-2">
+						<CardTitle className="text-base text-blue-700">
+							Suggested Commitments ({draftCommitments.length})
+						</CardTitle>
+					</CardHeader>
+					<CardContent>
+						<ul className="divide-y divide-border">
+							{draftCommitments.map((item) => {
+								const contactName =
+									[item.contactFirstName, item.contactLastName].filter(Boolean).join(' ') ||
+									'Unknown';
+
+								return (
+									<li key={item.id} className="flex items-center justify-between py-3">
+										<div className="min-w-0 flex-1">
+											<p className="truncate text-sm font-medium text-foreground">{item.title}</p>
+											<p className="text-xs text-muted-foreground">
+												{contactName} &middot; {Math.round(item.confidence * 100)}% confidence
+											</p>
+										</div>
+										<div className="ml-4 flex items-center gap-2">
+											<CommitmentActions commitmentId={item.id} status="draft" />
+										</div>
+									</li>
+								);
+							})}
+						</ul>
+						<Link
+							href="/commitments?status=draft"
+							className="mt-2 block text-xs font-medium text-indigo-600 hover:underline"
+						>
+							Review all suggestions &rarr;
+						</Link>
+					</CardContent>
+				</Card>
+			) : null}
 
 			{/* Pending Drafts */}
 			{drafts.length > 0 ? (

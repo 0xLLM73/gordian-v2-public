@@ -4,8 +4,9 @@ import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/
 import { getCommitmentsByWorkspace } from '@repo/db';
 import { canRunCloudCommitmentIntelligence, isLocalOnlyMode } from '@repo/shared';
 import { Suspense } from 'react';
+import { CommitmentFinder } from './commitment-finder';
 import { CommitmentsFilter } from './commitments-filter';
-import { normalizeCommitmentStatusFilter } from './status-filter';
+import { type CommitmentStatusFilter, normalizeCommitmentStatusFilter } from './status-filter';
 
 function commitmentModeCopy() {
 	if (canRunCloudCommitmentIntelligence()) {
@@ -30,6 +31,41 @@ function commitmentModeCopy() {
 	};
 }
 
+function commitmentStatusCopy(status: CommitmentStatusFilter) {
+	switch (status) {
+		case 'draft':
+			return {
+				heading: 'Review suggested actions before they become commitments.',
+				empty: 'No suggested commitments to review.',
+			};
+		case 'snoozed':
+			return {
+				heading: 'Confirmed commitments temporarily hidden from active follow-up.',
+				empty: 'No snoozed commitments.',
+			};
+		case 'completed':
+			return {
+				heading: 'Commitments marked done.',
+				empty: 'No completed commitments yet.',
+			};
+		case 'dismissed':
+			return {
+				heading: 'Commitments and suggestions dismissed from review.',
+				empty: 'No dismissed commitments.',
+			};
+		case 'all':
+			return {
+				heading: 'All confirmed commitments and review suggestions.',
+				empty: 'No commitments or suggestions yet.',
+			};
+		default:
+			return {
+				heading: 'Confirmed commitments that need action.',
+				empty: 'No active commitments yet. Confirmed suggestions from review will appear here.',
+			};
+	}
+}
+
 export default async function CommitmentsPage({
 	searchParams,
 }: {
@@ -40,17 +76,25 @@ export default async function CommitmentsPage({
 	const resolvedParams = await searchParams;
 	const status = normalizeCommitmentStatusFilter(resolvedParams?.status);
 	const copy = commitmentModeCopy();
+	const statusCopy = commitmentStatusCopy(status);
 
 	return (
 		<div>
 			<div className="mb-6 flex items-center justify-between">
 				<div>
 					<h1 className="text-2xl font-bold text-foreground">Commitments</h1>
-					<p className="mt-1 max-w-2xl text-sm text-muted-foreground">{copy.heading}</p>
+					<p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+						{statusCopy.heading} {copy.heading}
+					</p>
 				</div>
 			</div>
 
-			{workspaceId ? <CommitmentsFilter workspaceId={workspaceId} /> : null}
+			{workspaceId ? (
+				<>
+					<CommitmentsFilter workspaceId={workspaceId} />
+					<CommitmentFinder />
+				</>
+			) : null}
 
 			<Suspense fallback={<CommitmentsListSkeleton />}>
 				{workspaceId ? (
@@ -65,13 +109,19 @@ export default async function CommitmentsPage({
 	);
 }
 
-async function CommitmentsList({ workspaceId, status }: { workspaceId: string; status: string }) {
-	const copy = commitmentModeCopy();
+async function CommitmentsList({
+	workspaceId,
+	status,
+}: {
+	workspaceId: string;
+	status: CommitmentStatusFilter;
+}) {
+	const statusCopy = commitmentStatusCopy(status);
 	const envelope = await getWorkspaceEnvelope(workspaceId);
 	if (!envelope) {
 		return (
 			<div className="mt-4 rounded-lg border border-border bg-muted p-8 text-center text-sm text-muted-foreground">
-				{copy.empty}
+				{statusCopy.empty}
 			</div>
 		);
 	}
@@ -80,7 +130,7 @@ async function CommitmentsList({ workspaceId, status }: { workspaceId: string; s
 	if (!commitments || commitments.length === 0) {
 		return (
 			<div className="mt-4 rounded-lg border border-border bg-muted p-8 text-center text-sm text-muted-foreground">
-				{copy.empty}
+				{statusCopy.empty}
 			</div>
 		);
 	}
@@ -97,6 +147,7 @@ async function CommitmentsList({ workspaceId, status }: { workspaceId: string; s
 function CommitmentCard({ commitment: c }: { commitment: Record<string, unknown> }) {
 	const isFulfilled = c.status === 'completed' && c.fulfillmentEvidence;
 	const showActions = c.status === 'active' || c.status === 'draft';
+	const isDraft = c.status === 'draft';
 	const contactName = [c.contactFirstName, c.contactLastName].filter(Boolean).join(' ');
 	const isSnoozed =
 		c.status === 'active' && c.snoozedUntil && new Date(c.snoozedUntil as string) > new Date();
@@ -107,11 +158,17 @@ function CommitmentCard({ commitment: c }: { commitment: Record<string, unknown>
 				<div>
 					<p className="font-medium text-foreground">{c.title as string}</p>
 					<p className="mt-0.5 text-sm text-muted-foreground">
-						{c.commitmentType as string} &middot; Assigned to {c.assignee as string}
+						{isDraft ? 'Suggested action' : (c.commitmentType as string)} &middot; Assigned to{' '}
+						{c.assignee as string}
 						{contactName ? ` \u00b7 ${contactName}` : null}
 					</p>
 				</div>
 				<div className="flex items-center gap-3">
+					{isDraft ? (
+						<span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
+							Review
+						</span>
+					) : null}
 					{isSnoozed ? (
 						<span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
 							Snoozed until {new Date(c.snoozedUntil as string).toLocaleDateString()}

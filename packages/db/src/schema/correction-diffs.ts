@@ -1,5 +1,5 @@
 import { integer, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
-import { pgVector } from './custom-types';
+import { halfvec } from './custom-types';
 import { diffTypeEnum } from './enums';
 import { goldenDataset } from './golden-dataset';
 import { workspaces } from './workspaces';
@@ -18,7 +18,7 @@ export const correctionDiffs = pgTable('correction_diffs', {
 	diffType: diffTypeEnum('diff_type').notNull(),
 	severityScore: integer('severity_score').notNull(),
 	description: text('description'),
-	mistakeEmbedding: pgVector('mistake_embedding'),
+	mistakeEmbedding: halfvec('mistake_embedding'),
 	patternId: uuid('pattern_id'),
 	analyzedAt: timestamp('analyzed_at', { withTimezone: true }),
 });

@@ -116,6 +116,7 @@ vi.mock('@repo/db', () => {
 		linkMessagesToContactsByTelegramIds: mockLinkMessagesToContactsByTelegramIds,
 		listMessageIdsByTelegramIds: mockListMessageIdsByTelegramIds,
 		updateChatLastSync: mockUpdateChatLastSync,
+		updateMessageSenderMetadataByTelegramIds: vi.fn(() => Promise.resolve(0)),
 		createContact: mockCreateContact,
 		updateContact: mockUpdateContact,
 		listChats: vi.fn(),

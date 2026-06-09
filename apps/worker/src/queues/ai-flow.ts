@@ -18,6 +18,11 @@ import {
 } from '@repo/shared';
 import { FlowProducer, Worker } from 'bullmq';
 import { extractCommitmentsWithBandit } from '../ai/commitment-extraction';
+import {
+	filterCommitmentsByV2Validation,
+	isCommitmentV2ShadowEnabled,
+	isCommitmentV2ValidationEnabled,
+} from '../ai/commitment-v2';
 import { type CommitmentSensitivity, getConfidenceThresholds } from '../ai/confidence-thresholds';
 import { generateContactSummary } from '../ai/contact-summary';
 import { deduplicateCommitment } from '../ai/dedup';
@@ -57,6 +62,7 @@ interface JobData {
 	contactId: string;
 	workspaceId: string;
 	sourceAccountId?: string;
+	skipWorkspaceRelationshipDerivation?: boolean;
 	/** Encrypted key envelope — NEVER plaintext keys in job payloads */
 	keyEnvelope?: {
 		encryptedWrk: string;
@@ -77,6 +83,26 @@ const SENSITIVE_AI_FLOW_JOB_OPTS = {
 	removeOnComplete: true,
 	removeOnFail: { count: 50, age: 3600 },
 };
+
+function positiveIntegerEnv(name: string, fallback: number): number {
+	const parsed = Number(process.env[name]);
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const LONG_RUNNING_AI_WORKER_OPTS = {
+	lockDuration: positiveIntegerEnv('AI_FLOW_WORKER_LOCK_DURATION_MS', 10 * 60 * 1000),
+	stalledInterval: positiveIntegerEnv('AI_FLOW_WORKER_STALLED_INTERVAL_MS', 60 * 1000),
+	maxStalledCount: positiveIntegerEnv('AI_FLOW_WORKER_MAX_STALLED_COUNT', 2),
+};
+
+function aiFlowWorkerOptions(concurrency: number) {
+	return {
+		connection,
+		prefix: '{ai-flow}',
+		concurrency,
+		...LONG_RUNNING_AI_WORKER_OPTS,
+	};
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -129,6 +155,9 @@ export async function scheduleAIPipeline(
 	workspaceSalt?: string,
 	commitmentSensitivity?: CommitmentSensitivity,
 	sourceAccountId?: string,
+	options?: {
+		skipWorkspaceRelationshipDerivation?: boolean;
+	},
 ) {
 	if (!(await hasUserAiAnalysisConsent(userId, workspaceId))) {
 		throw new Error('AI analysis consent is required before scheduling the AI pipeline');
@@ -143,6 +172,7 @@ export async function scheduleAIPipeline(
 		messages,
 		workspaceSalt,
 		commitmentSensitivity,
+		skipWorkspaceRelationshipDerivation: options?.skipWorkspaceRelationshipDerivation,
 	};
 	const cloudCommitmentEnabled = canRunCloudCommitmentIntelligence();
 	const commitmentExtractionEnabled = canRunCommitmentExtraction();
@@ -291,20 +321,28 @@ export const orchestratorWorker = new Worker(
 			});
 		}
 
-		// Derive group-chat co-occurrence relationships (workspace-level, SQL-only, no LLM)
-		try {
-			const { deriveGroupChatRelationships } = await import('@repo/db');
-			const derived = await deriveGroupChatRelationships(workspaceId);
-			if (derived > 0) {
-				console.log(
-					`[ai-orchestrator] Derived ${derived} group-chat relationships for workspace=${workspaceId.slice(0, 8)}`,
+		// Derive group-chat co-occurrence relationships (workspace-level, SQL-only, no LLM).
+		if (data.skipWorkspaceRelationshipDerivation) {
+			console.log(
+				`[ai-orchestrator] Skipping workspace relationship derivation for workspace=${workspaceId.slice(0, 8)}`,
+			);
+		} else {
+			try {
+				const { deriveGroupChatRelationships } = await import('@repo/db');
+				const derived = await deriveGroupChatRelationships(workspaceId, {
+					contactId: data.contactId,
+				});
+				if (derived > 0) {
+					console.log(
+						`[ai-orchestrator] Derived ${derived} group-chat relationships for contact=${data.contactId.slice(0, 8)} workspace=${workspaceId.slice(0, 8)}`,
+					);
+				}
+			} catch (err) {
+				console.error(
+					'[ai-orchestrator] Failed to derive group-chat relationships:',
+					redactSensitive(err),
 				);
 			}
-		} catch (err) {
-			console.error(
-				'[ai-orchestrator] Failed to derive group-chat relationships:',
-				redactSensitive(err),
-			);
 		}
 
 		trackAnalyticsEvent(workspaceId, userId, 'ai_pipeline.completed', {
@@ -316,7 +354,7 @@ export const orchestratorWorker = new Worker(
 			`[ai-orchestrator] Pipeline complete for contact=${contactId.slice(0, 8)} workspace=${workspaceId.slice(0, 8)}`,
 		);
 	}),
-	{ connection, prefix: '{ai-flow}', concurrency: 5 },
+	aiFlowWorkerOptions(5),
 );
 
 /**
@@ -391,24 +429,67 @@ export const extractionWorker = new Worker(
 			workspaceSalt: keys.bik,
 		});
 
-		if (extracted.length === 0) {
+		const v2ShadowEnabled = isCommitmentV2ShadowEnabled(process.env);
+		const v2ValidationEnabled = isCommitmentV2ValidationEnabled(process.env);
+		let extractedForStorage = extracted;
+		if (v2ShadowEnabled || v2ValidationEnabled) {
+			const { report: shadowReport, commitments: validatedCommitments } =
+				filterCommitmentsByV2Validation({
+					messages,
+					extractedCommitments: extracted,
+					workspaceSalt: keys.bik,
+					sourceAccountId: data.sourceAccountId,
+					activeAutocreateEnabled: process.env.COMMITMENT_V2_ACTIVE_AUTOCREATE === 'true',
+				});
+			if (v2ShadowEnabled) {
+				console.log('[commitment-v2-shadow]', JSON.stringify(shadowReport.privacySafeEvent));
+				trackAnalyticsEvent(workspaceId, userId, 'commitment.v2_shadow_completed', {
+					candidate_count: shadowReport.candidateCount,
+					extracted_count: shadowReport.extractedCount,
+					route_counts: shadowReport.routeCounts,
+					failure_code_counts: shadowReport.failureCodeCounts,
+					warning_code_counts: shadowReport.warningCodeCounts,
+					detector_version: shadowReport.detectorVersion,
+					validator_version: shadowReport.validatorVersion,
+				});
+			}
+			if (v2ValidationEnabled) {
+				extractedForStorage = validatedCommitments;
+				const rejectedCount = extracted.length - extractedForStorage.length;
+				if (rejectedCount > 0) {
+					console.log(
+						`[commitment-v2-validation] Filtered ${rejectedCount} rejected commitment candidate(s) for contact=${contactId.slice(0, 8)}`,
+					);
+				}
+				trackAnalyticsEvent(workspaceId, userId, 'commitment.v2_validation_applied', {
+					extracted_count: extracted.length,
+					storage_count: extractedForStorage.length,
+					rejected_count: rejectedCount,
+					route_counts: shadowReport.routeCounts,
+					failure_code_counts: shadowReport.failureCodeCounts,
+				});
+			}
+		}
+
+		if (extractedForStorage.length === 0) {
 			console.log(`[ai-extraction] No commitments found for contact=${contactId.slice(0, 8)}`);
-			return { traceId, variant, stored: 0 };
+			return { traceId, variant, stored: 0, rejectedByV2: extracted.length };
 		}
 
 		trackAnalyticsEvent(workspaceId, userId, 'commitment.extracted', {
-			count: extracted.length,
+			count: extractedForStorage.length,
+			raw_count: extracted.length,
 			variant,
 			trace_id: traceId,
 		});
 
 		console.log(
-			`[ai-extraction] Found ${extracted.length} commitments (variant=${variant}) for contact=${contactId.slice(0, 8)}`,
+			`[ai-extraction] Found ${extractedForStorage.length} commitments (variant=${variant}) for contact=${contactId.slice(0, 8)}`,
 		);
 
 		// 2. For each extracted commitment, generate embedding + dedup + store
 		let stored = 0;
-		for (const commitment of extracted) {
+		for (const commitment of extractedForStorage) {
 			// Route by confidence (analytics)
 			const route = commitmentStorageRoute(
 				commitment.confidence,
@@ -507,7 +588,7 @@ export const extractionWorker = new Worker(
 		try {
 			await recordExtractionFeedback({
 				candidates: pass1Candidates,
-				verified: extracted,
+				verified: extractedForStorage,
 				transcript: maskedTranscript,
 				traceId,
 				variant,
@@ -522,7 +603,7 @@ export const extractionWorker = new Worker(
 
 		return { traceId, variant, stored };
 	}),
-	{ connection, prefix: '{ai-flow}', concurrency: 3 },
+	aiFlowWorkerOptions(3),
 );
 
 /**
@@ -615,7 +696,7 @@ export const embeddingsWorker = new Worker(
 			`[ai-embeddings] Stored ${messages.length} memories for contact=${contactId.slice(0, 8)}`,
 		);
 	}),
-	{ connection, prefix: '{ai-flow}', concurrency: 3 },
+	aiFlowWorkerOptions(3),
 );
 
 /**
@@ -718,7 +799,7 @@ export const summaryWorker = new Worker(
 
 		return { traceId: result.traceId, variant: result.variant, status: 'ready' };
 	}),
-	{ connection, prefix: '{ai-flow}', concurrency: 3 },
+	aiFlowWorkerOptions(3),
 );
 
 // Event logging
@@ -874,7 +955,7 @@ export const goalExtractionWorker = new Worker(
 
 		return { stored };
 	}),
-	{ connection, prefix: '{ai-flow}', concurrency: 3 },
+	aiFlowWorkerOptions(3),
 );
 
 goalExtractionWorker.on('completed', (job) => {

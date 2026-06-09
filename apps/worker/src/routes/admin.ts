@@ -1,24 +1,53 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import type { SealedEnvelope } from '@repo/crypto';
-import { deriveKeys, encrypt, unwrapWrk } from '@repo/crypto';
 import {
 	appendAuditLog,
-	contacts,
 	db,
-	eq,
-	getMessageCount,
-	getMessagesByContact,
 	hasUserAiAnalysisConsent,
 	isWorkspaceMember,
 	sql,
 	workspaces,
 } from '@repo/db';
-import { getKnowledgeEmbeddingRuntime, isAiProcessingEnabled, redactSensitive } from '@repo/shared';
+import {
+	canRunCommitmentExtraction,
+	getKnowledgeEmbeddingRuntime,
+	isAiAnalysisAvailable,
+	isAiProcessingEnabled,
+	redactSensitive,
+} from '@repo/shared';
 import { Hono } from 'hono';
+import { canRunConnectionDetection } from '../ai/connection-detection';
+import { canRunIntroductionDetection } from '../ai/introduction-detection';
 import { validateInternalSecret } from '../middleware/auth';
-import { scheduleAIPipeline } from '../queues/ai-flow';
 import { embeddingBackfillQueue } from '../queues/backfill';
+import {
+	estimateCommitmentReprocess,
+	normalizeCommitmentReprocessBatchSize,
+	normalizeCommitmentReprocessContactIds,
+	normalizeCommitmentReprocessContactLimit,
+	normalizeCommitmentReprocessMaxAgeDays,
+	queueCommitmentReprocess,
+} from '../queues/commitment-reprocess';
+import {
+	estimateConnectionReprocess,
+	normalizeConnectionReprocessBatchSize,
+	normalizeConnectionReprocessContactIds,
+	normalizeConnectionReprocessContactLimit,
+	normalizeConnectionReprocessMaxAgeDays,
+	queueConnectionReprocess,
+} from '../queues/connection-reprocess';
 import { healthScoringQueue } from '../queues/health-scoring';
+import {
+	estimateIntroductionReprocess,
+	normalizeIntroductionReprocessBatchSize,
+	normalizeIntroductionReprocessChatIds,
+	normalizeIntroductionReprocessChatLimit,
+	normalizeIntroductionReprocessMaxAgeDays,
+	queueIntroductionReprocess,
+} from '../queues/introduction-reprocess';
+import {
+	cleanupResolvedRelationshipExtractionFailures,
+	getRelationshipExtractionQueueStatus,
+} from '../queues/relationship-extraction';
 import { syncQueue } from '../queues/sync';
 
 /**
@@ -41,6 +70,52 @@ import { syncQueue } from '../queues/sync';
  *   Deduplicates memories by (workspace_id, contact_id, category, content_sanitized).
  */
 const admin = new Hono();
+
+admin.get('/relationship-extraction-status', async (c) => {
+	const internalSecret = c.req.header('X-Internal-Secret');
+	if (!validateInternalSecret(internalSecret)) {
+		return c.json({ error: 'Unauthorized' }, 401);
+	}
+
+	const workspaceId = c.req.query('workspaceId');
+	const userId = c.req.query('userId') || undefined;
+	if (!workspaceId) {
+		return c.json({ error: 'workspaceId is required' }, 400);
+	}
+	if (userId && !(await isWorkspaceMember(workspaceId, userId))) {
+		return c.json({ error: 'User is not a member of this workspace.' }, 403);
+	}
+
+	const status = await getRelationshipExtractionQueueStatus({ workspaceId, userId });
+	return c.json(status);
+});
+
+admin.post('/relationship-extraction-cleanup', async (c) => {
+	const internalSecret = c.req.header('X-Internal-Secret');
+	if (!validateInternalSecret(internalSecret)) {
+		return c.json({ error: 'Unauthorized' }, 401);
+	}
+
+	const body = await c.req.json<{
+		workspaceId?: string;
+		userId?: string;
+		limit?: number;
+	}>();
+	const { workspaceId, userId } = body;
+	if (!workspaceId) {
+		return c.json({ error: 'workspaceId is required' }, 400);
+	}
+	if (userId && !(await isWorkspaceMember(workspaceId, userId))) {
+		return c.json({ error: 'User is not a member of this workspace.' }, 403);
+	}
+
+	const result = await cleanupResolvedRelationshipExtractionFailures({
+		workspaceId,
+		userId,
+		limit: body.limit,
+	});
+	return c.json(result);
+});
 
 admin.post('/backfill-embeddings', async (c) => {
 	const internalSecret = c.req.header('X-Internal-Secret');
@@ -73,34 +148,14 @@ admin.post('/backfill-embeddings', async (c) => {
 	return c.json({ status: 'queued', jobId: job.id, workspaceId, batchSize });
 });
 
-/**
- * Fetch the workspace encryption envelope from the database (SEC-028).
- */
-async function getWorkspaceEnvelope(workspaceId: string): Promise<SealedEnvelope | null> {
-	const result = await db
-		.select({
-			encryptedWrk: workspaces.encryptedWrk,
-			kmsContext: workspaces.kmsContext,
-			wrkVersion: workspaces.wrkVersion,
-		})
-		.from(workspaces)
-		.where(eq(workspaces.id, workspaceId))
-		.limit(1);
-
-	if (result.length === 0) return null;
-
-	const ws = result[0];
-	const rawCtx = ws.kmsContext;
-	const kmsContext: Record<string, string> =
-		typeof rawCtx === 'string' ? JSON.parse(rawCtx) : (rawCtx as Record<string, string>);
-	return {
-		encryptedWrk: Buffer.from(ws.encryptedWrk, 'base64'),
-		kmsContext,
-		wrkVersion: ws.wrkVersion,
-	};
-}
-
 const ADMIN_REPROCESS_CONFIRM_TTL_MS = 10 * 60 * 1000;
+
+function isAdminAiReprocessEnabled(): boolean {
+	const configured = process.env.ADMIN_AI_REPROCESS_ENABLED;
+	if (configured === 'true') return true;
+	if (configured === 'false') return false;
+	return process.env.NODE_ENV !== 'production';
+}
 
 function getAdminReprocessConfirmSecret(): string {
 	const secret =
@@ -117,8 +172,11 @@ function getAdminReprocessConfirmSecret(): string {
 
 function signAdminReprocessConfirmToken(payload: {
 	batchSize: number;
+	contactIds?: string[];
 	contactLimit: number;
 	exp: number;
+	maxAgeDays?: number;
+	sourceAccountId?: string;
 	userId: string;
 	workspaceId: string;
 }): string {
@@ -137,7 +195,15 @@ function safeEqualString(a: string, b: string): boolean {
 
 function verifyAdminReprocessConfirmToken(
 	token: unknown,
-	expected: { batchSize: number; contactLimit: number; userId: string; workspaceId: string },
+	expected: {
+		batchSize: number;
+		contactIds?: string[];
+		contactLimit: number;
+		maxAgeDays?: number;
+		sourceAccountId?: string;
+		userId: string;
+		workspaceId: string;
+	},
 ): boolean {
 	if (typeof token !== 'string') return false;
 	const [encoded, signature] = token.split('.');
@@ -150,8 +216,11 @@ function verifyAdminReprocessConfirmToken(
 	try {
 		const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as Partial<{
 			batchSize: number;
+			contactIds?: string[];
 			contactLimit: number;
 			exp: number;
+			maxAgeDays?: number;
+			sourceAccountId?: string;
 			userId: string;
 			workspaceId: string;
 		}>;
@@ -160,6 +229,137 @@ function verifyAdminReprocessConfirmToken(
 			payload.userId === expected.userId &&
 			payload.batchSize === expected.batchSize &&
 			payload.contactLimit === expected.contactLimit &&
+			JSON.stringify(payload.contactIds) === JSON.stringify(expected.contactIds) &&
+			payload.maxAgeDays === expected.maxAgeDays &&
+			payload.sourceAccountId === expected.sourceAccountId &&
+			typeof payload.exp === 'number' &&
+			payload.exp >= Date.now()
+		);
+	} catch {
+		return false;
+	}
+}
+
+function signAdminIntroductionReprocessConfirmToken(payload: {
+	batchSize: number;
+	chatIds?: string[];
+	chatLimit: number;
+	exp: number;
+	maxAgeDays?: number;
+	sourceAccountId?: string;
+	userId: string;
+	workspaceId: string;
+}): string {
+	const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+	const signature = createHmac('sha256', getAdminReprocessConfirmSecret())
+		.update(encoded)
+		.digest('base64url');
+	return `${encoded}.${signature}`;
+}
+
+function verifyAdminIntroductionReprocessConfirmToken(
+	token: unknown,
+	expected: {
+		batchSize: number;
+		chatIds?: string[];
+		chatLimit: number;
+		maxAgeDays?: number;
+		sourceAccountId?: string;
+		userId: string;
+		workspaceId: string;
+	},
+): boolean {
+	if (typeof token !== 'string') return false;
+	const [encoded, signature] = token.split('.');
+	if (!encoded || !signature) return false;
+	const expectedSignature = createHmac('sha256', getAdminReprocessConfirmSecret())
+		.update(encoded)
+		.digest('base64url');
+	if (!safeEqualString(signature, expectedSignature)) return false;
+
+	try {
+		const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as Partial<{
+			batchSize: number;
+			chatIds?: string[];
+			chatLimit: number;
+			exp: number;
+			maxAgeDays?: number;
+			sourceAccountId?: string;
+			userId: string;
+			workspaceId: string;
+		}>;
+		return (
+			payload.workspaceId === expected.workspaceId &&
+			payload.userId === expected.userId &&
+			payload.batchSize === expected.batchSize &&
+			payload.chatLimit === expected.chatLimit &&
+			JSON.stringify(payload.chatIds) === JSON.stringify(expected.chatIds) &&
+			payload.maxAgeDays === expected.maxAgeDays &&
+			payload.sourceAccountId === expected.sourceAccountId &&
+			typeof payload.exp === 'number' &&
+			payload.exp >= Date.now()
+		);
+	} catch {
+		return false;
+	}
+}
+
+function signAdminConnectionReprocessConfirmToken(payload: {
+	batchSize: number;
+	contactIds?: string[];
+	contactLimit: number;
+	exp: number;
+	maxAgeDays?: number;
+	sourceAccountId?: string;
+	userId: string;
+	workspaceId: string;
+}): string {
+	const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+	const signature = createHmac('sha256', getAdminReprocessConfirmSecret())
+		.update(encoded)
+		.digest('base64url');
+	return `${encoded}.${signature}`;
+}
+
+function verifyAdminConnectionReprocessConfirmToken(
+	token: unknown,
+	expected: {
+		batchSize: number;
+		contactIds?: string[];
+		contactLimit: number;
+		maxAgeDays?: number;
+		sourceAccountId?: string;
+		userId: string;
+		workspaceId: string;
+	},
+): boolean {
+	if (typeof token !== 'string') return false;
+	const [encoded, signature] = token.split('.');
+	if (!encoded || !signature) return false;
+	const expectedSignature = createHmac('sha256', getAdminReprocessConfirmSecret())
+		.update(encoded)
+		.digest('base64url');
+	if (!safeEqualString(signature, expectedSignature)) return false;
+
+	try {
+		const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as Partial<{
+			batchSize: number;
+			contactIds?: string[];
+			contactLimit: number;
+			exp: number;
+			maxAgeDays?: number;
+			sourceAccountId?: string;
+			userId: string;
+			workspaceId: string;
+		}>;
+		return (
+			payload.workspaceId === expected.workspaceId &&
+			payload.userId === expected.userId &&
+			payload.batchSize === expected.batchSize &&
+			payload.contactLimit === expected.contactLimit &&
+			JSON.stringify(payload.contactIds) === JSON.stringify(expected.contactIds) &&
+			payload.maxAgeDays === expected.maxAgeDays &&
+			payload.sourceAccountId === expected.sourceAccountId &&
 			typeof payload.exp === 'number' &&
 			payload.exp >= Date.now()
 		);
@@ -179,25 +379,43 @@ admin.post('/reprocess-messages', async (c) => {
 		userId: string;
 		batchSize?: number;
 		contactLimit?: number;
+		contactIds?: string[];
+		sourceAccountId?: string;
+		maxAgeDays?: number;
 		confirm?: boolean;
 		confirmToken?: string;
 		dryRun?: boolean;
 	}>();
 
 	const { workspaceId, userId } = body;
+	const sourceAccountId =
+		typeof body.sourceAccountId === 'string' && body.sourceAccountId.trim().length > 0
+			? body.sourceAccountId.trim()
+			: undefined;
+	const contactIds = normalizeCommitmentReprocessContactIds(body.contactIds);
+	const maxAgeDays = normalizeCommitmentReprocessMaxAgeDays(body.maxAgeDays);
 	if (!workspaceId || !userId) {
 		return c.json({ error: 'workspaceId and userId are required' }, 400);
 	}
-	if (process.env.ADMIN_AI_REPROCESS_ENABLED !== 'true') {
+	if (!isAdminAiReprocessEnabled()) {
 		return c.json(
 			{ error: 'Admin AI reprocess is disabled. Set ADMIN_AI_REPROCESS_ENABLED=true.' },
 			403,
 		);
 	}
-	if (!isAiProcessingEnabled()) {
+	if (!isAiAnalysisAvailable()) {
 		return c.json(
 			{
-				error: 'AI processing is disabled. Set AI_PROCESSING_ENABLED=true to allow vendor egress.',
+				error:
+					'AI analysis is unavailable. Configure local AI analysis or set AI_PROCESSING_ENABLED=true.',
+			},
+			403,
+		);
+	}
+	if (!canRunCommitmentExtraction()) {
+		return c.json(
+			{
+				error: 'Commitment extraction is unavailable. Configure COMMITMENT_LLM_* and embeddings.',
 			},
 			403,
 		);
@@ -209,8 +427,8 @@ admin.post('/reprocess-messages', async (c) => {
 		return c.json({ error: 'AI analysis consent is required for this user/workspace.' }, 403);
 	}
 
-	const batchSize = Math.min(Math.max(Number(body.batchSize ?? 200), 1), 200);
-	const contactLimit = Math.min(Math.max(Number(body.contactLimit ?? 25), 1), 100);
+	const batchSize = normalizeCommitmentReprocessBatchSize(body.batchSize);
+	const contactLimit = normalizeCommitmentReprocessContactLimit(body.contactLimit);
 	const dryRun = body.dryRun === true;
 	if (!dryRun && body.confirm !== true) {
 		return c.json(
@@ -219,35 +437,33 @@ admin.post('/reprocess-messages', async (c) => {
 		);
 	}
 
-	// Query all contacts for the workspace
-	const workspaceContacts = await db
-		.select({ id: contacts.id })
-		.from(contacts)
-		.where(eq(contacts.workspaceId, workspaceId))
-		.limit(contactLimit);
-
 	if (dryRun) {
-		let wouldProcessContacts = 0;
-		let wouldProcessMessages = 0;
-		for (const contact of workspaceContacts) {
-			const count = Math.min(await getMessageCount(workspaceId, contact.id), batchSize);
-			if (count === 0) continue;
-			wouldProcessContacts++;
-			wouldProcessMessages += count;
-		}
+		const estimate = await estimateCommitmentReprocess({
+			workspaceId,
+			userId,
+			batchSize,
+			contactLimit,
+			contactIds,
+			sourceAccountId,
+			maxAgeDays,
+		});
 
 		return c.json({
 			status: 'dry_run',
 			workspaceId,
-			contactLimit,
-			batchSize,
-			wouldProcessContacts,
-			wouldProcessMessages,
+			contactLimit: estimate.contactLimit,
+			batchSize: estimate.batchSize,
+			wouldProcessContacts: estimate.wouldProcessContacts,
+			wouldProcessMessages: estimate.wouldProcessMessages,
+			maxAgeDays: estimate.maxAgeDays,
 			confirmToken: signAdminReprocessConfirmToken({
 				workspaceId,
 				userId,
-				batchSize,
-				contactLimit,
+				batchSize: estimate.batchSize,
+				contactLimit: estimate.contactLimit,
+				contactIds,
+				sourceAccountId,
+				maxAgeDays: estimate.maxAgeDays,
 				exp: Date.now() + ADMIN_REPROCESS_CONFIRM_TTL_MS,
 			}),
 		});
@@ -259,72 +475,27 @@ admin.post('/reprocess-messages', async (c) => {
 			userId,
 			batchSize,
 			contactLimit,
+			contactIds,
+			sourceAccountId,
+			maxAgeDays,
 		})
 	) {
 		return c.json({ error: 'Valid dry-run confirmToken is required to queue jobs.' }, 400);
 	}
 
-	// Resolve and unwrap only after dry-run/confirmation gates pass.
-	const envelope = await getWorkspaceEnvelope(workspaceId);
-	if (!envelope) {
-		return c.json({ error: 'Workspace envelope not found' }, 404);
-	}
-
-	// Derive keys from envelope (same pattern as sync.ts lines 586-617)
-	const wrk = await unwrapWrk(envelope);
-	const keys = await deriveKeys(wrk, workspaceId, envelope.wrkVersion);
-	const workspaceSalt = keys.bik.toString('hex');
-
-	const keyEnvelope = {
-		encryptedWrk: envelope.encryptedWrk.toString('base64'),
-		kmsContext: envelope.kmsContext,
-		wrkVersion: envelope.wrkVersion,
-	};
-
-	let contactsProcessed = 0;
-	let messagesQueued = 0;
-
-	for (const contact of workspaceContacts) {
-		const contactId = contact.id;
-
-		// getMessagesByContact decrypts via withKeys(envelope) internally
-		const msgs = await getMessagesByContact(workspaceId, contactId, envelope, { limit: batchSize });
-
-		if (msgs.length === 0) continue;
-
-		// Messages come newest-first — reverse for chronological order
-		const chronological = msgs.reverse();
-
-		// Map to AI pipeline format and re-encrypt for BullMQ payload (SEC-006)
-		const encryptedMessages = chronological
-			.filter((m): m is typeof m & { text: string } => Boolean(m.text))
-			.map((m) => ({
-				role: m.isOutgoing ? ('user' as const) : ('assistant' as const),
-				content: encrypt(m.text, keys.dek),
-				timestamp: m.sentAt.toISOString(),
-			}));
-
-		if (encryptedMessages.length === 0) continue;
-
-		await scheduleAIPipeline(
-			userId,
-			contactId,
-			workspaceId,
-			keyEnvelope,
-			encryptedMessages,
-			workspaceSalt,
-		);
-
-		console.log(
-			`[admin] Reprocessing contact=${contactId.slice(0, 8)} (${encryptedMessages.length} messages)`,
-		);
-
-		contactsProcessed++;
-		messagesQueued += encryptedMessages.length;
-	}
+	const queued = await queueCommitmentReprocess({
+		workspaceId,
+		userId,
+		batchSize,
+		contactLimit,
+		contactIds,
+		sourceAccountId,
+		maxAgeDays,
+		skipWorkspaceRelationshipDerivation: true,
+	});
 
 	console.log(
-		`[admin] Reprocess complete: ${contactsProcessed} contacts queued for workspace=${workspaceId.slice(0, 8)}`,
+		`[admin] Reprocess complete: ${queued.contactsProcessed} contacts queued for workspace=${workspaceId.slice(0, 8)}`,
 	);
 	appendAuditLog({
 		workspaceId,
@@ -334,14 +505,332 @@ admin.post('/reprocess-messages', async (c) => {
 		resourceType: 'message',
 		metadata: {
 			operation: 'admin_ai_reprocess',
-			contactsProcessed,
-			messagesQueued,
-			batchSize,
-			contactLimit,
+			contactsProcessed: queued.contactsProcessed,
+			messagesQueued: queued.messagesQueued,
+			batchSize: queued.batchSize,
+			contactLimit: queued.contactLimit,
+			maxAgeDays: queued.maxAgeDays,
+			contactIdsFiltered: Boolean(contactIds?.length),
+			sourceAccountFiltered: Boolean(sourceAccountId),
 		},
 	});
 
-	return c.json({ status: 'queued', contactsProcessed, messagesQueued });
+	return c.json({
+		status: 'queued',
+		contactsProcessed: queued.contactsProcessed,
+		messagesQueued: queued.messagesQueued,
+		maxAgeDays: queued.maxAgeDays,
+	});
+});
+
+admin.post('/reprocess-introductions', async (c) => {
+	const internalSecret = c.req.header('X-Internal-Secret');
+	if (!validateInternalSecret(internalSecret)) {
+		return c.json({ error: 'Unauthorized' }, 401);
+	}
+
+	const body = await c.req.json<{
+		workspaceId: string;
+		userId: string;
+		batchSize?: number;
+		chatLimit?: number;
+		chatIds?: string[];
+		sourceAccountId?: string;
+		maxAgeDays?: number;
+		confirm?: boolean;
+		confirmToken?: string;
+		dryRun?: boolean;
+	}>();
+
+	const { workspaceId, userId } = body;
+	const sourceAccountId =
+		typeof body.sourceAccountId === 'string' && body.sourceAccountId.trim().length > 0
+			? body.sourceAccountId.trim()
+			: undefined;
+	const chatIds = normalizeIntroductionReprocessChatIds(body.chatIds);
+	const maxAgeDays = normalizeIntroductionReprocessMaxAgeDays(body.maxAgeDays);
+	if (!workspaceId || !userId) {
+		return c.json({ error: 'workspaceId and userId are required' }, 400);
+	}
+	if (!isAdminAiReprocessEnabled()) {
+		return c.json(
+			{ error: 'Admin AI reprocess is disabled. Set ADMIN_AI_REPROCESS_ENABLED=true.' },
+			403,
+		);
+	}
+	if (!isAiAnalysisAvailable()) {
+		return c.json(
+			{
+				error:
+					'AI analysis is unavailable. Configure local AI analysis or set AI_PROCESSING_ENABLED=true.',
+			},
+			403,
+		);
+	}
+	if (!canRunIntroductionDetection(process.env)) {
+		return c.json(
+			{
+				error:
+					'Introduction detection is unavailable. Configure local COMMITMENT_LLM_* or enable AI processing.',
+			},
+			403,
+		);
+	}
+	if (!(await isWorkspaceMember(workspaceId, userId))) {
+		return c.json({ error: 'User is not a member of this workspace.' }, 403);
+	}
+	if (!(await hasUserAiAnalysisConsent(userId, workspaceId))) {
+		return c.json({ error: 'AI analysis consent is required for this user/workspace.' }, 403);
+	}
+
+	const batchSize = normalizeIntroductionReprocessBatchSize(body.batchSize);
+	const chatLimit = normalizeIntroductionReprocessChatLimit(body.chatLimit);
+	const dryRun = body.dryRun === true;
+	if (!dryRun && body.confirm !== true) {
+		return c.json(
+			{ error: 'Run with dryRun=true first, then confirm=true with confirmToken to queue jobs.' },
+			400,
+		);
+	}
+
+	if (dryRun) {
+		const estimate = await estimateIntroductionReprocess({
+			workspaceId,
+			userId,
+			batchSize,
+			chatLimit,
+			chatIds,
+			sourceAccountId,
+			maxAgeDays,
+		});
+
+		return c.json({
+			status: 'dry_run',
+			workspaceId,
+			chatLimit: estimate.chatLimit,
+			batchSize: estimate.batchSize,
+			wouldProcessChats: estimate.wouldProcessChats,
+			wouldProcessMessages: estimate.wouldProcessMessages,
+			maxAgeDays: estimate.maxAgeDays,
+			confirmToken: signAdminIntroductionReprocessConfirmToken({
+				workspaceId,
+				userId,
+				batchSize: estimate.batchSize,
+				chatLimit: estimate.chatLimit,
+				chatIds,
+				sourceAccountId,
+				maxAgeDays: estimate.maxAgeDays,
+				exp: Date.now() + ADMIN_REPROCESS_CONFIRM_TTL_MS,
+			}),
+		});
+	}
+
+	if (
+		!verifyAdminIntroductionReprocessConfirmToken(body.confirmToken, {
+			workspaceId,
+			userId,
+			batchSize,
+			chatLimit,
+			chatIds,
+			sourceAccountId,
+			maxAgeDays,
+		})
+	) {
+		return c.json({ error: 'Valid dry-run confirmToken is required to queue jobs.' }, 400);
+	}
+
+	const queued = await queueIntroductionReprocess({
+		workspaceId,
+		userId,
+		batchSize,
+		chatLimit,
+		chatIds,
+		sourceAccountId,
+		maxAgeDays,
+	});
+
+	console.log(
+		`[admin] Introduction reprocess complete: ${queued.chatsProcessed} chats queued for workspace=${workspaceId.slice(0, 8)}`,
+	);
+	appendAuditLog({
+		workspaceId,
+		actorType: 'system',
+		actorId: userId,
+		action: 'generate',
+		resourceType: 'message',
+		metadata: {
+			operation: 'admin_intro_reprocess',
+			chatsProcessed: queued.chatsProcessed,
+			messagesQueued: queued.messagesQueued,
+			batchSize: queued.batchSize,
+			chatLimit: queued.chatLimit,
+			maxAgeDays: queued.maxAgeDays,
+			chatIdsFiltered: Boolean(chatIds?.length),
+			sourceAccountFiltered: Boolean(sourceAccountId),
+		},
+	});
+
+	return c.json({
+		status: 'queued',
+		chatsProcessed: queued.chatsProcessed,
+		messagesQueued: queued.messagesQueued,
+		maxAgeDays: queued.maxAgeDays,
+	});
+});
+
+admin.post('/reprocess-connections', async (c) => {
+	const internalSecret = c.req.header('X-Internal-Secret');
+	if (!validateInternalSecret(internalSecret)) {
+		return c.json({ error: 'Unauthorized' }, 401);
+	}
+
+	const body = await c.req.json<{
+		workspaceId: string;
+		userId: string;
+		batchSize?: number;
+		contactLimit?: number;
+		contactIds?: string[];
+		sourceAccountId?: string;
+		maxAgeDays?: number;
+		confirm?: boolean;
+		confirmToken?: string;
+		dryRun?: boolean;
+	}>();
+
+	const { workspaceId, userId } = body;
+	const sourceAccountId =
+		typeof body.sourceAccountId === 'string' && body.sourceAccountId.trim().length > 0
+			? body.sourceAccountId.trim()
+			: undefined;
+	const contactIds = normalizeConnectionReprocessContactIds(body.contactIds);
+	const maxAgeDays = normalizeConnectionReprocessMaxAgeDays(body.maxAgeDays);
+	if (!workspaceId || !userId) {
+		return c.json({ error: 'workspaceId and userId are required' }, 400);
+	}
+	if (!isAdminAiReprocessEnabled()) {
+		return c.json(
+			{ error: 'Admin AI reprocess is disabled. Set ADMIN_AI_REPROCESS_ENABLED=true.' },
+			403,
+		);
+	}
+	if (!isAiAnalysisAvailable()) {
+		return c.json(
+			{
+				error:
+					'AI analysis is unavailable. Configure local AI analysis or set AI_PROCESSING_ENABLED=true.',
+			},
+			403,
+		);
+	}
+	if (!canRunConnectionDetection(process.env)) {
+		return c.json(
+			{
+				error:
+					'Connection detection is unavailable. Configure local COMMITMENT_LLM_* or enable AI processing.',
+			},
+			403,
+		);
+	}
+	if (!(await isWorkspaceMember(workspaceId, userId))) {
+		return c.json({ error: 'User is not a member of this workspace.' }, 403);
+	}
+	if (!(await hasUserAiAnalysisConsent(userId, workspaceId))) {
+		return c.json({ error: 'AI analysis consent is required for this user/workspace.' }, 403);
+	}
+
+	const batchSize = normalizeConnectionReprocessBatchSize(body.batchSize);
+	const contactLimit = normalizeConnectionReprocessContactLimit(body.contactLimit);
+	const dryRun = body.dryRun === true;
+	if (!dryRun && body.confirm !== true) {
+		return c.json(
+			{ error: 'Run with dryRun=true first, then confirm=true with confirmToken to queue jobs.' },
+			400,
+		);
+	}
+
+	if (dryRun) {
+		const estimate = await estimateConnectionReprocess({
+			workspaceId,
+			userId,
+			batchSize,
+			contactLimit,
+			contactIds,
+			sourceAccountId,
+			maxAgeDays,
+		});
+
+		return c.json({
+			status: 'dry_run',
+			workspaceId,
+			contactLimit: estimate.contactLimit,
+			batchSize: estimate.batchSize,
+			wouldProcessContacts: estimate.wouldProcessContacts,
+			wouldProcessMessages: estimate.wouldProcessMessages,
+			maxAgeDays: estimate.maxAgeDays,
+			confirmToken: signAdminConnectionReprocessConfirmToken({
+				workspaceId,
+				userId,
+				batchSize: estimate.batchSize,
+				contactLimit: estimate.contactLimit,
+				contactIds,
+				sourceAccountId,
+				maxAgeDays: estimate.maxAgeDays,
+				exp: Date.now() + ADMIN_REPROCESS_CONFIRM_TTL_MS,
+			}),
+		});
+	}
+
+	if (
+		!verifyAdminConnectionReprocessConfirmToken(body.confirmToken, {
+			workspaceId,
+			userId,
+			batchSize,
+			contactLimit,
+			contactIds,
+			sourceAccountId,
+			maxAgeDays,
+		})
+	) {
+		return c.json({ error: 'Valid dry-run confirmToken is required to queue jobs.' }, 400);
+	}
+
+	const queued = await queueConnectionReprocess({
+		workspaceId,
+		userId,
+		batchSize,
+		contactLimit,
+		contactIds,
+		sourceAccountId,
+		maxAgeDays,
+	});
+
+	console.log(
+		`[admin] Connection reprocess complete: ${queued.contactsProcessed} contacts queued for workspace=${workspaceId.slice(0, 8)}`,
+	);
+	appendAuditLog({
+		workspaceId,
+		actorType: 'system',
+		actorId: userId,
+		action: 'generate',
+		resourceType: 'message',
+		metadata: {
+			operation: 'admin_connection_reprocess',
+			contactsProcessed: queued.contactsProcessed,
+			messagesQueued: queued.messagesQueued,
+			batchSize: queued.batchSize,
+			contactLimit: queued.contactLimit,
+			maxAgeDays: queued.maxAgeDays,
+			contactIdsFiltered: Boolean(contactIds?.length),
+			sourceAccountFiltered: Boolean(sourceAccountId),
+		},
+	});
+
+	return c.json({
+		status: 'queued',
+		contactsProcessed: queued.contactsProcessed,
+		messagesQueued: queued.messagesQueued,
+		maxAgeDays: queued.maxAgeDays,
+	});
 });
 
 /**

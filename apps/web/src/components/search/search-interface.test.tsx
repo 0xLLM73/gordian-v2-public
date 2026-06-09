@@ -88,4 +88,56 @@ describe('SearchInterface', () => {
 		expect(screen.getByText('No deals match “Alice”')).toBeTruthy();
 		expect(screen.getByText(/Other categories matched/)).toBeTruthy();
 	});
+
+	it('shows search provenance when semantic metadata is returned', async () => {
+		mockSearchAction.mockResolvedValueOnce({
+			data: {
+				contacts: [],
+				memories: [
+					{
+						id: 'memory-1',
+						content: 'Alice mentioned the seed round',
+						category: 'note',
+						rrf_score: 0.72,
+					},
+				],
+				commitments: [],
+				deals: [],
+				meta: {
+					queryLength: 32,
+					embedding: {
+						enabled: true,
+						used: true,
+						providerMode: 'local',
+						providerLabel: 'Nomic local embeddings',
+						model: 'nomic-embed-text',
+						dimensions: 512,
+						queryMasked: true,
+					},
+					sources: {
+						contacts: 'Encrypted exact/name search',
+						memories: 'Hybrid semantic + text search',
+						commitments: 'Semantic vector + encrypted-text fallback',
+						deals: 'Encrypted exact title search',
+						knowledge: 'Evidence-backed knowledge search runs separately',
+						goals: 'Title search runs separately',
+					},
+				},
+			},
+		});
+
+		render(React.createElement(SearchInterface));
+
+		fireEvent.change(
+			screen.getByPlaceholderText('Search contacts, memories, commitments, deals, goals...'),
+			{ target: { value: 'seed round follow up with Alice' } },
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+		await screen.findByText('Nomic local embeddings, 512d');
+		expect(screen.getByText('Query masked before embeddings')).toBeTruthy();
+		expect(
+			screen.getByText(/Commitments: Semantic vector \+ encrypted-text fallback/),
+		).toBeTruthy();
+	});
 });

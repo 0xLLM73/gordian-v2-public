@@ -1,5 +1,6 @@
 'use server';
 
+import { getKnowledgeEvidenceQualityStatsForNodes } from '@/lib/knowledge-evidence-quality';
 import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
 import { track } from '@/lib/track';
 import { deriveKeys, maskEntities, prefilterEntities, unwrapWrk, withKeys } from '@repo/crypto';
@@ -15,6 +16,7 @@ import {
 	getGraphData,
 	getKnowledgeNeighbors,
 	getKnowledgeNode,
+	getKnowledgeNodeEvidenceStats,
 	getSharedKnowledge,
 	knowledgeContacts,
 	knowledgeLinks,
@@ -55,6 +57,9 @@ interface KnowledgeAnalysisRunData {
 	workspacesScanned?: number;
 	contactsProcessed?: number;
 	embeddingMatches?: number;
+	messagesScanned?: number;
+	backfillContactsCompleted?: number;
+	backfillRemainingContacts?: number;
 	embeddingProviderMode?: string;
 	embeddingProviderLabel?: string;
 	llmQueued?: number;
@@ -324,6 +329,15 @@ export const listKnowledgeNodesAction = workspaceAction
 		}
 
 		if (nodes.length === 0) return nodes;
+		const evidenceStats = await getKnowledgeNodeEvidenceStats(
+			ctx.workspaceId,
+			nodes.map((node) => node.id),
+		);
+		const evidenceQualityStats = await getKnowledgeEvidenceQualityStatsForNodes(
+			ctx.workspaceId,
+			nodes,
+			ctx.envelope,
+		);
 
 		// Batch-fetch contact IDs per node (no encryption needed)
 		const contactIdsByNode = await Promise.all(
@@ -366,6 +380,15 @@ export const listKnowledgeNodesAction = workspaceAction
 				...projectKnowledgeNodeForClient(n),
 				contactCount: contactIds.length,
 				contactPreviews,
+				evidenceCount: evidenceStats.get(n.id)?.evidenceRows ?? 0,
+				distinctEvidenceMessages: evidenceStats.get(n.id)?.distinctEvidenceMessages ?? 0,
+				distinctEvidenceContacts: evidenceStats.get(n.id)?.distinctEvidenceContacts ?? 0,
+				aggregateEvidenceCount: evidenceStats.get(n.id)?.aggregateLinkEvidenceCount ?? 0,
+				directEvidenceRows: evidenceQualityStats.get(n.id)?.directEvidenceRows ?? 0,
+				directEvidenceMessages: evidenceQualityStats.get(n.id)?.directEvidenceMessages ?? 0,
+				directEvidenceContacts: evidenceQualityStats.get(n.id)?.directEvidenceContacts ?? 0,
+				possibleEvidenceRows: evidenceQualityStats.get(n.id)?.possibleEvidenceRows ?? 0,
+				weakEvidenceRows: evidenceQualityStats.get(n.id)?.weakEvidenceRows ?? 0,
 			};
 		});
 	});
@@ -425,6 +448,11 @@ export const searchKnowledgeNodesWithEvidenceAction = workspaceAction
 				contactLimitPerNode: 3,
 			},
 		);
+		const evidenceQualityStats = await getKnowledgeEvidenceQualityStatsForNodes(
+			ctx.workspaceId,
+			results.map((result) => result.node),
+			ctx.envelope,
+		);
 
 		track(ctx.workspaceId, ctx.session.user.id, 'knowledge.evidence_searched', {
 			query_length: rawQuery.length,
@@ -440,36 +468,44 @@ export const searchKnowledgeNodesWithEvidenceAction = workspaceAction
 			minSimilarity,
 			noConfidentResults: results.length === 0,
 			answer: buildKnowledgeAnswerSummary(rawQuery, normalizedQuery, results),
-			results: results.map((result) => ({
-				node: projectKnowledgeNodeForClient(result.node),
-				similarity: result.similarity,
-				matchScore: result.matchScore,
-				matchReasons: result.matchReasons,
-				exactMatch: result.exactMatch,
-				aliasMatch: result.aliasMatch,
-				messageRecallScore: result.messageRecallScore,
-				messageHitCount: result.messageHitCount,
-				messageMatchedEvidenceIds: result.messageMatchedEvidenceIds,
-				messageMatchedAt: result.messageMatchedAt,
-				messageRecallReasons: result.messageRecallReasons,
-				evidenceCount: result.evidenceCount,
-				aggregateEvidenceCount: result.aggregateEvidenceCount,
-				latestEvidenceAt: result.latestEvidenceAt,
-				topConfidence: result.topConfidence,
-				connectedContactCount: result.connectedContactCount,
-				connectedContactsWithEvidence: result.connectedContactsWithEvidence,
-				contacts: result.contacts.map((contact) => ({
-					id: contact.id,
-					firstName: contact.firstName,
-					lastName: contact.lastName,
-					relationType: contact.relationType,
-					strength: contact.strength,
-					evidenceCount: contact.evidenceCount,
-					lastEvidenceAt: contact.lastEvidenceAt,
-					evidence: contact.evidence.map(projectEvidenceForClient),
-				})),
-				evidence: result.evidence.map(projectEvidenceForClient),
-			})),
+			results: results.map((result) => {
+				const qualityStats = evidenceQualityStats.get(result.node.id);
+				return {
+					node: projectKnowledgeNodeForClient(result.node),
+					similarity: result.similarity,
+					matchScore: result.matchScore,
+					matchReasons: result.matchReasons,
+					exactMatch: result.exactMatch,
+					aliasMatch: result.aliasMatch,
+					messageRecallScore: result.messageRecallScore,
+					messageHitCount: result.messageHitCount,
+					messageMatchedEvidenceIds: result.messageMatchedEvidenceIds,
+					messageMatchedAt: result.messageMatchedAt,
+					messageRecallReasons: result.messageRecallReasons,
+					evidenceCount: result.evidenceCount,
+					aggregateEvidenceCount: result.aggregateEvidenceCount,
+					latestEvidenceAt: result.latestEvidenceAt,
+					topConfidence: result.topConfidence,
+					connectedContactCount: result.connectedContactCount,
+					connectedContactsWithEvidence: result.connectedContactsWithEvidence,
+					directEvidenceRows: qualityStats?.directEvidenceRows ?? 0,
+					directEvidenceMessages: qualityStats?.directEvidenceMessages ?? 0,
+					directEvidenceContacts: qualityStats?.directEvidenceContacts ?? 0,
+					possibleEvidenceRows: qualityStats?.possibleEvidenceRows ?? 0,
+					weakEvidenceRows: qualityStats?.weakEvidenceRows ?? 0,
+					contacts: result.contacts.map((contact) => ({
+						id: contact.id,
+						firstName: contact.firstName,
+						lastName: contact.lastName,
+						relationType: contact.relationType,
+						strength: contact.strength,
+						evidenceCount: contact.evidenceCount,
+						lastEvidenceAt: contact.lastEvidenceAt,
+						evidence: contact.evidence.map(projectEvidenceForClient),
+					})),
+					evidence: result.evidence.map(projectEvidenceForClient),
+				};
+			}),
 		};
 	});
 
@@ -493,6 +529,9 @@ export const getKnowledgeAnalysisEstimateAction = workspaceAction
 					canRun: false,
 					contactsEstimated: 0,
 					staleContactsEstimated: 0,
+					backfillContactsEstimated: 0,
+					backfillContactsCompletedEstimated: 0,
+					backfillMessagesScannedEstimated: 0,
 					messagesEstimated: 0,
 					embeddingRequestsEstimated: 0,
 					embeddingInputsEstimated: 0,
@@ -540,6 +579,7 @@ export const getKnowledgeAnalysisEstimateAction = workspaceAction
 export const getKnowledgeAnalysisProgressAction = workspaceAction
 	.schema(
 		z.object({
+			mode: z.enum(ANALYSIS_MODES).default('incremental'),
 			startedAt: z.string().min(1),
 			expectedContacts: z.number().int().min(0).max(500).default(0),
 			expectedLlmRequests: z.number().int().min(0).max(500).default(0),
@@ -557,6 +597,9 @@ export const getKnowledgeAnalysisProgressAction = workspaceAction
 				llmCompleted: 0,
 				expectedLlmRequests: parsedInput.expectedLlmRequests,
 				entitiesExtracted: 0,
+				backfillContactsCompleted: 0,
+				backfillContactsInProgress: 0,
+				backfillMessagesScanned: 0,
 				nodeCount: 0,
 				evidenceCount: 0,
 				linkCount: 0,
@@ -583,7 +626,22 @@ export const getKnowledgeAnalysisProgressAction = workspaceAction
 					)::int AS entities_extracted,
 					MAX(last_extracted_at) FILTER (
 						WHERE last_extracted_at >= ${startedAtIso}::timestamptz
-					) AS latest_update_at
+					) AS latest_update_at,
+					COUNT(*) FILTER (
+						WHERE backfill_completed_at >= ${startedAtIso}::timestamptz
+					)::int AS backfill_contacts_completed,
+					COUNT(*) FILTER (
+						WHERE last_extracted_at >= ${startedAtIso}::timestamptz
+							AND backfill_oldest_message_at IS NOT NULL
+							AND backfill_completed_at IS NULL
+					)::int AS backfill_contacts_in_progress,
+					COALESCE(
+						SUM(backfill_messages_scanned) FILTER (
+							WHERE last_extracted_at >= ${startedAtIso}::timestamptz
+								OR backfill_completed_at >= ${startedAtIso}::timestamptz
+						),
+						0
+					)::int AS backfill_messages_scanned
 				FROM knowledge_extraction_log
 				WHERE workspace_id = ${ctx.workspaceId}::uuid
 			),
@@ -598,6 +656,9 @@ export const getKnowledgeAnalysisProgressAction = workspaceAction
 				progress.llm_completed,
 				progress.entities_extracted,
 				progress.latest_update_at,
+				progress.backfill_contacts_completed,
+				progress.backfill_contacts_in_progress,
+				progress.backfill_messages_scanned,
 				graph.node_count,
 				graph.evidence_count,
 				graph.link_count
@@ -610,6 +671,9 @@ export const getKnowledgeAnalysisProgressAction = workspaceAction
 				llm_completed?: number | string | null;
 				entities_extracted?: number | string | null;
 				latest_update_at?: Date | string | null;
+				backfill_contacts_completed?: number | string | null;
+				backfill_contacts_in_progress?: number | string | null;
+				backfill_messages_scanned?: number | string | null;
 				node_count?: number | string | null;
 				evidence_count?: number | string | null;
 				link_count?: number | string | null;
@@ -622,27 +686,48 @@ export const getKnowledgeAnalysisProgressAction = workspaceAction
 		const nodeCount = Number(row?.node_count ?? 0);
 		const evidenceCount = Number(row?.evidence_count ?? 0);
 		const linkCount = Number(row?.link_count ?? 0);
+		const backfillContactsCompleted = Number(row?.backfill_contacts_completed ?? 0);
+		const backfillContactsInProgress = Number(row?.backfill_contacts_in_progress ?? 0);
+		const backfillMessagesScanned = Number(row?.backfill_messages_scanned ?? 0);
 		const expectedContacts = Math.max(parsedInput.expectedContacts, processedContacts);
 		const expectedLlmRequests = Math.max(parsedInput.expectedLlmRequests, llmCompleted);
 		const contactRatio =
 			expectedContacts > 0 ? Math.min(1, processedContacts / expectedContacts) : 0;
 		const llmRatio = expectedLlmRequests > 0 ? Math.min(1, llmCompleted / expectedLlmRequests) : 1;
 		const complete =
-			expectedContacts > 0 &&
-			processedContacts >= expectedContacts &&
-			(expectedLlmRequests === 0 || llmCompleted >= expectedLlmRequests);
+			parsedInput.mode === 'full'
+				? expectedContacts > 0 &&
+					backfillContactsCompleted >= expectedContacts &&
+					(expectedLlmRequests === 0 || llmCompleted >= expectedLlmRequests)
+				: expectedContacts > 0 &&
+					processedContacts >= expectedContacts &&
+					(expectedLlmRequests === 0 || llmCompleted >= expectedLlmRequests);
 		const percent = complete
 			? 100
-			: expectedLlmRequests > 0
-				? Math.min(99, Math.round(contactRatio * 35 + llmRatio * 60))
-				: Math.min(99, Math.round(contactRatio * 95));
+			: parsedInput.mode === 'full' && expectedContacts > 0
+				? Math.min(
+						99,
+						Math.round(
+							Math.min(
+								1,
+								(backfillContactsCompleted + backfillContactsInProgress) / expectedContacts,
+							) *
+								70 +
+								llmRatio * 20,
+						),
+					)
+				: expectedLlmRequests > 0
+					? Math.min(99, Math.round(contactRatio * 35 + llmRatio * 60))
+					: Math.min(99, Math.round(contactRatio * 95));
 		const stage = complete
 			? 'complete'
-			: processedContacts === 0
-				? 'queued'
-				: expectedLlmRequests > 0 && processedContacts >= expectedContacts
-					? 'llm'
-					: 'contacts';
+			: parsedInput.mode === 'full' && backfillContactsCompleted < expectedContacts
+				? 'contacts'
+				: processedContacts === 0
+					? 'queued'
+					: expectedLlmRequests > 0 && processedContacts >= expectedContacts
+						? 'llm'
+						: 'contacts';
 		const latestUpdateAt = row?.latest_update_at
 			? new Date(row.latest_update_at).toISOString()
 			: null;
@@ -655,6 +740,9 @@ export const getKnowledgeAnalysisProgressAction = workspaceAction
 			llmCompleted,
 			expectedLlmRequests,
 			entitiesExtracted,
+			backfillContactsCompleted,
+			backfillContactsInProgress,
+			backfillMessagesScanned,
 			nodeCount,
 			evidenceCount,
 			linkCount,
@@ -929,6 +1017,9 @@ export const createManualKnowledgeNodeAction = workspaceAction
 			build_queued: buildQueued,
 			build_status: buildStatus ?? null,
 			contacts_processed: analysis?.contactsProcessed ?? 0,
+			messages_scanned: analysis?.messagesScanned ?? 0,
+			backfill_contacts_completed: analysis?.backfillContactsCompleted ?? 0,
+			backfill_remaining_contacts: analysis?.backfillRemainingContacts ?? 0,
 			embedding_matches: analysis?.embeddingMatches ?? 0,
 			total_links: inference?.totalLinks ?? 0,
 		});

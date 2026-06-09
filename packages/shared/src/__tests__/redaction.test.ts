@@ -97,4 +97,31 @@ describe('redaction utilities', () => {
 		expect(redacted).not.toContain('123456789');
 		expect(redacted).not.toContain('987654321');
 	});
+
+	it('redacts database params and embedding vectors before log output', () => {
+		const vector = Array.from({ length: 32 }, (_, index) => (index + 1) / 1000);
+		const redactedObject = redactSensitive({
+			error: 'insert failed',
+			params: ['workspace-123', 'user-456', vector, 'dismissal'],
+			embedding: vector,
+			queryEmbedding: vector,
+		});
+
+		expect(redactedObject).toContain('insert failed');
+		expect(redactedObject).not.toContain('workspace-123');
+		expect(redactedObject).not.toContain('0.001');
+		expect(redactedObject).not.toContain('0.032');
+		expect(redactedObject).toContain('[redacted]');
+
+		const redactedText = redactText(
+			`error: could not write temp file\nparams: workspace-123, user-456, [${vector.join(',')}], dismissal\nquery: insert into user_decisions`,
+		);
+
+		expect(redactedText).toContain('could not write temp file');
+		expect(redactedText).toContain('query: insert into user_decisions');
+		expect(redactedText).not.toContain('workspace-123');
+		expect(redactedText).not.toContain('0.001');
+		expect(redactedText).not.toContain('0.032');
+		expect(redactedText).toContain('params: [redacted]');
+	});
 });

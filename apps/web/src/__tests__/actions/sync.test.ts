@@ -244,6 +244,8 @@ describe('telegram history import actions', () => {
 			workspaceId: WORKSPACE_ID,
 			sourceAccountId: '123456789',
 			largeImportConfirmed: true,
+			localAnalysisMode: 'deferred',
+			importMode: 'recent',
 		});
 		expect(requestBody).not.toHaveProperty('keyEnvelope');
 		expect(requestBody).not.toHaveProperty('workspaceSalt');
@@ -282,6 +284,32 @@ describe('telegram history import actions', () => {
 		expect(result?.data).toMatchObject({ importRunId: 'run-1', status: 'queued' });
 		const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
 		expect(requestBody.sourceAccountId).toBe('987654321');
+	});
+
+	it('can explicitly request inline local analysis during history import', async () => {
+		const { startTelegramImportAction } = await import('@/app/actions/sync');
+
+		const result = await startTelegramImportAction({
+			confirmLargeImport: true,
+			runAiDuringImport: true,
+		});
+
+		expect(result?.data).toMatchObject({ importRunId: 'run-1', status: 'queued' });
+		const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+		expect(requestBody.localAnalysisMode).toBe('inline');
+	});
+
+	it('can explicitly request older history backfill during history import', async () => {
+		const { startTelegramImportAction } = await import('@/app/actions/sync');
+
+		const result = await startTelegramImportAction({
+			confirmLargeImport: true,
+			backfillOlderHistory: true,
+		});
+
+		expect(result?.data).toMatchObject({ importRunId: 'run-1', status: 'queued' });
+		const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+		expect(requestBody.importMode).toBe('backfill');
 	});
 
 	it('returns latest import progress and last data import progress separately', async () => {

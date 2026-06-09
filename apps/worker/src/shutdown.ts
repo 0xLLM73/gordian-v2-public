@@ -69,6 +69,7 @@ export function gracefulShutdown(bot?: { stop: () => void }): void {
 		try {
 			const { rationaleExtractionWorker } = await import('./queues/rationale-extraction');
 			const { decisionRecordingWorker } = await import('./queues/decision-recording');
+			const { knowledgeAnalysisWorker } = await import('./queues/knowledge-cron');
 			const { styleAnalysisWorker } = await import('./queues/style-analysis');
 			const { styleAggregationWorker, stopStyleAggregation } = await import(
 				'./queues/style-aggregation'
@@ -87,6 +88,7 @@ export function gracefulShutdown(bot?: { stop: () => void }): void {
 				digestWorker.close(),
 				relationshipExtractionWorker.close(),
 				healthScoringWorker.close(),
+				knowledgeAnalysisWorker.close(),
 				batchFlushWorker.close(),
 				briefWorker.close(),
 				rotationWorker.close(),

@@ -3,6 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mockGetTopPatterns = vi.fn();
 const mockGetGoldenLibrary = vi.fn();
 const mockSeedBanditPriors = vi.fn();
+const mockCheckCommitmentHeuristic = vi.fn((_content: string) => ({
+	matched: false,
+	pattern: '',
+	confidence: 0,
+}));
 const mockSelectPromptVariant = vi.fn(() =>
 	Promise.resolve({ traceId: 'trace-local-qwen', variant: 'extraction_default' }),
 );
@@ -23,7 +28,7 @@ vi.mock('../cached-inference', () => ({
 }));
 
 vi.mock('../commitment-heuristics', () => ({
-	checkCommitmentHeuristic: () => ({ matched: false, pattern: '', confidence: 0 }),
+	checkCommitmentHeuristic: mockCheckCommitmentHeuristic,
 }));
 
 const mockHaikuCreate = vi.fn();
@@ -52,6 +57,11 @@ describe('local Qwen commitment extraction', () => {
 		vi.clearAllMocks();
 		vi.unstubAllEnvs();
 		vi.stubGlobal('fetch', fetchMock);
+		mockCheckCommitmentHeuristic.mockImplementation(() => ({
+			matched: false,
+			pattern: '',
+			confidence: 0,
+		}));
 		mockGetTopPatterns.mockResolvedValue([]);
 		mockGetGoldenLibrary.mockResolvedValue([]);
 		fetchMock.mockResolvedValue({
@@ -155,6 +165,104 @@ describe('local Qwen commitment extraction', () => {
 			'11111111-1111-4111-8111-111111111111',
 		]);
 		expect(result.traceId).toBe('trace-local-qwen');
+	});
+
+	it('does not store heuristic-looking text when local Qwen returns no commitment', async () => {
+		enableLocalQwenCommitments();
+		fetchMock.mockResolvedValueOnce({
+			ok: true,
+			json: () =>
+				Promise.resolve({
+					message: {
+						content: JSON.stringify({ commitments: [] }),
+					},
+				}),
+			text: () => Promise.resolve(''),
+		});
+		const { extractCommitmentsWithBandit } = await import('../commitment-extraction');
+
+		const result = await extractCommitmentsWithBandit(
+			[
+				{
+					id: '11111111-1111-4111-8111-111111111111',
+					sourceMessageId: '11111111-1111-4111-8111-111111111111',
+					role: 'user',
+					content: "I'll be there haha",
+					timestamp: '2026-01-01T00:00:00Z',
+				},
+			],
+			'2026-01-01T00:00:00Z',
+			'user-1',
+			'workspace-1',
+			{ workspaceSalt: Buffer.from('workspace-salt') },
+		);
+
+		expect(fetchMock).toHaveBeenCalled();
+		expect(result.commitments).toHaveLength(0);
+	});
+
+	it('repairs invalid local Qwen source ids when the quote grounds to one source line', async () => {
+		enableLocalQwenCommitments();
+		fetchMock.mockResolvedValueOnce({
+			ok: true,
+			json: () =>
+				Promise.resolve({
+					message: {
+						content: JSON.stringify({
+							commitments: [
+								{
+									title: 'Send the deck tomorrow',
+									commitment_type: 'task',
+									assignee: 'user',
+									due_date: null,
+									due_date_text: 'tomorrow',
+									due_precision: 'relative',
+									confidence: 0.82,
+									quote: 'I will send the deck tomorrow.',
+									source_message_ids: ['missing-source'],
+									evidence_level: 'explicit',
+									state: 'open',
+									rationale_tags: ['explicit_promise'],
+									failure_reason: null,
+								},
+							],
+						}),
+					},
+				}),
+			text: () => Promise.resolve(''),
+		});
+		const { extractCommitmentsWithBandit } = await import('../commitment-extraction');
+
+		const result = await extractCommitmentsWithBandit(
+			[
+				{
+					id: '22222222-2222-4222-8222-222222222222',
+					sourceMessageId: '22222222-2222-4222-8222-222222222222',
+					role: 'user',
+					content: 'I will send the deck tomorrow.',
+					timestamp: '2026-01-01T00:01:00Z',
+				},
+				{
+					id: '33333333-3333-4333-8333-333333333333',
+					sourceMessageId: '33333333-3333-4333-8333-333333333333',
+					role: 'assistant',
+					content: 'Thanks.',
+					timestamp: '2026-01-01T00:02:00Z',
+				},
+			],
+			'2026-01-01T00:00:00Z',
+			'user-1',
+			'workspace-1',
+			{ workspaceSalt: Buffer.from('workspace-salt') },
+		);
+
+		expect(fetchMock).toHaveBeenCalled();
+		expect(result.commitments).toEqual([
+			expect.objectContaining({
+				title: 'Send the deck tomorrow',
+				source_message_ids: ['22222222-2222-4222-8222-222222222222'],
+			}),
+		]);
 	});
 
 	it('parses common local JSON variants without weakening required fields', async () => {

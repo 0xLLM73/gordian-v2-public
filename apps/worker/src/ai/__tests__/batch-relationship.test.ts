@@ -139,6 +139,7 @@ describe('BatchRelationshipExtractor local mode', () => {
 			entityType: 'project',
 			sourceMessageSelection: {
 				method: 'exact_normalized_name',
+				sourceBacked: true,
 			},
 		});
 		expect(JSON.stringify(evidence?.metadata)).not.toContain('solana');

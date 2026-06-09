@@ -165,6 +165,14 @@ export const knowledgeExtractionLog = pgTable(
 		entitiesExtracted: integer('entities_extracted').notNull().default(0),
 		/** Whether the LLM was called (false = embedding-only match) */
 		llmCalled: integer('llm_called').notNull().default(0),
+		/** Oldest message timestamp reached by the resumable historical backfill */
+		backfillOldestMessageAt: timestamp('backfill_oldest_message_at', { withTimezone: true }),
+		/** Message id paired with the timestamp cursor for deterministic pagination */
+		backfillOldestMessageId: uuid('backfill_oldest_message_id'),
+		/** Cumulative messages scanned by historical backfill passes */
+		backfillMessagesScanned: integer('backfill_messages_scanned').notNull().default(0),
+		/** Set once historical backfill has exhausted this contact's imported messages */
+		backfillCompletedAt: timestamp('backfill_completed_at', { withTimezone: true }),
 	},
 	(table) => [
 		uniqueIndex('knowledge_extraction_log_ws_contact_uniq').on(table.workspaceId, table.contactId),

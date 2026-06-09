@@ -577,6 +577,22 @@ describe('runtime execute guard', () => {
 		expect(text).toContain('select first_name from contacts');
 	});
 
+	it('should not treat bound parameter text as SQL column references', async () => {
+		const { sql } = await import('drizzle-orm');
+		const { extractSqlText, guardExecute } = await import('../execute-guard');
+
+		const query = sql`
+			SELECT id FROM memories
+			WHERE content_sanitized = ${'customer event name'}
+				AND workspace_id = ${'550e8400-e29b-41d4-a716-446655440000'}::uuid
+		`;
+		const text = extractSqlText(query);
+
+		expect(text).toContain('select id from memories');
+		expect(text).not.toContain('customer event name');
+		expect(() => guardExecute(text ?? '')).not.toThrow();
+	});
+
 	it('should warn instead of throw in production mode', async () => {
 		const { guardExecute } = await import('../execute-guard');
 		const originalEnv = process.env.NODE_ENV;

@@ -1,0 +1,33 @@
+export const BUILT_IN_INTRO_KEYWORDS = [
+	'introduce',
+	'meet',
+	'connect',
+	'adding',
+	'cc',
+	'forwarded',
+	'reach out',
+	'in touch',
+	'put you in',
+	'loop in',
+] as const;
+
+export const BUILT_IN_CONNECTION_KEYWORDS = [
+	'meet',
+	'meeting',
+	'met',
+	'pleasure',
+	'connect',
+	'connecting',
+	'connected',
+	'conference',
+	'event',
+	'summit',
+	'great to',
+	'nice to',
+	'first time',
+	'glad we',
+	'pleasure to',
+	'lovely to',
+	'just met',
+	'new connection',
+] as const;

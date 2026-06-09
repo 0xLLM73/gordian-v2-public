@@ -31,6 +31,7 @@ export const TELEGRAM_LOCAL_MODE_VALUES = {
 	WORKSPACE_KEY_PROVIDER: 'os-keychain',
 	WORKSPACE_KEYCHAIN_SERVICE: DEFAULT_WORKSPACE_KEYCHAIN_SERVICE,
 	WORKSPACE_KEY_CACHE_TTL_MINUTES: '60',
+	POSTGRES_TEMP_FILE_LIMIT: '256MB',
 	KMS_CMK_ARN: '',
 	AWS_ACCESS_KEY_ID: '',
 	AWS_SECRET_ACCESS_KEY: '',
@@ -47,6 +48,8 @@ const AWS_ACTIVE_KEYS = [
 	'AWS_DEFAULT_PROFILE',
 	'AWS_SESSION_TOKEN',
 ];
+const POSTGRES_TEMP_FILE_LIMIT_PATTERN = /^-?1$|^\d+(?:B|kB|MB|GB|TB)?$/i;
+const DISABLED_POSTGRES_TEMP_FILE_LIMITS = new Set(['', '0', 'off', 'false', 'disabled', 'none']);
 
 const STRICT_TOUCHID_PROBE_SWIFT = `import Foundation
 import LocalAuthentication
@@ -211,6 +214,12 @@ export function getTelegramApiCredentialProvider(env) {
 	return 'invalid';
 }
 
+export function getGordianKeychainHelperPath(env) {
+	return (
+		envValue(env, 'GORDIAN_KEYCHAIN_HELPER_PATH') || process.env.GORDIAN_KEYCHAIN_HELPER_PATH || ''
+	);
+}
+
 export function getTelegramKeychainUserPresenceMode(env) {
 	const configured = envValue(env, 'TELEGRAM_KEYCHAIN_USER_PRESENCE_MODE');
 	if (!configured || configured === 'compat' || configured === 'acl') return 'compat';
@@ -225,6 +234,7 @@ export async function writeTelegramApiCredentialsToKeychain(env, { apiId, apiHas
 
 	await writeKeychainSecret({
 		account: getTelegramApiKeychainAccount(env),
+		helperPath: getGordianKeychainHelperPath(env),
 		service: getKeychainService(env),
 		secret: JSON.stringify({ apiId: apiId.trim(), apiHash: apiHash.trim(), version: 1 }),
 	});
@@ -235,14 +245,22 @@ export async function readTelegramApiCredentialsFromKeychain(env) {
 		throw new Error('macOS Keychain is required for TELEGRAM_API_CREDENTIAL_PROVIDER=os-keychain');
 	}
 
-	const { stdout } = await execFileAsync('security', [
-		'find-generic-password',
-		'-a',
-		getTelegramApiKeychainAccount(env),
-		'-s',
-		getKeychainService(env),
-		'-w',
-	]);
+	const helperPath = getGordianKeychainHelperPath(env);
+	const { stdout } = helperPath
+		? await execFileAsync(helperPath, [
+				'get',
+				getKeychainService(env),
+				getTelegramApiKeychainAccount(env),
+				'standard',
+			])
+		: await execFileAsync('security', [
+				'find-generic-password',
+				'-a',
+				getTelegramApiKeychainAccount(env),
+				'-s',
+				getKeychainService(env),
+				'-w',
+			]);
 	const parsed = JSON.parse(String(stdout).trim());
 	return {
 		apiHash: String(parsed.apiHash ?? ''),
@@ -311,27 +329,31 @@ export async function canConnectTcp(host, port, timeoutMs = 1500) {
 	});
 }
 
-export async function probeMacOsKeychain(service = DEFAULT_KEYCHAIN_SERVICE) {
+export async function probeMacOsKeychain(service = DEFAULT_KEYCHAIN_SERVICE, options = {}) {
 	if (process.platform !== 'darwin') {
 		throw new Error('macOS Keychain is required for TELEGRAM_SESSION_KEY_PROVIDER=os-keychain');
 	}
 
 	const account = `telegram-doctor:${randomUUID()}`;
 	const secret = randomBytes(32).toString('base64');
+	const helperPath = options.helperPath?.trim();
 	try {
 		await writeKeychainSecret({
 			account,
+			helperPath,
 			secret,
 			service,
 		});
-		const { stdout } = await execFileAsync('security', [
-			'find-generic-password',
-			'-a',
-			account,
-			'-s',
-			service,
-			'-w',
-		]);
+		const { stdout } = helperPath
+			? await execFileAsync(helperPath, ['get', service, account, 'standard'])
+			: await execFileAsync('security', [
+					'find-generic-password',
+					'-a',
+					account,
+					'-s',
+					service,
+					'-w',
+				]);
 		if (String(stdout).trim() !== secret) {
 			throw new Error('macOS Keychain read-back check returned a different value');
 		}
@@ -350,13 +372,28 @@ async function execFileWithStdin(command, args, input) {
 	return await new Promise((resolve, reject) => {
 		const child = execFile(command, args, (error, stdout, stderr) => {
 			if (error) {
-				reject(new Error(String(stderr || stdout || error.message).trim()));
+				const detail = String(stderr || stdout || error.message).trim();
+				const signal = error.signal ? `signal ${error.signal}` : '';
+				const code = error.code !== undefined ? `exit code ${error.code}` : '';
+				const suffix = [code, signal].filter(Boolean).join(', ');
+				const message = suffix && !detail.includes(suffix) ? `${detail} (${suffix})` : detail;
+				reject(new Error(explainKeychainProbeError(message)));
 				return;
 			}
 			resolve({ stdout: String(stdout), stderr: String(stderr) });
 		});
 		child.stdin?.end(input);
 	});
+}
+
+function explainKeychainProbeError(message) {
+	if (message.includes('-34018')) {
+		return `${message}. macOS returned errSecMissingEntitlement; strict SecAccessControl.userPresence requires a runnable helper with matching Keychain access-group entitlements and a valid provisioning profile on this Mac. Use compat mode until pnpm keychain-helper:doctor -- --require-strict-ready and pnpm telegram:touchid:probe both pass.`;
+	}
+	if (message.includes('SIGKILL')) {
+		return `${message}. macOS killed the helper before it could report an error; check unified logs for AMFI/provisioning-profile failures and rebuild the broker with a valid Xcode provisioning profile.`;
+	}
+	return message;
 }
 
 export async function probeMacOsStrictTouchIdKeychain(
@@ -650,6 +687,23 @@ export function classifyDoctor(env, options = {}) {
 		add('pass', 'DATABASE_URL', 'points at a local host');
 	} else {
 		add('fail', 'DATABASE_URL', 'must point at localhost/127.0.0.1/::1 for normal local mode');
+	}
+
+	const tempFileLimit = envValue(env, 'POSTGRES_TEMP_FILE_LIMIT') || '256MB';
+	if (DISABLED_POSTGRES_TEMP_FILE_LIMITS.has(tempFileLimit.toLowerCase())) {
+		add(
+			'warn',
+			'POSTGRES_TEMP_FILE_LIMIT',
+			'disabled; Postgres scratch-file growth is not capped by Gordian',
+		);
+	} else if (POSTGRES_TEMP_FILE_LIMIT_PATTERN.test(tempFileLimit)) {
+		add(
+			'pass',
+			'POSTGRES_TEMP_FILE_LIMIT',
+			`${tempFileLimit} transaction-scoped cap requested for heavy metadata queries`,
+		);
+	} else {
+		add('fail', 'POSTGRES_TEMP_FILE_LIMIT', 'expected a value such as 256MB, 1GB, -1, or 0/off');
 	}
 
 	const redisUrl = envValue(env, 'DRAGONFLY_URL') || envValue(env, 'REDIS_URL');

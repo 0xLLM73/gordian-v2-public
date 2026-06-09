@@ -11,11 +11,17 @@ const SENSITIVE_FIELD_KEYS = new Set([
 	'botToken',
 	'content',
 	'encryptedWrk',
+	'embedding',
+	'embeddings',
+	'inputEmbedding',
 	'kmsContext',
 	'message',
 	'messages',
 	'messageText',
+	'mistakeEmbedding',
+	'params',
 	'phoneCodeHash',
+	'queryEmbedding',
 	'rawMessage',
 	'rawMessages',
 	'secret',
@@ -73,8 +79,21 @@ function stringifyUnknown(value: unknown, options: RedactOptions): string {
 	}
 }
 
+function redactDatabaseParams(text: string): string {
+	return text.replace(/\bparams\s*:\s*(?:\[[^\n]*\]|[^\n]*)/gi, `params: ${REDACTED}`);
+}
+
+function redactVectorLikeArrays(text: string): string {
+	const numberPattern = String.raw`[-+]?(?:\d+\.\d+|\d+|\.\d+)(?:e[-+]?\d+)?`;
+	const commaSeparatedNumbers = String.raw`${numberPattern}(?:\s*,\s*${numberPattern}){15,}`;
+	const bracketedVector = new RegExp(String.raw`\[\s*${commaSeparatedNumbers}\s*\]`, 'gi');
+	const bareVector = new RegExp(String.raw`\b${commaSeparatedNumbers}\b`, 'gi');
+
+	return text.replace(bracketedVector, REDACTED).replace(bareVector, REDACTED);
+}
+
 export function redactText(text: string): string {
-	return text
+	return redactVectorLikeArrays(redactDatabaseParams(text))
 		.replace(
 			/https:\/\/api\.telegram\.org\/bot[^/\s"')]+/g,
 			'https://api.telegram.org/bot[redacted]',

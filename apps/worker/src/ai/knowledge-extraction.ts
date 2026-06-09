@@ -119,8 +119,57 @@ export interface EvidenceSourceSelection {
 
 export function evidenceSourceSelectionMetadata(selection: EvidenceSourceSelection): {
 	method: EvidenceSourceSelection['method'];
+	sourceBacked: boolean;
 } {
-	return { method: selection.method };
+	return { method: selection.method, sourceBacked: evidenceSelectionHasDirectSource(selection) };
+}
+
+export function evidenceSelectionHasDirectSource(selection: EvidenceSourceSelection): boolean {
+	return selection.method !== 'fallback_latest' && !!selection.message;
+}
+
+export function buildKnowledgeEvidenceFromSelection(
+	entity: EvidenceSelectableEntity & {
+		type?: string;
+		confidence?: number | null;
+	},
+	selection: EvidenceSourceSelection,
+	source: string,
+	envelope: SealedEnvelope,
+) {
+	const sourceBacked = evidenceSelectionHasDirectSource(selection);
+	const evidenceMessage = sourceBacked ? selection.message : undefined;
+	return {
+		messageId: evidenceMessage?.id,
+		snippet: evidenceMessage?.text.slice(0, 1000),
+		occurredAt: evidenceMessage?.occurredAt,
+		evidenceKind: sourceBacked ? ('llm_extracted' as const) : ('inferred_weak' as const),
+		confidence: entity.confidence ?? null,
+		metadata: {
+			source,
+			entityType: entity.type,
+			sourceMessageSelection: evidenceSourceSelectionMetadata(selection),
+		},
+		envelope,
+	};
+}
+
+function selectEvidenceForExistingNode(
+	node: {
+		name: string;
+		displayName?: string | null;
+		aliases?: string[] | null;
+	},
+	messages: NormalizedKnowledgeMessage[],
+): EvidenceSourceSelection {
+	return selectEvidenceMessage(
+		{
+			name: node.name,
+			displayName: node.displayName ?? node.name,
+			aliases: node.aliases ?? [],
+		},
+		messages,
+	);
 }
 
 function normalizeForEvidenceMatch(value: string): string {
@@ -410,20 +459,12 @@ async function llmExtractEntities(
 		try {
 			const normalizedName = entity.name.toLowerCase();
 			const evidenceSelection = selectEvidenceMessage(entity, messages);
-			const evidenceMessage = evidenceSelection.message;
-			const evidence = {
-				messageId: evidenceMessage?.id,
-				snippet: evidenceMessage?.text.slice(0, 1000),
-				occurredAt: evidenceMessage?.occurredAt,
-				evidenceKind: 'llm_extracted' as const,
-				confidence: entity.confidence,
-				metadata: {
-					source: inference.source,
-					entityType: entity.type,
-					sourceMessageSelection: evidenceSourceSelectionMetadata(evidenceSelection),
-				},
+			let evidence = buildKnowledgeEvidenceFromSelection(
+				entity,
+				evidenceSelection,
+				inference.source,
 				envelope,
-			};
+			);
 
 			// Cross-type dedup: check if this name exists under ANY type
 			const existingAnyType = await findNodeByNameAnyType(workspaceId, normalizedName, envelope);
@@ -489,8 +530,24 @@ async function llmExtractEntities(
 			if (closest?.similarity !== undefined) {
 				warnIfEmbeddingFingerprintChanged('llm_dedup', closest);
 				const sim = closest.similarity;
-				if (sim > COSINE_DEDUP_THRESHOLD) {
+				const matchedNodeEvidenceSelection = selectEvidenceForExistingNode(closest, messages);
+				if (
+					sim > COSINE_DEDUP_THRESHOLD &&
+					evidenceSelectionHasDirectSource(matchedNodeEvidenceSelection)
+				) {
 					nodeId = closest.id;
+					evidence = buildKnowledgeEvidenceFromSelection(
+						{
+							name: closest.name,
+							displayName: closest.displayName,
+							aliases: closest.aliases ?? [],
+							type: closest.type,
+							confidence: entity.confidence,
+						},
+						matchedNodeEvidenceSelection,
+						inference.source,
+						envelope,
+					);
 					await incrementNodeMentionCount(workspaceId, nodeId);
 					console.log(
 						`[knowledge-extraction] Reusing node "${closest.name}" (similarity=${sim.toFixed(3)})`,

@@ -1,7 +1,7 @@
 'use client';
 
 import { generateDigestAction, listDigestsAction } from '@/app/actions/digest';
-import { useState, useTransition } from 'react';
+import * as React from 'react';
 
 type Period = 'today' | 'yesterday' | '3d' | 'week';
 
@@ -81,14 +81,14 @@ export function DigestViewer({
 	canGenerate = true,
 	generateDisabledReason,
 }: DigestViewerProps) {
-	const [period, setPeriod] = useState<Period>('today');
-	const [digests, setDigests] = useState<DigestRecord[]>(initialDigests);
-	const [selectedDigest, setSelectedDigest] = useState<DigestRecord | null>(
+	const [period, setPeriod] = React.useState<Period>('today');
+	const [digests, setDigests] = React.useState<DigestRecord[]>(initialDigests);
+	const [selectedDigest, setSelectedDigest] = React.useState<DigestRecord | null>(
 		initialDigests[0] ?? null,
 	);
-	const [isPending, startTransition] = useTransition();
-	const [generating, setGenerating] = useState(false);
-	const [generateError, setGenerateError] = useState<string | null>(null);
+	const [isPending, startTransition] = React.useTransition();
+	const [generating, setGenerating] = React.useState(false);
+	const [generateError, setGenerateError] = React.useState<string | null>(null);
 
 	function handleGenerate() {
 		if (!canGenerate) {
@@ -348,14 +348,45 @@ function SourceCoverage({ coverage }: { coverage: DigestSections['source_coverag
 	const conversationLabel = coverage.total_conversations === 1 ? 'conversation' : 'conversations';
 	const promptConversationLabel =
 		coverage.prompt_conversations === 1 ? 'conversation' : 'conversations';
+	const messageCoveragePercent = percent(coverage.sampled_messages, coverage.total_messages);
+	const promptCoveragePercent = percent(
+		coverage.prompt_messages ?? coverage.sampled_messages,
+		coverage.total_messages,
+	);
+	const conversationCoveragePercent = percent(
+		coverage.prompt_conversations,
+		coverage.total_conversations,
+	);
 
 	return (
-		<div className="mt-3 rounded-md border border-border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+		<div className="mt-3 rounded-md border border-border bg-muted/50 px-3 py-3 text-xs text-muted-foreground">
+			<div className="mb-3 grid gap-3 sm:grid-cols-3">
+				<CoverageMeter
+					label="Messages sampled"
+					value={messageCoveragePercent}
+					detail={`${formatNumber(coverage.sampled_messages)} / ${formatNumber(coverage.total_messages)}`}
+				/>
+				<CoverageMeter
+					label="Prompt excerpts"
+					value={promptCoveragePercent}
+					detail={`${formatNumber(coverage.prompt_messages ?? coverage.sampled_messages)} / ${formatNumber(coverage.total_messages)}`}
+				/>
+				<CoverageMeter
+					label="Conversations covered"
+					value={conversationCoveragePercent}
+					detail={`${formatNumber(coverage.prompt_conversations)} / ${formatNumber(coverage.total_conversations)}`}
+				/>
+			</div>
 			<p>
 				{usedFullPeriod
 					? `Digest used all ${coverage.total_messages} messages across ${coverage.total_conversations} ${conversationLabel}.`
 					: `Digest sampled ${coverage.sampled_messages} of ${coverage.total_messages} messages across ${coverage.total_conversations} ${conversationLabel}.`}
 			</p>
+			{usedFullPeriod ? null : (
+				<p className="mt-1 font-medium text-amber-700">
+					Sampled context: some messages were not included in prompt excerpts.
+				</p>
+			)}
 			<p className="mt-1">
 				Prompt included{' '}
 				{coverage.prompt_messages ? `${coverage.prompt_messages} message excerpts from ` : ''}
@@ -370,6 +401,30 @@ function SourceCoverage({ coverage }: { coverage: DigestSections['source_coverag
 			) : null}
 		</div>
 	);
+}
+
+function CoverageMeter({ label, value, detail }: { label: string; value: number; detail: string }) {
+	return (
+		<div>
+			<div className="flex items-center justify-between gap-2">
+				<span className="font-medium text-foreground">{label}</span>
+				<span>{Math.round(value)}%</span>
+			</div>
+			<div className="mt-1 h-1.5 overflow-hidden rounded-full bg-background">
+				<div className="h-full rounded-full bg-foreground" style={{ width: `${value}%` }} />
+			</div>
+			<div className="mt-1 text-muted-foreground">{detail}</div>
+		</div>
+	);
+}
+
+function percent(value: number, total: number): number {
+	if (!Number.isFinite(value) || !Number.isFinite(total) || total <= 0) return 0;
+	return Math.max(0, Math.min(100, (value / total) * 100));
+}
+
+function formatNumber(value: number): string {
+	return new Intl.NumberFormat().format(value);
 }
 
 function SentimentBadge({ sentiment }: { sentiment: 'positive' | 'neutral' | 'negative' }) {

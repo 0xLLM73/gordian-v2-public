@@ -1,7 +1,14 @@
 import { KnowledgeBrowser } from '@/app/(dashboard)/knowledge/knowledge-browser';
 import { LocalAiStatusPanel } from '@/components/local-ai-status-panel';
+import { getKnowledgeEvidenceQualityStatsForNodes } from '@/lib/knowledge-evidence-quality';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
-import { getContactsByIds, listContactIdsByKnowledge, listKnowledgeNodes } from '@repo/db';
+import {
+	getContactsByIds,
+	getKnowledgeNodeEvidenceStats,
+	getMessageContactCoverageReport,
+	listContactIdsByKnowledge,
+	listKnowledgeNodes,
+} from '@repo/db';
 import { Suspense } from 'react';
 
 export const metadata = { title: 'Knowledge' };
@@ -37,6 +44,16 @@ export default async function KnowledgePage() {
 async function KnowledgeBrowserSection({ workspaceId }: { workspaceId: string }) {
 	const envelope = await getWorkspaceEnvelope(workspaceId);
 	const nodes = await listKnowledgeNodes(workspaceId, { limit: 50 }, envelope ?? undefined);
+	const evidenceStats = await getKnowledgeNodeEvidenceStats(
+		workspaceId,
+		nodes.map((node) => node.id),
+	);
+	const evidenceQualityStats = await getKnowledgeEvidenceQualityStatsForNodes(
+		workspaceId,
+		nodes,
+		envelope,
+	);
+	const messageCoverage = await getMessageContactCoverageReport(workspaceId);
 
 	// Enrich with contact previews (same logic as listKnowledgeNodesAction)
 	const contactIdsByNode = await Promise.all(
@@ -73,6 +90,15 @@ async function KnowledgeBrowserSection({ workspaceId }: { workspaceId: string })
 			displayName: n.displayName,
 			description: n.description ?? null,
 			mentionCount: n.mentionCount ?? 0,
+			evidenceCount: evidenceStats.get(n.id)?.evidenceRows ?? 0,
+			distinctEvidenceMessages: evidenceStats.get(n.id)?.distinctEvidenceMessages ?? 0,
+			distinctEvidenceContacts: evidenceStats.get(n.id)?.distinctEvidenceContacts ?? 0,
+			aggregateEvidenceCount: evidenceStats.get(n.id)?.aggregateLinkEvidenceCount ?? 0,
+			directEvidenceRows: evidenceQualityStats.get(n.id)?.directEvidenceRows ?? 0,
+			directEvidenceMessages: evidenceQualityStats.get(n.id)?.directEvidenceMessages ?? 0,
+			directEvidenceContacts: evidenceQualityStats.get(n.id)?.directEvidenceContacts ?? 0,
+			possibleEvidenceRows: evidenceQualityStats.get(n.id)?.possibleEvidenceRows ?? 0,
+			weakEvidenceRows: evidenceQualityStats.get(n.id)?.weakEvidenceRows ?? 0,
 			firstSeenAt: n.firstSeenAt ?? null,
 			lastSeenAt: n.lastSeenAt ?? null,
 			createdAt: n.createdAt ?? null,
@@ -81,7 +107,7 @@ async function KnowledgeBrowserSection({ workspaceId }: { workspaceId: string })
 		};
 	});
 
-	return <KnowledgeBrowser initialNodes={enrichedNodes} />;
+	return <KnowledgeBrowser initialNodes={enrichedNodes} messageCoverage={messageCoverage} />;
 }
 
 function KnowledgeSkeleton() {
