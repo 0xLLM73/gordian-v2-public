@@ -321,6 +321,84 @@ function assertDependabotCoverage() {
 	}
 }
 
+const allowedSqlFiles = [/^packages\/db\/drizzle\/[0-9]{4}[a-z]?_[A-Za-z0-9_-]+\.sql$/];
+
+const allowedPublicFixtureFiles = [
+	/^apps\/web\/e2e\/fixtures\/(auth|deals)\.ts$/,
+	/^packages\/db\/src\/__tests__\/fixtures\/knowledge-recall-(fixture|harness|quality)\.ts$/,
+	/^packages\/db\/src\/__tests__\/fixtures\/knowledge-recall-quality-baseline\.json$/,
+];
+
+const highRiskPublicArtifactRules = [
+	{
+		label: 'database or backup dump',
+		pattern: /\.(sqlite|sqlite3|db|dump|backup|bak|pgdump|psql)$/i,
+	},
+	{
+		label: 'dataset export',
+		pattern: /\.(csv|tsv|jsonl|ndjson|parquet|arrow|xls|xlsx|ods)$/i,
+	},
+	{
+		label: 'log, HAR, or trace artifact',
+		pattern: /\.(log|har|trace)$/i,
+	},
+	{
+		label: 'screenshot or captured image artifact',
+		pattern: /\.(png|jpg|jpeg|webp|gif|bmp|tif|tiff|heic)$/i,
+	},
+	{
+		label: 'video or screen-recording artifact',
+		pattern: /\.(mp4|mov|webm|mkv|avi)$/i,
+	},
+	{
+		label: 'compressed archive artifact',
+		pattern: /\.(zip|tar|tgz|tar\.gz|gz|7z|rar)$/i,
+	},
+];
+
+const highRiskJsonArtifactPath =
+	/(^|\/)(exports?|data-exports?|dumps?|db-dumps?|database-dumps?|backups?|snapshots?|logs?|screenshots?|screen-recordings?|recordings?|playwright-report|test-results)\/.*\.json$/i;
+
+function isAllowedSqlFile(path) {
+	return allowedSqlFiles.some((pattern) => pattern.test(path));
+}
+
+function isFixturePath(path) {
+	return /(^|\/)(__fixtures__|fixtures)(\/|$)/.test(path);
+}
+
+function isAllowedPublicFixtureFile(path) {
+	return allowedPublicFixtureFiles.some((pattern) => pattern.test(path));
+}
+
+function assertPublicArtifactPath(path) {
+	if (/\.sql$/i.test(path) && !isAllowedSqlFile(path)) {
+		fail(
+			`${path} is a SQL file outside the Drizzle migration allowlist; do not publish database dumps or ad hoc SQL exports`,
+		);
+	}
+
+	for (const rule of highRiskPublicArtifactRules) {
+		if (rule.pattern.test(path)) {
+			fail(
+				`${path} looks like a ${rule.label}; public PRs must not include dumps, exports, logs, screenshots, videos, or archives`,
+			);
+		}
+	}
+
+	if (highRiskJsonArtifactPath.test(path)) {
+		fail(
+			`${path} looks like exported JSON or a generated report artifact; keep exports, logs, screenshots, and test reports out of the public tree`,
+		);
+	}
+
+	if (isFixturePath(path) && !isAllowedPublicFixtureFile(path)) {
+		fail(
+			`${path} is a fixture outside the approved synthetic fixture allowlist; add only deterministic demo fixtures and update the allowlist intentionally`,
+		);
+	}
+}
+
 function scanCurrentTree() {
 	const forbiddenSensitiveFiles = [
 		/\.p12$/i,
@@ -356,6 +434,8 @@ function scanCurrentTree() {
 	];
 
 	for (const path of trackedAndPendingFiles()) {
+		assertPublicArtifactPath(path);
+
 		for (const pattern of forbiddenSensitiveFiles) {
 			if (pattern.test(path)) {
 				fail(`${path} matched forbidden sensitive-file pattern ${pattern}`);
