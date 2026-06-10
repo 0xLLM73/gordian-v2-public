@@ -124,7 +124,7 @@ describe('DealLocalAiPanel', () => {
 		await waitFor(() =>
 			expect(mockUpdateStatus).toHaveBeenCalledWith({ runId: run.id, status: 'accepted' }),
 		);
-		expect(screen.getByText('accepted')).toBeTruthy();
+		expect(await screen.findByText('accepted')).toBeTruthy();
 	});
 
 	it('collapses older saved outputs behind a history toggle', () => {

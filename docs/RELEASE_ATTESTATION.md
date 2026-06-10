@@ -13,19 +13,19 @@ data into this file. Record only status, date, owner, and short evidence notes.
 | Field | Value |
 | --- | --- |
 | Release candidate commit | Code release candidate `c110d801ad769040f788820c4c6bfd5dbf56bae0` after PR #116 merged; evidence-only docs were refreshed afterward without app-code changes |
-| Validated source baseline | App-code baseline remains `c110d801ad769040f788820c4c6bfd5dbf56bae0`; source `main` is current through evidence-only PRs #117, #118, #119, #120, and #121 at `d33c5b1fb51c19edbc7a38668f3140d7c80901a4` |
+| Validated source baseline | App-code baseline remains `c110d801ad769040f788820c4c6bfd5dbf56bae0`; source `main` is current through evidence-only PRs #117, #118, #119, #120, #121, and #122 at `a2de1904` |
 | Source repository | `0xLLM73/gordian-v2` |
 | Release-control accounts | `@0xLLM73` and `@thegrovest` |
 | Attestation owner | Zachary Grove using the `@0xLLM73` and `@thegrovest` release-control accounts, assisted by Codex |
 | Attestation date | 2026-06-10 PT |
-| Publication target | `0xLLM73/gordian-v2-public`; private mirror PR #38 synced source commit `c110d801ad769040f788820c4c6bfd5dbf56bae0`, and mirror PRs #39, #40, #41, and #42 synced later evidence-only release docs through mirror `main` `9952507` after green CI and required `@thegrovest` review |
+| Publication target | `0xLLM73/gordian-v2-public`; private mirror PR #38 synced source commit `c110d801ad769040f788820c4c6bfd5dbf56bae0`, and mirror PRs #39, #40, #41, #42, and #43 synced later evidence-only release docs through mirror `main` `85f851f` after green CI and required `@thegrovest` review |
 
 This is a readiness attestation, not a final public-release approval. The mirror
 remains private. The existing public mirror remains the selected target because
 the release docs, check scripts, and GitHub links already point at it. Source
 validation is materially stronger after PRs #108 through #116, source PRs #117
-through #121 are evidence-only documentation updates, and mirror PRs #38 through
-#42 reran the required gates from the mirror checkout before merge, but this is
+through #122 are evidence-only documentation updates, and mirror PRs #38 through
+#43 reran the required gates from the mirror checkout before merge, but this is
 not a release approval: the mirror remains private, GitHub public-security
 settings are not yet available, provider-side rotation is not signed off,
 runtime cleanup is not signed off, and final release owner/security/runtime
@@ -38,7 +38,7 @@ sanitized repository instead of keeping the current mirror history.
 
 | Gate | Required result | Status | Evidence |
 | --- | --- | --- | --- |
-| Clean checkout | `git status --short --branch` shows a clean release branch | PASS | 2026-06-10 PT: source `main` was clean and synced to `origin/main` at `d33c5b1fb51c19edbc7a38668f3140d7c80901a4`; mirror `main` was clean and synced to `origin/main` at `9952507`. |
+| Clean checkout | `git status --short --branch` shows a clean release branch | PASS | 2026-06-10 PT: source `main` was clean and synced to `origin/main` at `a2de1904`; mirror `main` was clean and synced to `origin/main` at `85f851f`. |
 | Frozen install | `pnpm install --frozen-lockfile` passes | PASS | 2026-06-10 PT: lockfile was up to date and install completed successfully. |
 | Dependency audit | `pnpm audit` and `pnpm audit --prod` pass | PASS | 2026-06-10 PT: both commands reported `No known vulnerabilities found` when run with registry access. |
 | Open-source audit | `pnpm audit:open-source` passes on a full-depth checkout | PASS | 2026-06-10 PT: `Open-source audit passed` on the source release candidate and on the mirror PR #38 checkout. |
@@ -53,7 +53,7 @@ sanitized repository instead of keeping the current mirror history.
 | Derived data audit | `pnpm security:derived-data-audit` passes | PASS | 2026-06-10 PT: source and mirror isolated-DB audits completed with 0 violations. Mirror checked 17 plain derived columns, 72 plain derived rows, 9 vector columns, and 40 populated vector rows. |
 | Knowledge security audit | `pnpm kg:security:audit` passes | PASS | 2026-06-10 PT: source and mirror isolated-DB audits completed with 0 violations. The seeded databases had no plaintext-shaped knowledge leaks in the checked surfaces. |
 | Local AI readiness | `pnpm local-ai:doctor` and `pnpm kg:local:smoke` pass | PASS | 2026-06-10 PT: source validated local AI readiness, and mirror PR #38 validated Qwen local AI through temporary nontracked env `/private/tmp/gordian-mirror-local-ai.env`; doctor had 0 failures and 0 warnings, `qwen3-embedding:0.6b` returned 512 dimensions, and `qwen3.5:9b` handled commitment extraction, chat assistant, and digest generation. Temporary Ollama was stopped after validation. |
-| Publication check | `pnpm check:publication --repo 0xLLM73/gordian-v2-public` passes after the repo is public | BLOCKED | 2026-06-10 PT: post-PR #42 mirror check failed as expected because the selected mirror is private; secret scanning and push protection are unavailable; private vulnerability reporting returns 404. Rerun after the sanitized mirror is synced, intentionally made public, and GitHub-side settings are enabled. |
+| Publication check | `pnpm check:publication --repo 0xLLM73/gordian-v2-public` passes after the repo is public | BLOCKED | 2026-06-10 PT: post-PR #43 mirror check failed as expected because the selected mirror is private; secret scanning and push protection are unavailable; private vulnerability reporting returns 404. Rerun after the sanitized mirror is synced, intentionally made public, and GitHub-side settings are enabled. |
 
 ## GitHub Settings
 
@@ -65,15 +65,15 @@ sanitized repository instead of keeping the current mirror history.
 | Private vulnerability reporting | Enabled | BLOCKED | 2026-06-10 PT: GitHub API returns 404 while the mirror remains private. Re-run after intentional publication and enable private vulnerability reporting. |
 | Dependabot alerts | Enabled | PASS | 2026-06-10 PT: source and mirror Dependabot vulnerability-alert endpoints returned 204, open alert queries returned `[]`, and merged mirror `main` pins `hono 4.12.23` while passing `pnpm audit` plus `pnpm audit --prod`. |
 | Dependabot security updates | Enabled and unpaused | PASS | 2026-06-10 PT: source and mirror automated-security-fixes endpoints returned `{"enabled":true,"paused":false}`. |
-| Branch checks | `main` requires strict `validate` and `demo-smoke` checks | PASS | Source and mirror `main` require strict `validate` and `demo-smoke` checks. Mirror PRs #38, #39, #40, #41, and #42 passed GitHub `validate` and `demo-smoke`; PR #38 also passed `postgres-smoke`. |
-| Review policy | `main` requires owner approval before merge | PASS | 2026-06-10 PT: source and mirror branch protection require CODEOWNER review with one approval, dismiss stale reviews, enforce admins, require linear history, block force pushes, and block deletions. Mirror PRs #38 through #42 stayed blocked until required `@thegrovest` review landed, then merged cleanly. |
+| Branch checks | `main` requires strict `validate` and `demo-smoke` checks | PASS | Source and mirror `main` require strict `validate` and `demo-smoke` checks. Mirror PRs #38, #39, #40, #41, #42, and #43 passed GitHub `validate` and `demo-smoke`; PR #38 also passed `postgres-smoke`. |
+| Review policy | `main` requires owner approval before merge | PASS | 2026-06-10 PT: source and mirror branch protection require CODEOWNER review with one approval, dismiss stale reviews, enforce admins, require linear history, block force pushes, and block deletions. Mirror PRs #38 through #43 stayed blocked until required `@thegrovest` review landed, then merged cleanly. |
 | Protected history | `main` blocks force pushes and deletion, enforces admins and linear history | PASS | Source and mirror branch protection confirms admins enforced, linear history required, force pushes blocked, deletions blocked, and conversation resolution required. |
 
 ## Ongoing Regression System
 
 | Gate | Required result | Status | Evidence |
 | --- | --- | --- | --- |
-| Every PR gate | CI runs open-source audit, package audits, lint, typecheck, tests, and demo smoke before merge | PASS | PRs #108 through #121 merged only after required review and green CI; mirror PRs #38 through #42 merged after required review and green CI. |
+| Every PR gate | CI runs open-source audit, package audits, lint, typecheck, tests, and demo smoke before merge | PASS | PRs #108 through #122 merged only after required review and green CI; mirror PRs #38 through #43 merged after required review and green CI. |
 | Release browser QA matrix | Full route matrix is run for each release candidate and evidence is recorded here | PASS | 2026-06-10 PT: source and mirror release smoke passed 31 desktop/mobile route checks. In-app Browser could read the current `http://localhost:3456/onboarding/connect` page, which showed local Telegram linking copy and had no captured console issues, but direct in-app navigation to localhost and 127.0.0.1 routes returned `ERR_BLOCKED_BY_CLIENT`; fallback Playwright release smoke was therefore used for the full matrix and passed 31/31 after public-release Telegram flags were forced off. Repeat after any later mirror sync if source changes again before publication. |
 | Weekly publication review | Publication readiness, Dependabot, secret scanning, push protection, vulnerability reporting, and branch protection are reviewed | PENDING | Begin after the mirror is public and GitHub-side settings are available. |
 | Monthly sensitive-data review | Data classification, exports, AI egress, logging/audit, Telegram safety, and runtime purge coverage are reviewed | PENDING | Begin after public release; record accepted risks with owner and date. |
