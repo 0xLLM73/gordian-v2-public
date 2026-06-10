@@ -311,9 +311,15 @@ async function addWorkerSendDisabledCheck(checks, env, options) {
 	}
 
 	const workerUrl = runtimeValue(env, 'WORKER_URL');
-	const internalSecret = runtimeValue(env, 'INTERNAL_AUTH_SECRET');
+	const internalSecret =
+		runtimeValue(env, 'WORKER_INTERNAL_SECRET') ?? runtimeValue(env, 'INTERNAL_AUTH_SECRET');
 	if (!workerUrl || !internalSecret) {
-		add(checks, 'warn', 'Worker send-disabled route', 'WORKER_URL/INTERNAL_AUTH_SECRET not set');
+		add(
+			checks,
+			'warn',
+			'Worker send-disabled route',
+			'WORKER_URL/WORKER_INTERNAL_SECRET or INTERNAL_AUTH_SECRET not set',
+		);
 		return;
 	}
 	if (!isLocalUrl(workerUrl)) {

@@ -80,6 +80,12 @@ assertIncludes('.github/workflows/ci.yml', ci, [
 	'demo-smoke.spec.ts',
 ]);
 
+const telegramSecuritySmoke = readRequired('scripts/telegram-security-smoke.mjs');
+assertIncludes('scripts/telegram-security-smoke.mjs', telegramSecuritySmoke, [
+	"runtimeValue(env, 'WORKER_INTERNAL_SECRET') ?? runtimeValue(env, 'INTERNAL_AUTH_SECRET')",
+	'WORKER_URL/WORKER_INTERNAL_SECRET or INTERNAL_AUTH_SECRET not set',
+]);
+
 if (failures.length > 0) {
 	console.error('\nRelease regression guard failed:');
 	for (const message of failures) console.error(`- ${message}`);
