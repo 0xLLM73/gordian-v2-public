@@ -1075,8 +1075,7 @@ admin.post('/embed', async (c) => {
  * POST /admin/trigger-health
  *
  * Triggers health scoring for a specific workspace or all workspaces.
- * The worker already runs this on a 24h setInterval — this endpoint
- * allows on-demand triggering (e.g. after a large sync or backfill).
+ * This is a force trigger for manual operations and tests.
  */
 admin.post('/trigger-health', async (c) => {
 	const internalSecret = c.req.header('X-Internal-Secret');
@@ -1107,6 +1106,63 @@ admin.post('/trigger-health', async (c) => {
 
 	console.log(`[admin] Enqueued health-scoring for ${allWorkspaces.length} workspaces`);
 	return c.json({ status: 'queued', workspaceCount: allWorkspaces.length, jobIds });
+});
+
+/**
+ * POST /admin/ensure-health
+ *
+ * Stale-aware health scoring trigger used by local/open-time product paths.
+ * It queues only when scores are missing, old, or explicitly forced.
+ */
+admin.post('/ensure-health', async (c) => {
+	const internalSecret = c.req.header('X-Internal-Secret');
+	if (!validateInternalSecret(internalSecret)) {
+		return c.json({ error: 'Unauthorized' }, 401);
+	}
+
+	const body = (await c.req
+		.json<{
+			workspaceId?: string;
+			reason?: string;
+			force?: boolean;
+			staleAfterMinutes?: number;
+		}>()
+		.catch(() => ({}))) as {
+		workspaceId?: string;
+		reason?: string;
+		force?: boolean;
+		staleAfterMinutes?: number;
+	};
+
+	const staleAfterMinutes = Number(body.staleAfterMinutes);
+	const staleAfterMs = Number.isFinite(staleAfterMinutes)
+		? Math.max(0, Math.trunc(staleAfterMinutes * 60 * 1000))
+		: undefined;
+
+	const { enqueueHealthScoringForWorkspace, queueHealthScoringForAllWorkspaces } = await import(
+		'../queues/health-scoring-queue'
+	);
+
+	if (body.workspaceId) {
+		const result = await enqueueHealthScoringForWorkspace(body.workspaceId, {
+			force: body.force === true,
+			reason: body.reason ?? 'open_app',
+			staleAfterMs,
+		});
+		return c.json({ status: result.queued ? 'queued' : 'skipped', ...result });
+	}
+
+	const results = await queueHealthScoringForAllWorkspaces({
+		force: body.force === true,
+		reason: body.reason ?? 'open_app',
+		staleAfterMs,
+	});
+	return c.json({
+		status: 'ok',
+		workspaceCount: results.length,
+		queuedCount: results.filter((result) => result.queued).length,
+		results,
+	});
 });
 
 /**

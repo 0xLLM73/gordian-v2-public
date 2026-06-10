@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockListFollowUpPlans = vi.fn();
+const mockGetFollowUpPlanSteps = vi.fn(
+	(): Promise<Array<{ id: string; status: string }>> => Promise.resolve([]),
+);
 
 const mockWorkspacesResult = [{ encryptedWrk: 'dGVzdA==', kmsContext: {}, wrkVersion: 1 }];
 const mockEq = vi.fn();
@@ -11,6 +14,7 @@ const mockDbSelect = vi.fn(() => ({ from: mockFrom }));
 
 vi.mock('@repo/db', () => ({
 	listFollowUpPlans: mockListFollowUpPlans,
+	getFollowUpPlanSteps: mockGetFollowUpPlanSteps,
 	db: { select: () => mockDbSelect() },
 	eq: mockEq,
 	workspaces: {
@@ -39,6 +43,7 @@ vi.mock('grammy', () => {
 describe('follow-up plans bot command', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockGetFollowUpPlanSteps.mockResolvedValue([]);
 	});
 
 	async function getHandler() {
@@ -77,8 +82,8 @@ describe('follow-up plans bot command', () => {
 		mockListFollowUpPlans.mockImplementation((_ws: string, opts: { status: string }) => {
 			if (opts.status === 'active') {
 				return Promise.resolve([
-					{ title: 'VC Follow-up', completedSteps: 2, totalSteps: 4 },
-					{ title: 'Deal Nurture', completedSteps: 0, totalSteps: 3 },
+					{ id: 'plan-1', title: 'VC Follow-up', completedSteps: 2, totalSteps: 4 },
+					{ id: 'plan-2', title: 'Deal Nurture', completedSteps: 0, totalSteps: 3 },
 				]);
 			}
 			return Promise.resolve([]);
@@ -92,15 +97,45 @@ describe('follow-up plans bot command', () => {
 		expect(reply).toContain('Active follow-up plans:');
 		expect(reply).toContain('VC Follow-up — step 2/4');
 		expect(reply).toContain('Deal Nurture — step 0/3');
+		expect(reply).toContain('Drafts are generated locally and are not sent automatically.');
+	});
+
+	it('surfaces pending local drafts before general active plans', async () => {
+		mockListFollowUpPlans.mockImplementation((_ws: string, opts: { status: string }) => {
+			if (opts.status === 'active') {
+				return Promise.resolve([
+					{ id: 'plan-1', title: 'VC Follow-up', completedSteps: 1, totalSteps: 4 },
+				]);
+			}
+			return Promise.resolve([]);
+		});
+		mockGetFollowUpPlanSteps.mockResolvedValue([
+			{ id: 'step-1', status: 'pending_review' },
+			{ id: 'step-2', status: 'pending_review' },
+			{ id: 'step-3', status: 'pending' },
+		]);
+
+		const handler = await getHandler();
+		const ctx = makeCtx('ws-1');
+		await handler!(ctx);
+
+		const reply = ctx.reply.mock.calls[0][0] as string;
+		expect(reply.startsWith('Needs review:')).toBe(true);
+		expect(reply).toContain('VC Follow-up — 2 local drafts waiting');
+		expect(reply).toContain('VC Follow-up — step 1/4, 2 needs review');
 	});
 
 	it('lists both active and paused follow-up plans', async () => {
 		mockListFollowUpPlans.mockImplementation((_ws: string, opts: { status: string }) => {
 			if (opts.status === 'active') {
-				return Promise.resolve([{ title: 'VC Follow-up', completedSteps: 1, totalSteps: 4 }]);
+				return Promise.resolve([
+					{ id: 'plan-1', title: 'VC Follow-up', completedSteps: 1, totalSteps: 4 },
+				]);
 			}
 			if (opts.status === 'paused') {
-				return Promise.resolve([{ title: 'Re-engage', completedSteps: 1, totalSteps: 3 }]);
+				return Promise.resolve([
+					{ id: 'plan-2', title: 'Re-engage', completedSteps: 1, totalSteps: 3 },
+				]);
 			}
 			return Promise.resolve([]);
 		});
@@ -115,5 +150,25 @@ describe('follow-up plans bot command', () => {
 		expect(reply).toContain('Paused follow-up plans:');
 		expect(reply).toContain('Re-engage');
 		expect(reply).toContain('(paused)');
+	});
+
+	it('lists draft follow-up plans as not active yet', async () => {
+		mockListFollowUpPlans.mockImplementation((_ws: string, opts: { status: string }) => {
+			if (opts.status === 'draft') {
+				return Promise.resolve([
+					{ id: 'plan-1', title: 'Draft VC Plan', completedSteps: 0, totalSteps: 4 },
+				]);
+			}
+			return Promise.resolve([]);
+		});
+
+		const handler = await getHandler();
+		const ctx = makeCtx('ws-1');
+		await handler!(ctx);
+
+		const reply = ctx.reply.mock.calls[0][0] as string;
+		expect(reply).toContain('Draft follow-up plans:');
+		expect(reply).toContain('Draft VC Plan — not active yet');
+		expect(reply).toContain('Drafts are generated locally and are not sent automatically.');
 	});
 });

@@ -82,6 +82,21 @@ export type {
 } from './chat-ai';
 
 export {
+	buildDealContextPack,
+	buildDeterministicDealOutput,
+	generateDealLocalAiOutput,
+	getDealLocalAiStatus,
+} from './deal-local-ai';
+export type {
+	BuildDealContextInput,
+	DealContextPack,
+	DealContextSource,
+	DealLocalAiGeneratedOutput,
+	DealLocalAiRunType,
+	DealLocalAiStatus,
+} from './deal-local-ai';
+
+export {
 	assertAiProcessingEnabled,
 	canRunCommitmentExtraction,
 	canRunEmbeddingGeneration,

@@ -1,7 +1,7 @@
 import { eq, or, sql } from 'drizzle-orm';
 import { db } from '../client';
 import { auditLogs } from '../schema/audit-log';
-import { accounts, sessions } from '../schema/auth';
+import { accounts, sessions, verifications } from '../schema/auth';
 import { userBehaviors } from '../schema/behaviors';
 import { briefs } from '../schema/briefs';
 import { calendarConnections, calendarEvents } from '../schema/calendar';
@@ -10,20 +10,32 @@ import { chatParticipants } from '../schema/chat-participants';
 import { chats } from '../schema/chats';
 import { commitments } from '../schema/commitments';
 import { connections } from '../schema/connections';
+import { contactHealthFeedback } from '../schema/contact-health-feedback';
 import { contactShares } from '../schema/contact-shares';
 import { contactStyleOverrides } from '../schema/contact-style-overrides';
 import { contactTags } from '../schema/contact-tags';
 import { contacts } from '../schema/contacts';
 import { correctionDiffs } from '../schema/correction-diffs';
+import { dealAiRuns } from '../schema/deal-ai-runs';
 import { dealArtifacts } from '../schema/deal-artifacts';
 import { dealCandidates } from '../schema/deal-candidates';
+import { dealDecisions } from '../schema/deal-decisions';
+import { dealEvidenceLinks } from '../schema/deal-evidence-links';
 import { dealParticipants } from '../schema/deal-participants';
+import { dealStageEvents } from '../schema/deal-stage-events';
 import { deals } from '../schema/deals';
 import { causalEdges, userDecisions } from '../schema/decisions';
 import { digests } from '../schema/digests';
 import { draftLogs } from '../schema/drafts';
 import { featureFlags } from '../schema/feature-flags';
-import { followUpPlanSteps, followUpPlans } from '../schema/follow-up-plans';
+import {
+	followUpPlanActivityEvents,
+	followUpPlanDraftRevisions,
+	followUpPlanSendRecords,
+	followUpPlanSteps,
+	followUpPlanUserTemplateVersions,
+	followUpPlans,
+} from '../schema/follow-up-plans';
 import { goalActions } from '../schema/goal-actions';
 import { goalProgressEvents, goals } from '../schema/goals';
 import { banditLedger, goldenDataset } from '../schema/golden-dataset';
@@ -44,11 +56,23 @@ import { recommendations } from '../schema/recommendations';
 import { contactRelationships } from '../schema/relationships';
 import { semanticCache } from '../schema/semantic-cache';
 import { contactSummaries } from '../schema/summaries';
+import {
+	telegramChatImportState,
+	telegramImportRunChats,
+	telegramImportRuns,
+} from '../schema/telegram-imports';
 import { tokenMentions, tokenWatchlist } from '../schema/tokens';
 import { userPreferences } from '../schema/user-preferences';
 import { users } from '../schema/users';
 import { voiceProfiles } from '../schema/voice-profiles';
 import { workspaceInvites, workspaceMembers, workspaces } from '../schema/workspaces';
+
+function deleteVerificationPredicate(userId: string) {
+	return sql`${verifications.identifier} = ${userId}
+		OR ${verifications.identifier} IN (
+			SELECT email FROM users WHERE id = ${userId} AND email IS NOT NULL
+		)`;
+}
 
 /**
  * Delete all workspace data and the user account in a single transaction.
@@ -72,14 +96,28 @@ export async function deleteAccountData(workspaceId: string, userId: string): Pr
 		// ── Auth/session layer ──
 		await tx.delete(sessions).where(eq(sessions.userId, userId));
 		await tx.delete(accounts).where(eq(accounts.userId, userId));
+		await tx.delete(verifications).where(deleteVerificationPredicate(userId));
 
 		// ── Chat layer ──
+		await tx.delete(telegramImportRunChats).where(eq(telegramImportRunChats.workspaceId, wid));
+		await tx.delete(telegramChatImportState).where(eq(telegramChatImportState.workspaceId, wid));
+		await tx.delete(telegramImportRuns).where(eq(telegramImportRuns.workspaceId, wid));
 		await tx.delete(chatParticipants).where(eq(chatParticipants.workspaceId, wid));
 		await tx.delete(messages).where(eq(messages.workspaceId, wid));
 		await tx.delete(chats).where(eq(chats.workspaceId, wid));
 
-		// ── Follow-up plan layer (steps have CASCADE from plans, but explicit for safety) ──
+		// ── Follow-up plan layer (child rows have CASCADE from plans, but explicit for safety) ──
+		await tx
+			.delete(followUpPlanDraftRevisions)
+			.where(eq(followUpPlanDraftRevisions.workspaceId, wid));
+		await tx.delete(followUpPlanSendRecords).where(eq(followUpPlanSendRecords.workspaceId, wid));
+		await tx
+			.delete(followUpPlanActivityEvents)
+			.where(eq(followUpPlanActivityEvents.workspaceId, wid));
 		await tx.delete(followUpPlanSteps).where(eq(followUpPlanSteps.workspaceId, wid));
+		await tx
+			.delete(followUpPlanUserTemplateVersions)
+			.where(eq(followUpPlanUserTemplateVersions.workspaceId, wid));
 		await tx.delete(followUpPlans).where(eq(followUpPlans.workspaceId, wid));
 
 		// ── Draft & token layer ──
@@ -100,11 +138,16 @@ export async function deleteAccountData(workspaceId: string, userId: string): Pr
 		await tx.delete(connections).where(eq(connections.workspaceId, wid));
 		await tx.delete(contactRelationships).where(eq(contactRelationships.workspaceId, wid));
 		await tx.delete(contactHealthScores).where(eq(contactHealthScores.workspaceId, wid));
+		await tx.delete(contactHealthFeedback).where(eq(contactHealthFeedback.workspaceId, wid));
 		await tx.delete(contactSummaries).where(eq(contactSummaries.workspaceId, wid));
 		await tx.delete(contactStyleOverrides).where(eq(contactStyleOverrides.workspaceId, wid));
 
 		// ── Deal layer (participants + artifacts have CASCADE, but explicit) ──
 		await tx.delete(dealCandidates).where(eq(dealCandidates.workspaceId, wid));
+		await tx.delete(dealAiRuns).where(eq(dealAiRuns.workspaceId, wid));
+		await tx.delete(dealEvidenceLinks).where(eq(dealEvidenceLinks.workspaceId, wid));
+		await tx.delete(dealDecisions).where(eq(dealDecisions.workspaceId, wid));
+		await tx.delete(dealStageEvents).where(eq(dealStageEvents.workspaceId, wid));
 		await tx.delete(dealParticipants).where(
 			sql`${dealParticipants.dealId} IN (
 				SELECT id FROM deals WHERE workspace_id = ${wid}
@@ -190,6 +233,7 @@ export async function deleteUserAccountOnly(userId: string): Promise<void> {
 		}
 
 		await tx.delete(workspaceMembers).where(eq(workspaceMembers.userId, userId));
+		await tx.delete(verifications).where(deleteVerificationPredicate(userId));
 		await tx.delete(users).where(eq(users.id, userId));
 	});
 }

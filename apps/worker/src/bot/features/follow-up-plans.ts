@@ -10,7 +10,7 @@ followUpPlansComposer.command('followups', async (ctx) => {
 		return;
 	}
 
-	const { listFollowUpPlans, db, eq, workspaces } = await import('@repo/db');
+	const { listFollowUpPlans, getFollowUpPlanSteps, db, eq, workspaces } = await import('@repo/db');
 
 	// Resolve workspace envelope for encrypted field access
 	const [ws] = await db
@@ -45,18 +45,50 @@ followUpPlansComposer.command('followups', async (ctx) => {
 		{ status: 'paused', limit: 5 },
 		envelope,
 	);
+	const draftPlans = await listFollowUpPlans(workspaceId, { status: 'draft', limit: 5 }, envelope);
 
-	if (activePlans.length === 0 && pausedPlans.length === 0) {
+	if (activePlans.length === 0 && pausedPlans.length === 0 && draftPlans.length === 0) {
 		await ctx.reply('No follow-up plans running. Create one from the web dashboard.');
 		return;
 	}
 
+	const activeSummaries = await Promise.all(
+		activePlans.map(async (plan) => {
+			const steps = plan.id ? await getFollowUpPlanSteps(workspaceId, plan.id, envelope) : [];
+			return {
+				plan,
+				needsReview: steps.filter((step) => step.status === 'pending_review').length,
+				failed: steps.filter((step) => step.status === 'failed').length,
+			};
+		}),
+	);
+	const needsReview = activeSummaries.filter((summary) => summary.needsReview > 0);
 	const lines: string[] = [];
 
-	if (activePlans.length > 0) {
+	if (needsReview.length > 0) {
+		lines.push('Needs review:');
+		for (const { plan, needsReview: reviewCount } of needsReview) {
+			lines.push(
+				`  ${plan.title} — ${reviewCount} local draft${reviewCount === 1 ? '' : 's'} waiting`,
+			);
+		}
+	}
+
+	if (activeSummaries.length > 0) {
+		if (lines.length > 0) lines.push('');
 		lines.push('Active follow-up plans:');
-		for (const p of activePlans) {
-			lines.push(`  ${p.title} — step ${p.completedSteps}/${p.totalSteps}`);
+		for (const { plan, needsReview: reviewCount, failed } of activeSummaries) {
+			const attention =
+				reviewCount > 0 ? `, ${reviewCount} needs review` : failed > 0 ? `, ${failed} failed` : '';
+			lines.push(`  ${plan.title} — step ${plan.completedSteps}/${plan.totalSteps}${attention}`);
+		}
+	}
+
+	if (draftPlans.length > 0) {
+		if (lines.length > 0) lines.push('');
+		lines.push('Draft follow-up plans:');
+		for (const p of draftPlans) {
+			lines.push(`  ${p.title} — not active yet`);
 		}
 	}
 
@@ -67,6 +99,9 @@ followUpPlansComposer.command('followups', async (ctx) => {
 			lines.push(`  ${p.title} — step ${p.completedSteps}/${p.totalSteps} (paused)`);
 		}
 	}
+
+	lines.push('');
+	lines.push('Drafts are generated locally and are not sent automatically.');
 
 	await ctx.reply(lines.join('\n'));
 });

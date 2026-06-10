@@ -17,11 +17,13 @@ export function DealsSort() {
 		} else {
 			params.set('sort', sort);
 		}
-		router.push(`${pathname}?${params.toString()}`);
+		const query = params.toString();
+		router.push(query ? `${pathname}?${query}` : pathname);
 	}
 
 	return (
 		<select
+			aria-label="Sort deals"
 			value={currentSort}
 			onChange={(e) => handleSort(e.target.value)}
 			className="rounded-md border border-input bg-background px-3 py-1.5 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"

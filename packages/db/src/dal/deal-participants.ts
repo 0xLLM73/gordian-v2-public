@@ -73,3 +73,29 @@ export async function removeDealParticipant(workspaceId: string, participantId: 
 			and(eq(dealParticipants.id, participantId), eq(dealParticipants.workspaceId, workspaceId)),
 		);
 }
+
+export async function updateDealParticipant(
+	workspaceId: string,
+	participantId: string,
+	input: {
+		role?: 'lead' | 'co_investor' | 'advisor' | 'counterparty' | 'introducer' | 'other';
+		notes?: string | null;
+	},
+	envelope: SealedEnvelope,
+) {
+	return withKeys(envelope, async () => {
+		const [result] = await db
+			.update(dealParticipants)
+			.set({
+				role: input.role,
+				notes: input.notes === undefined ? undefined : input.notes,
+			})
+			.where(
+				and(eq(dealParticipants.id, participantId), eq(dealParticipants.workspaceId, workspaceId)),
+			)
+			.returning();
+
+		if (!result) throw new Error('Not found');
+		return result;
+	});
+}

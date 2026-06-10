@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockGetReadySteps = vi.fn();
-const mockAdvanceStep = vi.fn();
+const mockClaimReadyStep = vi.fn();
+const mockMarkStepPendingReview = vi.fn();
+const mockRecordStepProcessingFailure = vi.fn();
+const mockRecordWorkerHeartbeat = vi.fn(() => Promise.resolve(null));
 const mockGetLatestSummary = vi.fn();
 const mockGetFollowUpPlan = vi.fn();
 const mockGetFollowUpPlanSteps = vi.fn();
@@ -30,8 +33,12 @@ const mockDb = {
 };
 
 vi.mock('@repo/db', () => ({
+	FOLLOW_UP_PLAN_READY_STEP_BATCH_SIZE: 25,
 	getReadySteps: mockGetReadySteps,
-	advanceStep: mockAdvanceStep,
+	claimReadyFollowUpPlanStep: mockClaimReadyStep,
+	markStepPendingReview: mockMarkStepPendingReview,
+	recordFollowUpPlanStepProcessingFailure: mockRecordStepProcessingFailure,
+	recordFollowUpPlanWorkerHeartbeat: mockRecordWorkerHeartbeat,
 	getLatestSummary: mockGetLatestSummary,
 	getFollowUpPlan: mockGetFollowUpPlan,
 	getFollowUpPlanSteps: mockGetFollowUpPlanSteps,
@@ -83,6 +90,8 @@ describe('follow-up-plan-processor', () => {
 			},
 		]);
 		// Default voice profile mocks — no profile available
+		mockClaimReadyStep.mockResolvedValue({ id: 'claimed-step' });
+		mockRecordStepProcessingFailure.mockResolvedValue(null);
 		mockGetVoiceProfile.mockResolvedValue(null);
 		mockGetContactStyleOverride.mockResolvedValue(null);
 		mockBuildVoiceModifier.mockReturnValue({ modifier: '', profileVersion: null });
@@ -108,10 +117,29 @@ describe('follow-up-plan-processor', () => {
 		await processFollowUpPlanSteps();
 
 		expect(mockGetReadySteps).toHaveBeenCalledOnce();
+		expect(mockGetReadySteps).toHaveBeenCalledWith({ limit: 25 });
+		expect(mockClaimReadyStep).not.toHaveBeenCalled();
 		expect(mockGenerateDraftWithBandit).not.toHaveBeenCalled();
+		expect(mockRecordWorkerHeartbeat).toHaveBeenNthCalledWith(
+			1,
+			expect.objectContaining({
+				status: 'running',
+				processedSteps: 0,
+				failedSteps: 0,
+				metadata: { batchSize: 25 },
+			}),
+		);
+		expect(mockRecordWorkerHeartbeat).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				status: 'idle',
+				processedSteps: 0,
+				failedSteps: 0,
+				metadata: expect.objectContaining({ readySteps: 0, batchSize: 25, batchFull: false }),
+			}),
+		);
 	});
 
-	it('generates draft and advances step', async () => {
+	it('generates draft and queues step for review', async () => {
 		mockGetReadySteps.mockResolvedValue([
 			{
 				step: { id: 'step-1', stepNumber: 1 },
@@ -141,7 +169,7 @@ describe('follow-up-plan-processor', () => {
 			armType: 'casual_nudge',
 			traceId: 'trace-1',
 		});
-		mockAdvanceStep.mockResolvedValue({ id: 'step-1', status: 'sent' });
+		mockMarkStepPendingReview.mockResolvedValue({ id: 'step-1', status: 'pending_review' });
 
 		const { processFollowUpPlanSteps } = await import('../follow-up-plan-processor');
 		await processFollowUpPlanSteps();
@@ -152,6 +180,7 @@ describe('follow-up-plan-processor', () => {
 		});
 
 		// Verify encrypted re-queries
+		expect(mockClaimReadyStep).toHaveBeenCalledWith('ws-1', 'step-1');
 		expect(mockGetFollowUpPlan).toHaveBeenCalledWith('ws-1', 'plan-1', envelopeMatcher);
 		expect(mockGetFollowUpPlanSteps).toHaveBeenCalledWith('ws-1', 'plan-1', envelopeMatcher);
 
@@ -170,12 +199,20 @@ describe('follow-up-plan-processor', () => {
 		expect(context).not.toContain('alice@example.com');
 		expect(userId).toBe('owner-1');
 		expect(voiceModifier).toBeUndefined();
-		expect(mockAdvanceStep).toHaveBeenCalledWith(
+		expect(mockMarkStepPendingReview).toHaveBeenCalledWith(
 			'ws-1',
 			'step-1',
 			'Hey, great meeting you at the conference!',
 			'casual_nudge',
 			envelopeMatcher,
+		);
+		expect(mockRecordWorkerHeartbeat).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				status: 'idle',
+				processedSteps: 1,
+				failedSteps: 0,
+				metadata: expect.objectContaining({ readySteps: 1, batchSize: 25, batchFull: false }),
+			}),
 		);
 	});
 
@@ -203,7 +240,7 @@ describe('follow-up-plan-processor', () => {
 			armType: 'casual_nudge',
 			traceId: 'trace-v',
 		});
-		mockAdvanceStep.mockResolvedValue({ id: 'step-1', status: 'sent' });
+		mockMarkStepPendingReview.mockResolvedValue({ id: 'step-1', status: 'pending_review' });
 
 		// Voice profile is available
 		mockGetVoiceProfile.mockResolvedValue({ avgWordCount: 15, profileVersion: 3 });
@@ -256,7 +293,7 @@ describe('follow-up-plan-processor', () => {
 			armType: 'direct_ask',
 			traceId: 'trace-f',
 		});
-		mockAdvanceStep.mockResolvedValue({ id: 'step-1', status: 'sent' });
+		mockMarkStepPendingReview.mockResolvedValue({ id: 'step-1', status: 'pending_review' });
 
 		// Voice profile lookup throws — non-fatal
 		mockGetVoiceProfile.mockRejectedValue(new Error('DB timeout'));
@@ -271,7 +308,7 @@ describe('follow-up-plan-processor', () => {
 			'owner-1',
 			undefined,
 		);
-		expect(mockAdvanceStep).toHaveBeenCalledOnce();
+		expect(mockMarkStepPendingReview).toHaveBeenCalledOnce();
 	});
 
 	it('uses fallback summary when none available', async () => {
@@ -299,7 +336,7 @@ describe('follow-up-plan-processor', () => {
 			armType: 'professional_value',
 			traceId: 'trace-2',
 		});
-		mockAdvanceStep.mockResolvedValue({ id: 'step-2', status: 'sent' });
+		mockMarkStepPendingReview.mockResolvedValue({ id: 'step-2', status: 'pending_review' });
 
 		const { processFollowUpPlanSteps } = await import('../follow-up-plan-processor');
 		await processFollowUpPlanSteps();
@@ -309,6 +346,100 @@ describe('follow-up-plan-processor', () => {
 			expect.stringContaining('Post-Intro'),
 			'owner-1',
 			undefined,
+		);
+	});
+
+	it('queues template-only review text without calling local AI', async () => {
+		mockGetReadySteps.mockResolvedValue([
+			{
+				step: { id: 'step-template', stepNumber: 1 },
+				cadence: {
+					id: 'plan-template',
+					workspaceId: 'ws-1',
+					contactId: 'contact-1',
+					status: 'active',
+					totalSteps: 2,
+					completedSteps: 0,
+					config: { aiMode: 'template_only' },
+				},
+			},
+		]);
+		mockGetFollowUpPlan.mockResolvedValue({ title: 'Template Plan' });
+		mockGetFollowUpPlanSteps.mockResolvedValue([
+			{ id: 'step-template', prompt: 'Check in about the fundraising timeline.' },
+		]);
+		mockMarkStepPendingReview.mockResolvedValue({
+			id: 'step-template',
+			status: 'pending_review',
+		});
+
+		const { processFollowUpPlanSteps } = await import('../follow-up-plan-processor');
+		await processFollowUpPlanSteps();
+
+		expect(mockGenerateDraftWithBandit).not.toHaveBeenCalled();
+		expect(mockGetLatestSummary).not.toHaveBeenCalled();
+		expect(mockGetVoiceProfile).not.toHaveBeenCalled();
+		expect(mockMarkStepPendingReview).toHaveBeenCalledWith(
+			'ws-1',
+			'step-template',
+			expect.stringContaining('Template-only follow-up draft'),
+			undefined,
+			expect.objectContaining({ encryptedWrk: expect.any(Buffer) }),
+			expect.objectContaining({
+				source: 'template_only',
+				activitySummary: 'Template-only follow-up queued for review.',
+				metadata: { trigger: 'worker_generation', aiMode: 'template_only' },
+			}),
+		);
+		expect(mockMarkStepPendingReview.mock.calls[0][2]).toContain(
+			'Check in about the fundraising timeline.',
+		);
+	});
+
+	it('queues reminder-only review text without calling local AI', async () => {
+		mockGetReadySteps.mockResolvedValue([
+			{
+				step: { id: 'step-reminder', stepNumber: 2 },
+				cadence: {
+					id: 'plan-reminder',
+					workspaceId: 'ws-1',
+					contactId: 'contact-1',
+					status: 'active',
+					totalSteps: 3,
+					completedSteps: 1,
+					config: { aiMode: 'reminder_only' },
+				},
+			},
+		]);
+		mockGetFollowUpPlan.mockResolvedValue({ title: 'Reminder Plan' });
+		mockGetFollowUpPlanSteps.mockResolvedValue([
+			{ id: 'step-reminder', prompt: 'Write a personal follow-up manually.' },
+		]);
+		mockMarkStepPendingReview.mockResolvedValue({
+			id: 'step-reminder',
+			status: 'pending_review',
+		});
+
+		const { processFollowUpPlanSteps } = await import('../follow-up-plan-processor');
+		await processFollowUpPlanSteps();
+
+		expect(mockGenerateDraftWithBandit).not.toHaveBeenCalled();
+		expect(mockGetLatestSummary).not.toHaveBeenCalled();
+		expect(mockGetVoiceProfile).not.toHaveBeenCalled();
+		expect(mockMarkStepPendingReview).toHaveBeenCalledWith(
+			'ws-1',
+			'step-reminder',
+			expect.stringContaining('Reminder-only follow-up'),
+			undefined,
+			expect.objectContaining({ encryptedWrk: expect.any(Buffer) }),
+			expect.objectContaining({
+				source: 'reminder_only',
+				activitySummary: 'Reminder-only follow-up queued for review.',
+				metadata: { trigger: 'worker_generation', aiMode: 'reminder_only' },
+			}),
+		);
+		expect(mockMarkStepPendingReview.mock.calls[0][2]).toContain(
+			'Write a personal follow-up manually.',
 		);
 	});
 
@@ -334,7 +465,20 @@ describe('follow-up-plan-processor', () => {
 		await processFollowUpPlanSteps();
 
 		expect(mockGetLatestSummary).not.toHaveBeenCalled();
-		expect(mockAdvanceStep).not.toHaveBeenCalled();
+		expect(mockMarkStepPendingReview).not.toHaveBeenCalled();
+		expect(mockRecordStepProcessingFailure).toHaveBeenCalledWith(
+			'ws-missing',
+			'step-x',
+			expect.objectContaining({ errorSummary: 'Workspace encryption envelope unavailable.' }),
+		);
+		expect(mockRecordWorkerHeartbeat).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				status: 'idle',
+				processedSteps: 0,
+				failedSteps: 1,
+				metadata: expect.objectContaining({ readySteps: 1, batchSize: 25, batchFull: false }),
+			}),
+		);
 	});
 
 	it('continues processing remaining steps when one fails', async () => {
@@ -382,19 +526,161 @@ describe('follow-up-plan-processor', () => {
 			armType: 'direct_ask',
 			traceId: 'trace-b',
 		});
-		mockAdvanceStep.mockResolvedValue({ id: 'step-b', status: 'sent' });
+		mockMarkStepPendingReview.mockResolvedValue({ id: 'step-b', status: 'pending_review' });
 
 		const { processFollowUpPlanSteps } = await import('../follow-up-plan-processor');
 		await processFollowUpPlanSteps();
 
 		// Second step should still be processed
-		expect(mockAdvanceStep).toHaveBeenCalledOnce();
-		expect(mockAdvanceStep).toHaveBeenCalledWith(
+		expect(mockMarkStepPendingReview).toHaveBeenCalledOnce();
+		expect(mockMarkStepPendingReview).toHaveBeenCalledWith(
 			'ws-1',
 			'step-b',
 			'Draft B',
 			'direct_ask',
 			expect.objectContaining({ encryptedWrk: expect.any(Buffer) }),
+		);
+		expect(mockRecordWorkerHeartbeat).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				status: 'idle',
+				processedSteps: 1,
+				failedSteps: 1,
+				metadata: expect.objectContaining({ readySteps: 2, batchSize: 25, batchFull: false }),
+			}),
+		);
+		expect(mockRecordStepProcessingFailure).toHaveBeenCalledWith(
+			'ws-1',
+			'step-a',
+			expect.objectContaining({ errorSummary: 'DB error' }),
+		);
+	});
+
+	it('records local AI unavailable as a retryable processing failure without queueing a draft', async () => {
+		mockGetReadySteps.mockResolvedValue([
+			{
+				step: { id: 'step-ai-down', stepNumber: 1 },
+				cadence: {
+					id: 'plan-ai-down',
+					workspaceId: 'ws-1',
+					contactId: 'contact-ai-down',
+					status: 'active',
+					totalSteps: 1,
+					completedSteps: 0,
+					config: { aiMode: 'local_ai' },
+				},
+			},
+		]);
+		mockGetFollowUpPlan.mockResolvedValue({ title: 'AI outage follow-up' });
+		mockGetFollowUpPlanSteps.mockResolvedValue([{ id: 'step-ai-down', prompt: 'Check in' }]);
+		mockGetLatestSummary.mockResolvedValue({ summary: 'Contact context' });
+		mockGenerateDraftWithBandit.mockRejectedValue(new Error('local AI unavailable'));
+
+		const { processFollowUpPlanSteps } = await import('../follow-up-plan-processor');
+		await processFollowUpPlanSteps();
+
+		expect(mockMarkStepPendingReview).not.toHaveBeenCalled();
+		expect(mockRecordStepProcessingFailure).toHaveBeenCalledWith(
+			'ws-1',
+			'step-ai-down',
+			expect.objectContaining({ errorSummary: 'local AI unavailable' }),
+		);
+		expect(mockRecordWorkerHeartbeat).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				status: 'idle',
+				processedSteps: 0,
+				failedSteps: 1,
+				metadata: expect.objectContaining({ readySteps: 1, batchSize: 25, batchFull: false }),
+			}),
+		);
+	});
+
+	it('processes one bounded catch-up batch when many overdue steps are ready', async () => {
+		const readySteps = Array.from({ length: 25 }, (_, index) => ({
+			step: { id: `step-${index + 1}`, stepNumber: index + 1 },
+			cadence: {
+				id: `plan-${index + 1}`,
+				workspaceId: 'ws-1',
+				contactId: `contact-${index + 1}`,
+				status: 'active',
+				totalSteps: 25,
+				completedSteps: 0,
+				config: { aiMode: 'template_only' },
+			},
+		}));
+		mockGetReadySteps.mockResolvedValue(readySteps);
+		mockGetFollowUpPlan.mockResolvedValue({ title: 'Catch-up plan' });
+		mockGetFollowUpPlanSteps.mockImplementation((_: string, planId: string) => [
+			{
+				id: `step-${planId.replace('plan-', '')}`,
+				prompt: 'Catch up after local worker restart.',
+			},
+		]);
+		mockMarkStepPendingReview.mockResolvedValue({ status: 'pending_review' });
+
+		const { processFollowUpPlanSteps } = await import('../follow-up-plan-processor');
+		await processFollowUpPlanSteps();
+
+		expect(mockGetReadySteps).toHaveBeenCalledWith({ limit: 25 });
+		expect(mockGenerateDraftWithBandit).not.toHaveBeenCalled();
+		expect(mockMarkStepPendingReview).toHaveBeenCalledTimes(25);
+		expect(mockRecordWorkerHeartbeat).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				status: 'idle',
+				processedSteps: 25,
+				failedSteps: 0,
+				metadata: expect.objectContaining({ readySteps: 25, batchSize: 25, batchFull: true }),
+			}),
+		);
+	});
+
+	it('skips generation when another worker already claimed the step', async () => {
+		mockGetReadySteps.mockResolvedValue([
+			{
+				step: { id: 'step-claimed', stepNumber: 1 },
+				cadence: {
+					id: 'plan-claimed',
+					workspaceId: 'ws-1',
+					contactId: 'contact-claimed',
+					status: 'active',
+					totalSteps: 1,
+					completedSteps: 0,
+					config: {},
+				},
+			},
+		]);
+		mockClaimReadyStep.mockResolvedValue(null);
+
+		const { processFollowUpPlanSteps } = await import('../follow-up-plan-processor');
+		await processFollowUpPlanSteps();
+
+		expect(mockClaimReadyStep).toHaveBeenCalledWith('ws-1', 'step-claimed');
+		expect(mockGenerateDraftWithBandit).not.toHaveBeenCalled();
+		expect(mockMarkStepPendingReview).not.toHaveBeenCalled();
+		expect(mockRecordStepProcessingFailure).not.toHaveBeenCalled();
+		expect(mockRecordWorkerHeartbeat).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				status: 'idle',
+				processedSteps: 0,
+				failedSteps: 0,
+				metadata: expect.objectContaining({ readySteps: 1, batchSize: 25, batchFull: false }),
+			}),
+		);
+	});
+
+	it('records an error heartbeat when ready-step lookup fails', async () => {
+		mockGetReadySteps.mockRejectedValue(new Error('ready query failed'));
+
+		const { processFollowUpPlanSteps } = await import('../follow-up-plan-processor');
+		await processFollowUpPlanSteps();
+
+		expect(mockGenerateDraftWithBandit).not.toHaveBeenCalled();
+		expect(mockRecordWorkerHeartbeat).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				status: 'error',
+				processedSteps: 0,
+				failedSteps: 0,
+				errorSummary: 'ready query failed',
+			}),
 		);
 	});
 

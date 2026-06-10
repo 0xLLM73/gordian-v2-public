@@ -1,27 +1,32 @@
 import { DealActions } from '@/components/deals/deal-actions';
-import { DEAL_STAGE_BG_COLORS, DEAL_STAGE_COLORS, DECISION_ACTION_COLORS } from '@/lib/colors';
-import { formatCurrency, formatRelativeDate } from '@/lib/format';
+import {
+	DealDecisionTrailPanel,
+	type DealKnowledgeDecision,
+} from '@/components/deals/deal-decision-trail';
+import { DealDetailHeader } from '@/components/deals/deal-detail-header';
+import { DealEvidencePanel } from '@/components/deals/deal-evidence-panel';
+import {
+	DealLocalAiPanel,
+	type SerializableDealAiRun,
+} from '@/components/deals/deal-local-ai-panel';
+import { DealOverviewPanel } from '@/components/deals/deal-overview-panel';
+import { DealStageTimeline } from '@/components/deals/deal-stage-timeline';
+import { formatRelativeDate } from '@/lib/format';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
 import {
 	getContactsByIds,
 	getDeal,
-	getStageVelocityStats,
+	listDealAiRuns,
 	listDealArtifacts,
+	listDealDecisionsWithEvidence,
+	listDealEvidenceLinks,
 	listDealParticipants,
+	listDealStageEvents,
 } from '@repo/db';
-import type { StageVelocityStats } from '@repo/db';
+import { getDealLocalAiStatus } from '@repo/shared';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Suspense } from 'react';
-
-const stageLabels: Record<string, string> = {
-	discovery: 'Discovery',
-	diligence: 'Diligence',
-	negotiation: 'Negotiation',
-	committed: 'Committed',
-	won: 'Won',
-	lost: 'Lost',
-};
 
 const dealTypeLabels: Record<string, string> = {
 	investment: 'Investment',
@@ -50,19 +55,23 @@ export default async function DealDetailPage({ params }: { params: Promise<{ id:
 	const createdAt = deal.createdAt as unknown as string;
 	const contactId = deal.contactId as string;
 
-	const { AddParticipantForm, RemoveParticipantButton } = await import(
+	const { AddParticipantForm, ParticipantRoleSelect, RemoveParticipantButton } = await import(
 		'@/components/deals/add-participant-form'
 	);
 	const { AddArtifactForm, RemoveArtifactButton } = await import(
 		'@/components/deals/add-artifact-form'
 	);
 
-	// Fetch participants, artifacts, velocity stats in parallel
-	const [participants, artifacts, velocityStats] = await Promise.all([
-		listDealParticipants(workspaceId, id, envelope),
-		listDealArtifacts(workspaceId, id),
-		getStageVelocityStats(workspaceId),
-	]);
+	const [participants, artifacts, stageEvents, dealDecisions, evidenceLinks, aiRuns] =
+		await Promise.all([
+			listDealParticipants(workspaceId, id, envelope),
+			listDealArtifacts(workspaceId, id, envelope),
+			listDealStageEvents(workspaceId, id, envelope),
+			listDealDecisionsWithEvidence(workspaceId, id, envelope),
+			listDealEvidenceLinks(workspaceId, id, envelope),
+			listDealAiRuns(workspaceId, id, envelope),
+		]);
+	const knowledgeTrail = await getKnowledgeTrailForDeal(id);
 
 	// Resolve contact names
 	const contactIds = new Set<string>();
@@ -82,6 +91,31 @@ export default async function DealDetailPage({ params }: { params: Promise<{ id:
 	}
 
 	const contactName = nameMap.get(contactId) || 'Unknown contact';
+	const stageHistory = deal.stageHistory as Array<{
+		stage: string;
+		timestamp: string;
+		note?: string;
+	}> | null;
+	const terminalOutcomeReason =
+		stage === 'won' || stage === 'lost'
+			? Boolean(
+					stageEvents.filter((event) => event.nextStage === stage).at(-1)?.note ||
+						stageHistory?.filter((event) => event.stage === stage).at(-1)?.note,
+				)
+			: true;
+	const localAiStatus = getDealLocalAiStatus(process.env);
+	const serializedAiRuns: SerializableDealAiRun[] = aiRuns.map((run) => ({
+		id: run.id,
+		runType: run.runType,
+		status: run.status,
+		modelRole: run.modelRole,
+		modelName: run.modelName,
+		localVendorMode: run.localVendorMode,
+		output: run.output,
+		uncertainty: run.uncertainty,
+		sourceCount: Array.isArray(run.sourceManifest) ? run.sourceManifest.length : 0,
+		createdAt: run.createdAt instanceof Date ? run.createdAt.toISOString() : String(run.createdAt),
+	}));
 
 	return (
 		<div>
@@ -91,33 +125,22 @@ export default async function DealDetailPage({ params }: { params: Promise<{ id:
 				</Link>
 			</div>
 
-			<div className="mb-6 flex items-center justify-between">
-				<div>
-					<h1 className="text-2xl font-bold text-foreground">{deal.title as string}</h1>
-					<p className="mt-1 text-sm text-muted-foreground">
-						<Link href={`/contacts/${contactId}`} className="text-primary hover:text-primary">
-							{contactName}
-						</Link>
-						{' \u00B7 '}
-						{dealTypeLabels[dealType] || dealType}
-						{' \u00B7 Created '}
-						{formatRelativeDate(createdAt)}
-					</p>
-				</div>
-				<div className="flex items-center gap-3">
+			<DealDetailHeader
+				title={deal.title as string}
+				contactId={contactId}
+				contactName={contactName}
+				dealTypeLabel={dealTypeLabels[dealType] || dealType}
+				createdAtLabel={formatRelativeDate(createdAt)}
+				actions={
 					<DealActions
 						dealId={id}
 						stage={stage}
 						stageHistory={deal.stageHistory as Array<{ stage: string; timestamp: string }>}
 					/>
-					<span className="text-lg font-semibold text-foreground">{formatCurrency(value)}</span>
-					<span
-						className={`rounded-full px-3 py-1 text-sm font-medium ${DEAL_STAGE_COLORS[stage] || 'bg-muted text-muted-foreground'}`}
-					>
-						{stageLabels[stage] || stage}
-					</span>
-				</div>
-			</div>
+				}
+				value={value}
+				stage={stage}
+			/>
 
 			{notes ? (
 				<div className="mb-6 rounded-lg border border-border bg-card p-4">
@@ -125,6 +148,15 @@ export default async function DealDetailPage({ params }: { params: Promise<{ id:
 					<p className="whitespace-pre-wrap text-sm text-muted-foreground">{notes}</p>
 				</div>
 			) : null}
+
+			<DealOverviewPanel
+				stage={stage}
+				value={value}
+				participantCount={participants.length}
+				artifactCount={artifacts.length}
+				evidenceCount={evidenceLinks.length}
+				hasTerminalOutcomeReason={terminalOutcomeReason}
+			/>
 
 			<div className="grid gap-6 lg:grid-cols-2">
 				<Suspense fallback={<SectionSkeleton title="Participants" />}>
@@ -134,6 +166,7 @@ export default async function DealDetailPage({ params }: { params: Promise<{ id:
 						dealId={id}
 						AddForm={AddParticipantForm}
 						RemoveButton={RemoveParticipantButton}
+						RoleSelect={ParticipantRoleSelect}
 					/>
 				</Suspense>
 
@@ -147,28 +180,28 @@ export default async function DealDetailPage({ params }: { params: Promise<{ id:
 				</Suspense>
 			</div>
 
-			<StageTimeline
-				stageHistory={deal.stageHistory as Array<{ stage: string; timestamp: string }> | null}
-				velocityStats={velocityStats}
-			/>
+			<DealStageTimeline events={stageEvents} stageHistory={stageHistory} />
 
-			<div className="mt-6">
+			<div className="mt-6 grid gap-6 lg:grid-cols-2">
 				<Suspense fallback={<SectionSkeleton title="Decision Trail" />}>
-					<DealDecisionTrail dealId={id} />
+					<DealDecisionTrailPanel decisions={dealDecisions} knowledgeTrail={knowledgeTrail} />
 				</Suspense>
+				<DealEvidencePanel evidence={evidenceLinks} />
+				<DealLocalAiPanel dealId={id} status={localAiStatus} initialRuns={serializedAiRuns} />
 			</div>
 		</div>
 	);
 }
 
-const roleLabels: Record<string, string> = {
-	lead: 'Lead',
-	co_investor: 'Co-investor',
-	advisor: 'Advisor',
-	counterparty: 'Counterparty',
-	introducer: 'Introducer',
-	other: 'Other',
-};
+async function getKnowledgeTrailForDeal(dealId: string): Promise<DealKnowledgeDecision[]> {
+	try {
+		const { getDealDecisionTrailAction } = await import('@/app/actions/knowledge');
+		const result = await getDealDecisionTrailAction({ dealId });
+		return result?.data ?? [];
+	} catch {
+		return [];
+	}
+}
 
 function ParticipantsSection({
 	participants,
@@ -176,15 +209,24 @@ function ParticipantsSection({
 	dealId,
 	AddForm,
 	RemoveButton,
+	RoleSelect,
 }: {
 	participants: Record<string, unknown>[];
 	nameMap: Map<string, string>;
 	dealId: string;
 	AddForm: React.ComponentType<{ dealId: string }>;
 	RemoveButton: React.ComponentType<{ participantId: string }>;
+	RoleSelect: React.ComponentType<{
+		participantId: string;
+		currentRole: string;
+		label: string;
+	}>;
 }) {
 	return (
-		<div className="rounded-lg border border-border bg-card p-4">
+		<div
+			data-testid="deal-participants-section"
+			className="rounded-lg border border-border bg-card p-4"
+		>
 			<div className="mb-3 flex items-center justify-between">
 				<h2 className="text-sm font-semibold text-foreground">Participants</h2>
 				<AddForm dealId={dealId} />
@@ -206,10 +248,12 @@ function ParticipantsSection({
 									>
 										{nameMap.get(cId) || 'Unknown'}
 									</Link>
-									<div className="flex items-center gap-2">
-										<span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-											{roleLabels[role] || role || 'Participant'}
-										</span>
+									<div className="flex flex-wrap items-center justify-end gap-2">
+										<RoleSelect
+											participantId={p.id as string}
+											currentRole={role || 'other'}
+											label={`Change role for ${nameMap.get(cId) || 'Unknown'}`}
+										/>
 										<RemoveButton participantId={p.id as string} />
 									</div>
 								</div>
@@ -246,7 +290,10 @@ function ArtifactsSection({
 	RemoveButton: React.ComponentType<{ artifactId: string }>;
 }) {
 	return (
-		<div className="rounded-lg border border-border bg-card p-4">
+		<div
+			data-testid="deal-artifacts-section"
+			className="rounded-lg border border-border bg-card p-4"
+		>
 			<div className="mb-3 flex items-center justify-between">
 				<h2 className="text-sm font-semibold text-foreground">Artifacts</h2>
 				<AddForm dealId={dealId} />
@@ -258,24 +305,27 @@ function ArtifactsSection({
 					{artifacts.map((a) => {
 						const aType = a.artifactType as string;
 						const aUrl = a.url as string | null;
+						const title = a.title as string;
 						return (
 							<div key={a.id as string} className="rounded-md bg-muted px-3 py-2">
-								<div className="flex items-center justify-between">
+								<div className="flex items-start justify-between gap-3">
 									<div className="min-w-0 flex-1">
+										<p className="break-words text-sm font-medium text-foreground">{title}</p>
 										{aUrl ? (
 											<a
 												href={aUrl}
 												target="_blank"
 												rel="noopener noreferrer"
-												className="text-sm font-medium text-primary hover:text-primary"
+												aria-label={`Open reference for ${title}`}
+												className="mt-1 inline-flex text-xs font-medium text-primary hover:text-primary hover:underline"
 											>
-												{a.title as string}
+												Open reference
 											</a>
 										) : (
-											<p className="text-sm font-medium text-foreground">{a.title as string}</p>
+											<p className="mt-1 text-xs text-muted-foreground">No external reference</p>
 										)}
 									</div>
-									<div className="ml-2 flex items-center gap-2">
+									<div className="flex shrink-0 items-center gap-2">
 										<span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
 											{artifactTypeLabels[aType] || aType || 'Other'}
 										</span>
@@ -301,207 +351,6 @@ function SectionSkeleton({ title }: { title: string }) {
 						<div className="h-4 w-32 rounded bg-muted" />
 					</div>
 				))}
-			</div>
-		</div>
-	);
-}
-
-function StageTimeline({
-	stageHistory,
-	velocityStats,
-}: {
-	stageHistory: Array<{ stage: string; timestamp: string }> | null;
-	velocityStats: StageVelocityStats;
-}) {
-	const history = Array.isArray(stageHistory) && stageHistory.length > 0 ? stageHistory : null;
-	if (!history) return null;
-
-	const now = new Date();
-	const avgDays = velocityStats.avgDaysPerStage;
-
-	// Compute durations between consecutive stages
-	const stages: Array<{
-		stage: string;
-		enteredAt: Date;
-		days: number;
-		avg: number | undefined;
-		isCurrent: boolean;
-	}> = [];
-
-	for (let i = 0; i < history.length; i++) {
-		const entry = history[i];
-		const enteredAt = new Date(entry.timestamp);
-		const exitedAt = i < history.length - 1 ? new Date(history[i + 1].timestamp) : now;
-		const days = Math.max(
-			0,
-			Math.floor((exitedAt.getTime() - enteredAt.getTime()) / (1000 * 60 * 60 * 24)),
-		);
-		const isCurrent = i === history.length - 1;
-
-		stages.push({
-			stage: entry.stage,
-			enteredAt,
-			days,
-			avg: avgDays[entry.stage],
-			isCurrent,
-		});
-	}
-
-	// Total cycle time
-	const totalDays = Math.max(
-		0,
-		Math.floor((now.getTime() - new Date(history[0].timestamp).getTime()) / (1000 * 60 * 60 * 24)),
-	);
-
-	return (
-		<div className="mt-6 rounded-lg border border-border bg-card p-4">
-			<div className="mb-4 flex items-center justify-between">
-				<h2 className="text-sm font-semibold text-foreground">Stage Progression</h2>
-				<span className="text-xs text-muted-foreground">Total: {totalDays}d</span>
-			</div>
-			<div className="relative ml-3 border-l-2 border-border pl-6">
-				{stages.map((s, idx) => {
-					const isLast = idx === stages.length - 1;
-					const ratio = s.avg && s.avg > 0 ? s.days / s.avg : 0;
-					const barColor =
-						ratio > 2.0
-							? 'bg-red-400'
-							: ratio > 1.5
-								? 'bg-orange-400'
-								: `${DEAL_STAGE_BG_COLORS[s.stage] || 'bg-primary'}`;
-					const barWidth =
-						s.avg && s.avg > 0 ? Math.min(100, Math.round((s.days / (s.avg * 2.5)) * 100)) : 40;
-
-					return (
-						<div key={`${s.stage}-${idx}`} className={isLast ? '' : 'pb-5'}>
-							{/* Timeline dot */}
-							<div
-								className={`absolute -left-[7px] mt-1 h-3 w-3 rounded-full border-2 border-background ${
-									s.isCurrent
-										? `${DEAL_STAGE_BG_COLORS[s.stage] || 'bg-primary'}`
-										: 'bg-muted-foreground'
-								}`}
-							/>
-
-							<div>
-								<div className="flex items-center justify-between">
-									<div className="flex items-center gap-2">
-										<span className="text-sm font-medium text-foreground">
-											{stageLabels[s.stage] || s.stage}
-										</span>
-										{s.isCurrent ? (
-											<span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-												Current
-											</span>
-										) : null}
-									</div>
-									<span className="text-xs font-medium text-foreground">{s.days}d</span>
-								</div>
-
-								{/* Benchmark bar */}
-								<div className="mt-1.5 flex items-center gap-2">
-									<div className="h-1.5 flex-1 rounded-full bg-muted">
-										<div
-											className={`h-1.5 rounded-full ${barColor}`}
-											style={{ width: `${barWidth}%` }}
-										/>
-									</div>
-									{s.avg !== undefined ? (
-										<span className="shrink-0 text-[10px] text-muted-foreground">
-											avg {Math.round(s.avg)}d
-										</span>
-									) : null}
-								</div>
-
-								<time className="mt-0.5 block text-[10px] text-muted-foreground">
-									{s.enteredAt.toLocaleDateString('en-US', {
-										month: 'short',
-										day: 'numeric',
-										year: 'numeric',
-									})}
-								</time>
-							</div>
-						</div>
-					);
-				})}
-			</div>
-		</div>
-	);
-}
-
-async function DealDecisionTrail({ dealId }: { dealId: string }) {
-	const { getDealDecisionTrailAction } = await import('@/app/actions/knowledge');
-	const result = await getDealDecisionTrailAction({ dealId });
-	const trail = result?.data ?? [];
-
-	if (trail.length === 0) return null;
-
-	return (
-		<div className="rounded-lg border border-border bg-card p-4">
-			<h2 className="mb-4 text-sm font-semibold text-foreground">Decision Trail</h2>
-			<div className="relative ml-3 border-l-2 border-border pl-6">
-				{trail.map((step, idx) => {
-					const actionLabel = step.action ? step.action.replace(/_/g, ' ') : 'Decision';
-					const isLast = idx === trail.length - 1;
-
-					return (
-						<div key={step.id} className={isLast ? '' : 'pb-6'}>
-							{/* Timeline dot */}
-							<div className="absolute -left-[7px] mt-1.5 h-3 w-3 rounded-full border-2 border-background bg-primary" />
-
-							<div className="flex items-start justify-between">
-								<div>
-									<div className="flex items-center gap-2">
-										<span
-											className={`rounded px-2 py-0.5 text-xs font-semibold capitalize ${DECISION_ACTION_COLORS[step.action ?? ''] || 'bg-gray-100 text-gray-600'}`}
-										>
-											{actionLabel}
-										</span>
-										<span className="text-sm font-medium text-foreground">{step.displayName}</span>
-									</div>
-
-									{step.rationales.length > 0 ? (
-										<div className="mt-1.5 flex flex-wrap gap-1">
-											{step.rationales.map((rationale) => (
-												<span
-													key={rationale}
-													className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
-												>
-													{rationale}
-												</span>
-											))}
-										</div>
-									) : null}
-
-									{step.outcomes.length > 0 ? (
-										<div className="mt-1.5 flex flex-wrap gap-1">
-											{step.outcomes.map((outcome) => (
-												<span
-													key={outcome.displayName}
-													className={`rounded px-1.5 py-0.5 text-xs font-medium ${
-														outcome.result === 'positive'
-															? 'bg-green-100 text-green-700'
-															: outcome.result === 'negative'
-																? 'bg-red-100 text-red-700'
-																: 'bg-gray-100 text-gray-600'
-													}`}
-												>
-													{outcome.displayName}
-												</span>
-											))}
-										</div>
-									) : null}
-								</div>
-
-								{step.decidedAt ? (
-									<time className="shrink-0 text-xs text-muted-foreground">
-										{formatRelativeDate(new Date(step.decidedAt))}
-									</time>
-								) : null}
-							</div>
-						</div>
-					);
-				})}
 			</div>
 		</div>
 	);

@@ -112,6 +112,8 @@ export function jobDataTargetsDeletedScope(
 	for (const [key, value] of Object.entries(data)) {
 		if (key === 'workspaceId' && value === target.workspaceId) return true;
 		if (key === 'userId' && value === target.userId) return true;
+		if (key === 'workspace_id' && value === target.workspaceId) return true;
+		if (key === 'user_id' && value === target.userId) return true;
 		if (typeof value === 'object' && jobDataTargetsDeletedScope(value, target, depth + 1)) {
 			return true;
 		}
@@ -161,6 +163,10 @@ export function runtimeDeletionRedisPatterns(target: RuntimeCleanupTarget): stri
 	];
 }
 
+function redactDeletionScopeFromPattern(pattern: string, target: RuntimeCleanupTarget): string {
+	return pattern.replaceAll(target.workspaceId, '[workspace]').replaceAll(target.userId, '[user]');
+}
+
 async function deleteRedisPattern(
 	redis: RedisCleanupConnection,
 	pattern: string,
@@ -193,7 +199,11 @@ export async function cleanupRedisKeysForDeletion(
 ): Promise<RedisCleanupSummary[]> {
 	const results: RedisCleanupSummary[] = [];
 	for (const pattern of runtimeDeletionRedisPatterns(target)) {
-		results.push(await deleteRedisPattern(redis, pattern));
+		const result = await deleteRedisPattern(redis, pattern);
+		results.push({
+			...result,
+			pattern: redactDeletionScopeFromPattern(result.pattern, target),
+		});
 	}
 	return results;
 }

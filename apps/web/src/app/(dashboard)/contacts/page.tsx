@@ -1,4 +1,5 @@
 import { HEALTH_BADGE_COLORS } from '@/lib/colors';
+import { getContactInitial } from '@/lib/contact-initial';
 import { formatRelativeDate } from '@/lib/format';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
 import {
@@ -152,7 +153,7 @@ async function ContactList({
 						className="flex items-center gap-4 p-4 transition-colors hover:bg-accent"
 					>
 						<div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-100 text-sm font-medium text-primary">
-							{((contact.firstName as string) || '?')[0].toUpperCase()}
+							{getContactInitial(contact.firstName, contact.lastName)}
 						</div>
 						<div className="min-w-0 flex-1">
 							<div className="flex items-center gap-2">

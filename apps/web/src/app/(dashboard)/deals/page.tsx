@@ -1,26 +1,24 @@
 import { CreateDealForm } from '@/components/deals/create-deal-form';
-import { DealActions } from '@/components/deals/deal-actions';
+import { DealsActiveFilters } from '@/components/deals/deals-active-filters';
+import { DealsEmptyState } from '@/components/deals/deals-empty-state';
 import { DealsFilter } from '@/components/deals/deals-filter';
-import { DealsKanban } from '@/components/deals/deals-kanban';
-import { DealsLoadMore } from '@/components/deals/deals-load-more';
+import { DealsPipelineSummary } from '@/components/deals/deals-pipeline-summary';
+import { DealsResultShell } from '@/components/deals/deals-result-shell';
 import { DealsSort } from '@/components/deals/deals-sort';
-import { DealsViewToggle } from '@/components/deals/deals-view-toggle';
 import {
+	type DealSortFilter,
+	type DealStageFilter,
 	normalizeDealSortFilter,
 	normalizeDealStageFilter,
 } from '@/components/deals/filter-options';
-import { DEAL_STAGE_BG_COLORS, DEAL_STAGE_COLORS } from '@/lib/colors';
-import { formatCurrency } from '@/lib/format';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
 import {
-	type DealSortOption,
 	getContactsByIds,
 	getDealStageCounts,
 	getStageVelocityStats,
 	listDeals,
 	listPendingCandidates,
 } from '@repo/db';
-import Link from 'next/link';
 import { Suspense } from 'react';
 
 export default async function DealsPage({
@@ -36,7 +34,7 @@ export default async function DealsPage({
 
 	return (
 		<div>
-			<div className="mb-6 flex items-center justify-between">
+			<div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 				<h1 className="text-2xl font-bold text-foreground">Deals</h1>
 				{workspaceId ? <CreateDealForm /> : null}
 			</div>
@@ -48,117 +46,60 @@ export default async function DealsPage({
 			) : null}
 
 			{workspaceId ? (
-				<div className="flex items-center justify-between gap-3">
-					<DealsFilter workspaceId={workspaceId} />
-					<DealsSort />
+				<div className="rounded-lg border border-border bg-card p-3">
+					<div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+						<DealsFilter workspaceId={workspaceId} />
+						<DealsSort />
+					</div>
+					<DealsActiveFilters stage={stageFilter} sort={sortFilter} />
 				</div>
 			) : null}
 
 			<Suspense fallback={<DealsListSkeleton />}>
 				{workspaceId ? (
-					<DealsList
-						workspaceId={workspaceId}
-						stage={stageFilter === 'all' ? undefined : stageFilter}
-						sort={sortFilter as DealSortOption}
-					/>
+					<DealsList workspaceId={workspaceId} stage={stageFilter} sort={sortFilter} />
 				) : (
-					<div className="mt-4 rounded-lg border border-border bg-muted p-8 text-center text-sm text-muted-foreground">
-						Create a deal to start tracking — Gordian will build its decision context over time.
-					</div>
+					<DealsEmptyState reason="workspace_unavailable" />
 				)}
 			</Suspense>
 		</div>
 	);
 }
 
-const stageLabels: Record<string, string> = {
-	discovery: 'Discovery',
-	diligence: 'Diligence',
-	negotiation: 'Negotiation',
-	committed: 'Committed',
-	won: 'Won',
-	lost: 'Lost',
-};
-
 async function PipelineSummary({ workspaceId }: { workspaceId: string }) {
 	const counts = await getDealStageCounts(workspaceId);
 
-	if (counts.length === 0) return null;
-
-	const totalDeals = counts.reduce((sum, c) => sum + c.count, 0);
-	const totalValue = counts.reduce((sum, c) => sum + c.totalValue, 0);
-
-	return (
-		<div className="mb-6 rounded-lg border border-border bg-card p-4">
-			<div className="mb-3 flex items-center justify-between">
-				<span className="text-sm font-medium text-foreground">
-					Pipeline: {totalDeals} deal{totalDeals !== 1 ? 's' : ''}
-				</span>
-				<span className="text-sm font-medium text-foreground">{formatCurrency(totalValue)}</span>
-			</div>
-			<div className="flex gap-3">
-				{counts.map((entry) => (
-					<div key={entry.stage} className="flex items-center gap-1.5">
-						<span
-							className={`inline-block h-2 w-2 rounded-full ${DEAL_STAGE_BG_COLORS[entry.stage] || 'bg-muted-foreground'}`}
-						/>
-						<span className="text-xs text-muted-foreground">
-							{stageLabels[entry.stage] || entry.stage} ({entry.count})
-						</span>
-					</div>
-				))}
-			</div>
-		</div>
-	);
+	return <DealsPipelineSummary counts={counts} />;
 }
-
-const dealTypeLabels: Record<string, string> = {
-	investment: 'Investment',
-	advisory: 'Advisory',
-	partnership: 'Partnership',
-	token: 'Token',
-	other: 'Other',
-};
 
 async function DealsList({
 	workspaceId,
 	stage,
 	sort,
-}: { workspaceId: string; stage?: string; sort?: DealSortOption }) {
+}: { workspaceId: string; stage: DealStageFilter; sort: DealSortFilter }) {
 	const envelope = await getWorkspaceEnvelope(workspaceId);
 	if (!envelope) {
-		return (
-			<div className="mt-4 rounded-lg border border-border bg-muted p-8 text-center text-sm text-muted-foreground">
-				No deals yet. Click &ldquo;New Deal&rdquo; to create one — Gordian will build its decision
-				context over time.
-			</div>
-		);
+		return <DealsEmptyState reason="envelope_unavailable" />;
 	}
 
-	const [dealsList, velocityStats, pendingCandidates] = await Promise.all([
+	const [dealsList, velocityStats, pendingCandidates, counts] = await Promise.all([
 		listDeals(workspaceId, envelope, {
-			stage: stage && stage !== 'all' ? stage : undefined,
+			stage: stage !== 'all' ? stage : undefined,
 			sort,
 			limit: 50,
 		}),
 		getStageVelocityStats(workspaceId),
 		listPendingCandidates(workspaceId, envelope, { limit: 20 }),
+		getDealStageCounts(workspaceId),
 	]);
 
-	if (!dealsList || dealsList.length === 0) {
-		return (
-			<div className="mt-4 rounded-lg border border-border bg-muted p-8 text-center text-sm text-muted-foreground">
-				No deals yet. Click &ldquo;New Deal&rdquo; to create one — Gordian will build its decision
-				context over time.
-			</div>
-		);
-	}
+	const totalDeals = counts.reduce((sum, c) => sum + c.count, 0);
+	const matchingDealsCount =
+		stage !== 'all' ? (counts.find((c) => c.stage === stage)?.count ?? 0) : totalDeals;
 
-	const counts = await getDealStageCounts(workspaceId);
-	const totalDeals =
-		stage && stage !== 'all'
-			? (counts.find((c) => c.stage === stage)?.count ?? dealsList.length)
-			: counts.reduce((sum, c) => sum + c.count, 0);
+	if (!dealsList || dealsList.length === 0) {
+		return <DealsEmptyState stage={stage === 'all' ? undefined : stage} totalDeals={totalDeals} />;
+	}
 
 	// Resolve contact names for ghost candidates
 	const candidateContactIds = [
@@ -186,96 +127,27 @@ async function DealsList({
 		createdAt: c.createdAt,
 	}));
 
-	const { EditDealButton } = await import('@/components/deals/edit-deal-button');
-
-	const listView = (
-		<div className="divide-y divide-border rounded-lg border border-border">
-			{dealsList.map((deal) => {
-				const contactName =
-					[deal.contactFirstName, deal.contactLastName].filter(Boolean).join(' ') ||
-					'Unknown contact';
-
-				return (
-					<div key={deal.id} className="flex items-center justify-between p-4">
-						<div className="min-w-0">
-							<div className="flex items-center gap-2">
-								<EditDealButton
-									dealId={deal.id}
-									initialTitle={deal.title}
-									initialValue={deal.value}
-									initialDealType={deal.dealType || 'other'}
-									initialNotes={deal.notes}
-								/>
-								{deal.dealType && deal.dealType !== 'other' ? (
-									<span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-										{dealTypeLabels[deal.dealType] || deal.dealType}
-									</span>
-								) : null}
-							</div>
-							<Link
-								href={`/deals/${deal.id}`}
-								className="mt-0.5 block text-sm text-muted-foreground hover:text-primary"
-							>
-								{contactName}
-							</Link>
-						</div>
-						<div className="flex items-center gap-3">
-							<DealActions
-								dealId={deal.id}
-								stage={deal.stage}
-								stageHistory={deal.stageHistory as Array<{ stage: string; timestamp: string }>}
-							/>
-							<span className="text-sm font-medium text-foreground">
-								{formatCurrency(deal.value)}
-							</span>
-							<DealStageBadge stage={deal.stage} />
-						</div>
-					</div>
-				);
-			})}
-		</div>
-	);
-
-	const kanbanView = (
-		<DealsKanban
-			deals={dealsList}
+	return (
+		<DealsResultShell
+			initialDeals={dealsList}
+			totalMatchingCount={matchingDealsCount}
+			totalPipelineCount={totalDeals}
+			stage={stage}
+			sort={sort}
 			velocityStats={velocityStats}
 			ghostCandidates={ghostCandidates}
 		/>
-	);
-
-	return (
-		<div className="mt-4">
-			<DealsLoadMore
-				initialCount={dealsList.length}
-				totalCount={totalDeals}
-				stage={stage}
-				sort={sort}
-			>
-				<DealsViewToggle listView={listView} kanbanView={kanbanView} />
-			</DealsLoadMore>
-		</div>
-	);
-}
-
-function DealStageBadge({ stage }: { stage: string }) {
-	return (
-		<span
-			className={`rounded-full px-2 py-0.5 text-xs font-medium ${DEAL_STAGE_COLORS[stage] || 'bg-muted text-muted-foreground'}`}
-		>
-			{stageLabels[stage] || stage}
-		</span>
 	);
 }
 
 function PipelineSummarySkeleton() {
 	return (
 		<div className="mb-6 animate-pulse rounded-lg border border-border bg-card p-4">
-			<div className="mb-3 flex items-center justify-between">
+			<div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 				<div className="h-4 w-32 rounded bg-muted" />
 				<div className="h-4 w-20 rounded bg-muted" />
 			</div>
-			<div className="flex gap-3">
+			<div className="flex flex-wrap gap-3">
 				{[1, 2, 3].map((i) => (
 					<div key={i} className="h-3 w-24 rounded bg-muted" />
 				))}
@@ -289,7 +161,7 @@ function DealsListSkeleton() {
 		<div className="mt-4 divide-y divide-border rounded-lg border border-border">
 			{[1, 2, 3, 4].map((i) => (
 				<div key={i} className="animate-pulse p-4">
-					<div className="flex items-center justify-between">
+					<div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
 						<div>
 							<div className="h-4 w-48 rounded bg-muted" />
 							<div className="mt-2 h-3 w-32 rounded bg-muted" />

@@ -358,6 +358,21 @@ export const backfillWorker = new Worker<BackfillJobData>(
 				messagesImported: inserted,
 			});
 
+			if (inserted > 0) {
+				const { enqueueHealthScoringForWorkspace } = await import('./health-scoring-queue');
+				await enqueueHealthScoringForWorkspace(workspaceId, {
+					force: true,
+					keyEnvelope: {
+						encryptedWrk: envelope.encryptedWrk.toString('base64'),
+						kmsContext: envelope.kmsContext,
+						wrkVersion: envelope.wrkVersion,
+					},
+					reason: 'telegram_backfill_chat_completed',
+				}).catch((err) => {
+					console.warn('[backfill] Failed to queue health scoring:', redactSensitive(err));
+				});
+			}
+
 			console.log(`[backfill] ${jobType} complete: ${inserted} messages for chat=${short(chatId)}`);
 			return;
 		}
@@ -503,6 +518,21 @@ export const backfillWorker = new Worker<BackfillJobData>(
 			totalDialogs,
 			totalMessages,
 		});
+
+		if (totalMessages > 0) {
+			const { enqueueHealthScoringForWorkspace } = await import('./health-scoring-queue');
+			await enqueueHealthScoringForWorkspace(workspaceId, {
+				force: true,
+				keyEnvelope: {
+					encryptedWrk: envelope.encryptedWrk.toString('base64'),
+					kmsContext: envelope.kmsContext,
+					wrkVersion: envelope.wrkVersion,
+				},
+				reason: 'telegram_backfill_completed',
+			}).catch((err) => {
+				console.warn('[backfill] Failed to queue health scoring:', redactSensitive(err));
+			});
+		}
 
 		console.log(
 			`[backfill] ${jobType} complete: ${totalMessages} messages across ${processedDialogs} dialogs`,

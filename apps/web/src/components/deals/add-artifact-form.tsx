@@ -52,12 +52,14 @@ export function AddArtifactForm({ dealId }: { dealId: string }) {
 					type="text"
 					value={title}
 					onChange={(e) => setTitle(e.target.value)}
+					aria-label="Artifact title"
 					placeholder="Artifact title"
 				/>
 				<div className="flex gap-2">
 					<select
 						value={artifactType}
 						onChange={(e) => setArtifactType(e.target.value)}
+						aria-label="Artifact type"
 						className="rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
 					>
 						<option value="term_sheet">Term Sheet</option>
@@ -73,6 +75,7 @@ export function AddArtifactForm({ dealId }: { dealId: string }) {
 						type="url"
 						value={url}
 						onChange={(e) => setUrl(e.target.value)}
+						aria-label="Artifact URL"
 						placeholder="URL (optional)"
 						className="flex-1"
 					/>

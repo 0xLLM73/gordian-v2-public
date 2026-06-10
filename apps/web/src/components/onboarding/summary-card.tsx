@@ -44,17 +44,26 @@ export function SummaryCard() {
 	useEffect(() => {
 		if (fetchedRef.current) return;
 		fetchedRef.current = true;
+		let cancelled = false;
 
 		getOnboardingSummaryAction({})
 			.then((result) => {
-				if (result?.data) {
+				if (!cancelled && result?.data) {
 					setData(result.data);
 				}
 			})
 			.catch((err) => {
-				console.error('[summary-card] Failed to fetch:', err);
+				if (!cancelled) {
+					console.error('[summary-card] Failed to fetch:', err);
+				}
 			})
-			.finally(() => setLoading(false));
+			.finally(() => {
+				if (!cancelled) setLoading(false);
+			});
+
+		return () => {
+			cancelled = true;
+		};
 	}, []);
 
 	if (loading) {

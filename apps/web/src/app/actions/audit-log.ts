@@ -7,7 +7,7 @@ import { z } from 'zod';
 const auditLogQuerySchema = z.object({
 	actorType: z.enum(['user', 'system', 'ai']).optional(),
 	action: z
-		.enum(['create', 'update', 'delete', 'login', 'sync', 'generate', 'evaluate'])
+		.enum(['create', 'update', 'delete', 'login', 'sync', 'generate', 'evaluate', 'send'])
 		.optional(),
 	resourceType: z
 		.enum([
@@ -24,6 +24,7 @@ const auditLogQuerySchema = z.object({
 			'feature_flag',
 			'preference',
 			'decision',
+			'message',
 		])
 		.optional(),
 	resourceId: z.string().uuid().optional(),
@@ -57,6 +58,7 @@ export const getResourceAuditTrailAction = workspaceAction
 				'feature_flag',
 				'preference',
 				'decision',
+				'message',
 			]),
 			resourceId: z.string().uuid(),
 		}),

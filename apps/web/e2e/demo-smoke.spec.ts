@@ -20,8 +20,8 @@ test('seeded demo workspace loads contacts', async ({ page }) => {
 test('seeded demo workspace loads deals', async ({ page }) => {
 	await page.goto('/deals', { waitUntil: 'domcontentloaded' });
 	await expect(page.getByRole('heading', { name: 'Deals' })).toBeVisible();
-	await expect(page.getByText('Aptos Series A')).toBeVisible();
-	await expect(page.getByText('MoveProtocol Seed Extension')).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Aptos Series A' })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'MoveProtocol Seed Extension' })).toBeVisible();
 });
 
 test('seeded demo workspace loads commitments', async ({ page }) => {

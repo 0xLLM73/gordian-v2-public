@@ -1180,6 +1180,21 @@ export const syncWorker = new Worker<SyncJobData>(
 			newContacts: newContactCount,
 		});
 
+		if (totalNewMessages > 0) {
+			const { enqueueHealthScoringForWorkspace } = await import('./health-scoring-queue');
+			await enqueueHealthScoringForWorkspace(workspaceId, {
+				force: true,
+				keyEnvelope: {
+					encryptedWrk: envelope.encryptedWrk.toString('base64'),
+					kmsContext: envelope.kmsContext,
+					wrkVersion: envelope.wrkVersion,
+				},
+				reason: 'telegram_sync_completed',
+			}).catch((err) => {
+				console.warn('[sync] Failed to queue health scoring:', redactSensitive(err));
+			});
+		}
+
 		// 7. Full-history backfill is intentionally opt-in. A normal personal-account
 		// connection should not start deep history import as a side effect of setup.
 		if (isTelegramFullBackfillEnabled()) {

@@ -9,12 +9,14 @@
  *   npx tsx scripts/backfill-knowledge-embeddings.mjs              # real run
  *   npx tsx scripts/backfill-knowledge-embeddings.mjs --dry-run    # preview only
  *
- * Requires: DIRECT_URL, OPENAI_API_KEY, AWS credentials (for KMS unwrap)
+ * Requires: DIRECT_URL, AWS credentials (for KMS unwrap), and either local
+ * knowledge embeddings or AI_PROCESSING_ENABLED=true for cloud embeddings.
  */
 import 'dotenv/config';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const postgres = require('../packages/db/node_modules/postgres');
+import { generateEmbedding } from '../apps/worker/src/ai/embeddings.ts';
 import { prefilterEntities } from '../apps/worker/src/ai/prefilter.ts';
 import { deriveKeys, maskEntities, unwrapWrk } from '../packages/crypto/src/index.ts';
 
@@ -30,37 +32,7 @@ if (!DIRECT_URL) {
 	process.exit(1);
 }
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-if (!OPENAI_API_KEY) {
-	console.error('Missing OPENAI_API_KEY env var');
-	process.exit(1);
-}
-
 const sql = postgres(DIRECT_URL, { prepare: false });
-
-// ─── Embedding ───────────────────────────────────────────────────────────────
-
-async function generateEmbedding(text) {
-	const response = await fetch('https://api.openai.com/v1/embeddings', {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${OPENAI_API_KEY}`,
-		},
-		body: JSON.stringify({
-			model: 'text-embedding-3-small',
-			input: text,
-		}),
-	});
-
-	if (!response.ok) {
-		const body = await response.text();
-		throw new Error(`OpenAI embedding failed (${response.status}): ${body}`);
-	}
-
-	const json = await response.json();
-	return json.data[0].embedding;
-}
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 
@@ -147,7 +119,7 @@ async function main() {
 					wsReembedded++;
 				} else {
 					// Generate new embedding from masked text
-					const embedding = await generateEmbedding(maskedText);
+					const embedding = await generateEmbedding(maskedText, { purpose: 'document' });
 					const embeddingStr = `[${embedding.join(',')}]`;
 
 					// Update in database

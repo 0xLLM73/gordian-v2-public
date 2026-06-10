@@ -116,46 +116,92 @@ async function withDevKeys<T>(workspaceId: string, fn: () => Promise<T>): Promis
 
 async function cleanDatabase() {
 	console.log('[seed] Cleaning existing seed data...');
-	// Delete in dependency order
+	const seedUserIdList = `'${ALICE_USER_ID}','${BOB_USER_ID}','${CHARLIE_USER_ID}'`;
+	const seedWorkspaceIdList = `'${ALICE_WORKSPACE_ID}','${BOB_WORKSPACE_ID}','${CHARLIE_WORKSPACE_ID}'`;
+	const seedUserIds = sql.raw(seedUserIdList);
+	const seedWorkspaceIds = sql.raw(seedWorkspaceIdList);
+
+	// Delete in dependency order. Table names below are static, not user input.
+	const deleteSeedWorkspaceRows = async (tableName: string) => {
+		await db.execute(
+			sql.raw(`DELETE FROM ${tableName} WHERE workspace_id IN (${seedWorkspaceIdList})`),
+		);
+	};
+
+	await db.execute(sql`DELETE FROM bandit_ledger WHERE user_id IN (${seedUserIds})`);
 	await db.execute(
-		sql`DELETE FROM bandit_ledger WHERE user_id IN (${sql.raw(`'${ALICE_USER_ID}','${BOB_USER_ID}','${CHARLIE_USER_ID}'`)})`,
+		sql`DELETE FROM golden_dataset WHERE workspace_id IN (${seedWorkspaceIds}) OR verified_by IN (${seedUserIds}) OR verified_by IS NULL AND feature_domain LIKE 'seed_%'`,
 	);
 	await db.execute(
-		sql`DELETE FROM golden_dataset WHERE verified_by IN (${sql.raw(`'${ALICE_USER_ID}','${BOB_USER_ID}','${CHARLIE_USER_ID}'`)}) OR verified_by IS NULL AND feature_domain LIKE 'seed_%'`,
+		sql`DELETE FROM causal_edges WHERE source_id IN (SELECT id FROM user_decisions WHERE workspace_id IN (${seedWorkspaceIds}))`,
 	);
-	await db.execute(
-		sql`DELETE FROM causal_edges WHERE source_id IN (SELECT id FROM user_decisions WHERE workspace_id IN (${sql.raw(`'${ALICE_WORKSPACE_ID}','${BOB_WORKSPACE_ID}','${CHARLIE_WORKSPACE_ID}'`)}))`,
-	);
-	await db.execute(
-		sql`DELETE FROM user_decisions WHERE workspace_id IN (${sql.raw(`'${ALICE_WORKSPACE_ID}','${BOB_WORKSPACE_ID}','${CHARLIE_WORKSPACE_ID}'`)})`,
-	);
-	await db.execute(
-		sql`DELETE FROM deals WHERE workspace_id IN (${sql.raw(`'${ALICE_WORKSPACE_ID}','${BOB_WORKSPACE_ID}','${CHARLIE_WORKSPACE_ID}'`)})`,
-	);
-	await db.execute(
-		sql`DELETE FROM commitments WHERE workspace_id IN (${sql.raw(`'${ALICE_WORKSPACE_ID}','${BOB_WORKSPACE_ID}','${CHARLIE_WORKSPACE_ID}'`)})`,
-	);
-	await db.execute(
-		sql`DELETE FROM memories WHERE workspace_id IN (${sql.raw(`'${ALICE_WORKSPACE_ID}','${BOB_WORKSPACE_ID}','${CHARLIE_WORKSPACE_ID}'`)})`,
-	);
-	await db.execute(
-		sql`DELETE FROM contacts WHERE workspace_id IN (${sql.raw(`'${ALICE_WORKSPACE_ID}','${BOB_WORKSPACE_ID}','${CHARLIE_WORKSPACE_ID}'`)})`,
-	);
-	await db.execute(
-		sql`DELETE FROM workspace_members WHERE workspace_id IN (${sql.raw(`'${ALICE_WORKSPACE_ID}','${BOB_WORKSPACE_ID}','${CHARLIE_WORKSPACE_ID}'`)})`,
-	);
-	await db.execute(
-		sql`DELETE FROM workspaces WHERE id IN (${sql.raw(`'${ALICE_WORKSPACE_ID}','${BOB_WORKSPACE_ID}','${CHARLIE_WORKSPACE_ID}'`)})`,
-	);
-	await db.execute(
-		sql`DELETE FROM accounts WHERE user_id IN (${sql.raw(`'${ALICE_USER_ID}','${BOB_USER_ID}','${CHARLIE_USER_ID}'`)})`,
-	);
-	await db.execute(
-		sql`DELETE FROM sessions WHERE user_id IN (${sql.raw(`'${ALICE_USER_ID}','${BOB_USER_ID}','${CHARLIE_USER_ID}'`)})`,
-	);
-	await db.execute(
-		sql`DELETE FROM users WHERE id IN (${sql.raw(`'${ALICE_USER_ID}','${BOB_USER_ID}','${CHARLIE_USER_ID}'`)})`,
-	);
+
+	for (const tableName of [
+		'deal_ai_runs',
+		'deal_artifacts',
+		'deal_decisions',
+		'deal_evidence_links',
+		'deal_stage_events',
+		'deal_candidates',
+		'deal_participants',
+		'deals',
+		'follow_up_plan_send_records',
+		'follow_up_plan_draft_revisions',
+		'follow_up_plan_activity_events',
+		'cadence_steps',
+		'cadences',
+		'follow_up_plan_user_template_versions',
+		'goal_actions',
+		'goal_progress_events',
+		'goals',
+		'knowledge_links',
+		'knowledge_contacts',
+		'knowledge_evidence',
+		'knowledge_extraction_log',
+		'knowledge_nodes',
+		'telegram_import_run_chats',
+		'telegram_import_runs',
+		'telegram_chat_import_state',
+		'contact_health_feedback',
+		'contact_health_scores',
+		'contact_relationships',
+		'contact_shares',
+		'contact_style_overrides',
+		'contact_summaries',
+		'contact_tags',
+		'calendar_events',
+		'calendar_connections',
+		'chat_participants',
+		'commitments',
+		'connections',
+		'correction_diffs',
+		'digests',
+		'draft_logs',
+		'feature_flags',
+		'introductions',
+		'investor_profiles',
+		'memories',
+		'outcomes',
+		'recommendations',
+		'semantic_cache',
+		'token_mentions',
+		'token_watchlist',
+		'user_behaviors',
+		'user_calibrations',
+		'user_decisions',
+		'user_preferences',
+		'voice_profiles',
+		'workspace_invites',
+	]) {
+		await deleteSeedWorkspaceRows(tableName);
+	}
+
+	await db.execute(sql`DELETE FROM contacts WHERE workspace_id IN (${seedWorkspaceIds})`);
+	await db.execute(sql`DELETE FROM workspace_members WHERE workspace_id IN (${seedWorkspaceIds})`);
+	await db.execute(sql`DELETE FROM workspaces WHERE id IN (${seedWorkspaceIds})`);
+	await db.execute(sql`DELETE FROM accounts WHERE user_id IN (${seedUserIds})`);
+	await db.execute(sql`DELETE FROM sessions WHERE user_id IN (${seedUserIds})`);
+	await db.execute(sql`DELETE FROM users WHERE id IN (${seedUserIds})`);
 	console.log('[seed] Clean complete.');
 }
 
@@ -284,7 +330,7 @@ const CONTACTS_DATA: ContactSeed[] = [
 		firstName: 'Marcus',
 		lastName: 'Chen',
 		phone: '+1-415-555-0101',
-		email: 'marcus@aptos-fund.capital',
+		email: 'marcus@aptos-fund.example',
 		notes: 'Aptos ecosystem fund lead. Managing $500M AUM. Met at Token2049.',
 	},
 	{
@@ -294,7 +340,7 @@ const CONTACTS_DATA: ContactSeed[] = [
 		firstName: 'Sarah',
 		lastName: 'Mitchell',
 		phone: '+1-212-555-0202',
-		email: 'sarah@cryptolaw.io',
+		email: 'sarah@cryptolaw.example',
 		notes: 'Securities lawyer specializing in SAFT/SAFE instruments. Very responsive.',
 	},
 	{
@@ -304,7 +350,7 @@ const CONTACTS_DATA: ContactSeed[] = [
 		firstName: 'David',
 		lastName: 'Park',
 		phone: '+82-10-5555-0303',
-		email: 'david@hanhwa-digital.kr',
+		email: 'david@hanhwa-digital.example',
 		notes: 'LP from Hanhwa Digital Assets. Committed $25M to Fund II.',
 	},
 	{
@@ -314,7 +360,7 @@ const CONTACTS_DATA: ContactSeed[] = [
 		firstName: 'Elena',
 		lastName: 'Volkov',
 		phone: '+44-20-5555-0404',
-		email: 'elena@moveprotocol.xyz',
+		email: 'elena@moveprotocol.example',
 		notes: 'CEO of MoveProtocol. Series A target. Building on Aptos/Sui.',
 	},
 
@@ -326,7 +372,7 @@ const CONTACTS_DATA: ContactSeed[] = [
 		firstName: 'Jake',
 		lastName: 'Thunder',
 		phone: '+1-305-555-1001',
-		email: 'jake@cumberlandotc.net',
+		email: 'jake@cumberlandotc.example',
 		notes: 'OTC desk. Does 8-figure fills on SOL and ETH. Fast settlement.',
 	},
 	{
@@ -346,8 +392,8 @@ const CONTACTS_DATA: ContactSeed[] = [
 		firstName: 'Pixel',
 		lastName: 'Chad',
 		phone: '+1-786-555-1003',
-		email: 'pixel@nftflips.gg',
-		notes: 'NFT flipper. Whale wallet 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045.',
+		email: 'pixel@nftflips.example',
+		notes: 'NFT flipper. Demo whale wallet [ETH_ADDRESS].',
 	},
 	{
 		id: BOB_CONTACTS.liquidityProvider,
@@ -356,7 +402,7 @@ const CONTACTS_DATA: ContactSeed[] = [
 		firstName: 'Yuki',
 		lastName: 'Tanaka',
 		phone: '+81-90-5555-1004',
-		email: 'yuki@defivault.io',
+		email: 'yuki@defivault.example',
 		notes: 'Runs Uniswap v3 concentrated liquidity positions. $2M+ TVL.',
 	},
 
@@ -368,7 +414,7 @@ const CONTACTS_DATA: ContactSeed[] = [
 		firstName: 'Priya',
 		lastName: 'Sharma',
 		phone: '+91-98-5555-2001',
-		email: 'priya@arbitrum-dao.org',
+		email: 'priya@arbitrum-dao.example',
 		notes: 'Top 10 Arbitrum delegate. 5M ARB voting power. Very active on Snapshot.',
 	},
 	{
@@ -378,7 +424,7 @@ const CONTACTS_DATA: ContactSeed[] = [
 		firstName: 'Alex',
 		lastName: 'Rivera',
 		phone: '+1-650-555-2002',
-		email: 'alex@compound-gov.xyz',
+		email: 'alex@compound-gov.example',
 		notes: 'Core dev on Compound governance. Wrote the timelock upgrade spec.',
 	},
 	{
@@ -388,7 +434,7 @@ const CONTACTS_DATA: ContactSeed[] = [
 		firstName: 'Lin',
 		lastName: 'Wei',
 		phone: '+86-139-5555-2003',
-		email: 'lin@optimism-collective.eth',
+		email: 'lin@optimism-collective.example',
 		notes: 'Optimism Security Council member. Focus on SIP-12 implementation.',
 	},
 	{
@@ -398,7 +444,7 @@ const CONTACTS_DATA: ContactSeed[] = [
 		firstName: 'Sofia',
 		lastName: 'Andersson',
 		phone: '+46-70-555-2004',
-		email: 'sofia@snapshot.org',
+		email: 'sofia@snapshot.example',
 		notes: 'Snapshot Labs team. Can help with custom voting strategies.',
 	},
 ];
@@ -516,7 +562,7 @@ const MEMORIES_DATA: MemorySeed[] = [
 		contactId: BOB_CONTACTS.otcDesk,
 		category: 'financial',
 		content:
-			'Jake quoted 50 ETH OTC at $3,200 per. Settlement via 0xABCDEF1234567890ABCDEF1234567890ABCDEF12. He can do same-day fills up to $500K.',
+			'Jake quoted 50 ETH OTC at $3,200 per. Settlement via [ETH_ADDRESS]. He can do same-day fills up to $500K.',
 		metadata: { keywords: ['OTC', 'ETH', 'settlement', 'fill', 'same-day'] },
 	},
 	{
@@ -524,7 +570,7 @@ const MEMORIES_DATA: MemorySeed[] = [
 		contactId: BOB_CONTACTS.degenFriend,
 		category: 'financial',
 		content:
-			'LFG! Anon just aped 100 SOL into $BONK at floor price. CA: 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU. Liquidity looking thicc fr fr.',
+			'LFG! Anon just aped 100 SOL into $BONK at floor price. CA: [SOL_ADDRESS]. Liquidity looking thicc fr fr.',
 		metadata: { keywords: ['LFG', 'SOL', 'BONK', 'ape', 'liquidity', 'Solana'] },
 	},
 	{
@@ -532,7 +578,7 @@ const MEMORIES_DATA: MemorySeed[] = [
 		contactId: BOB_CONTACTS.nftTrader,
 		category: 'financial',
 		content:
-			'Pixel flipped 3 Pudgy Penguins for 2.5 ETH profit. Whale wallet 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 is accumulating. Floor might pump.',
+			'Pixel flipped 3 Pudgy Penguins for 2.5 ETH profit. Demo whale wallet [ETH_ADDRESS] is accumulating. Floor might pump.',
 		metadata: { keywords: ['NFT', 'Pudgy Penguins', 'flip', 'whale', 'floor'] },
 	},
 	{
@@ -548,7 +594,7 @@ const MEMORIES_DATA: MemorySeed[] = [
 		contactId: BOB_CONTACTS.otcDesk,
 		category: 'commitment',
 		content:
-			'Jake: "I will have the SOL fill ready by 3pm UTC. Sending 500 SOL to your wallet. Confirm the address: DRpbCBMxVnDK7maPMoA6tqRBkYcn3bRvH3RJGAmqJgQi"',
+			'Jake: "I will have the SOL fill ready by 3pm UTC. Sending 500 SOL to your wallet. Confirm the address: [SOL_ADDRESS]"',
 		metadata: { keywords: ['SOL', 'fill', 'wallet', 'OTC', 'deadline'] },
 	},
 	{
@@ -1055,8 +1101,7 @@ const GOLDEN_DATA: GoldenSeed[] = [
 	},
 	{
 		featureDomain: 'seed_commitment_extraction',
-		inputContext:
-			'LFG! Just aped 100 SOL into $BONK. CA: 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU. Liquidity looking thicc.',
+		inputContext: 'LFG! Just aped 100 SOL into $BONK. CA: [SOL_ADDRESS]. Liquidity looking thicc.',
 		modelPrediction: {
 			commitments: [
 				{ title: 'Buy BONK tokens', type: 'financial', assignee: 'contact', confidence: 0.7 },
@@ -1542,8 +1587,7 @@ async function main() {
 		console.log(`  Bob Trading:         ${BOB_WORKSPACE_ID}`);
 		console.log(`  Charlie DAO:         ${CHARLIE_WORKSPACE_ID}`);
 		console.log('');
-		console.log('Dev WRK (base64):');
-		console.log(`  ${DEV_WRK_BASE64}`);
+		console.log('Dev WRK: generated for local encrypted seed data (value not printed)');
 		console.log('');
 		console.log('Bandit expectations:');
 		console.log('  Alice  → Thompson should select "formal" tone >95% of the time');

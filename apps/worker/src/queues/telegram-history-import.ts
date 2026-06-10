@@ -920,6 +920,16 @@ async function maybeFinalizeRun(data: DiscoverJobData): Promise<void> {
 		await broadcastProgress(data.workspaceId, data.runId, result.status);
 		await disconnectImportSession(data.userId);
 		if (result.status === 'completed' && result.messagesInserted > 0) {
+			const { enqueueHealthScoringForWorkspace } = await import('./health-scoring-queue');
+			await enqueueHealthScoringForWorkspace(data.workspaceId, {
+				force: true,
+				reason: 'telegram_history_import_completed',
+			}).catch((err) => {
+				console.warn(
+					'[telegram-history-import] Failed to queue completed-import health scoring:',
+					redactSensitive(err),
+				);
+			});
 			const knowledgeOptions = completedImportKnowledgeAnalysisOptions(
 				data,
 				result.messagesInserted,

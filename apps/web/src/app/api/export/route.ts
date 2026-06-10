@@ -1,57 +1,14 @@
 import { auth } from '@/lib/auth';
+import {
+	BASIC_CRM_EXPORT_EXCLUDED,
+	BASIC_CRM_EXPORT_INCLUDED,
+	sanitizeBasicCrmExportRows,
+} from '@/lib/basic-crm-export-policy';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { getUserWorkspaceId, getWorkspaceEnvelope } from '@/lib/workspace';
 import { getAccessibleContacts, getActiveCommitments, listDeals } from '@repo/db';
 import { headers } from 'next/headers';
 import { NextResponse } from 'next/server';
-
-const BASIC_CRM_EXPORT_INCLUDED = ['contacts', 'commitments', 'deals'] as const;
-const BASIC_CRM_EXPORT_EXCLUDED = [
-	'telegram_messages',
-	'chats',
-	'knowledge_graph',
-	'memories',
-	'ai_learning_data',
-	'audit_logs',
-	'runtime_queues',
-] as const;
-
-const BASIC_CRM_EXPORT_FORBIDDEN_KEYS = new Set([
-	'auditlogs',
-	'chats',
-	'embedding',
-	'embeddings',
-	'encryptedwrk',
-	'knowledgegraph',
-	'kmscontext',
-	'memories',
-	'messages',
-	'rawmessage',
-	'rawmessages',
-	'sourceaccountid',
-	'telegramaccountid',
-	'telegramid',
-	'telegrammessages',
-	'telegramuserid',
-]);
-
-function isForbiddenExportKey(key: string) {
-	const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
-	if (BASIC_CRM_EXPORT_FORBIDDEN_KEYS.has(normalized)) return true;
-	return /^(raw|telegram|source|last)?message(text|content|body|snippet)$/.test(normalized);
-}
-
-function stripSensitiveExportFields(value: unknown): unknown {
-	if (Array.isArray(value)) return value.map(stripSensitiveExportFields);
-	if (!value || typeof value !== 'object') return value;
-
-	const result: Record<string, unknown> = {};
-	for (const [key, childValue] of Object.entries(value)) {
-		if (isForbiddenExportKey(key)) continue;
-		result[key] = stripSensitiveExportFields(childValue);
-	}
-	return result;
-}
 
 /**
  * GET /api/export — Basic CRM export as JSON.
@@ -96,15 +53,17 @@ export async function GET() {
 		included: BASIC_CRM_EXPORT_INCLUDED,
 		excluded: BASIC_CRM_EXPORT_EXCLUDED,
 		exportedAt: new Date().toISOString(),
-		contacts: stripSensitiveExportFields(contacts),
-		commitments: stripSensitiveExportFields(
+		contacts: sanitizeBasicCrmExportRows('contacts', contacts),
+		commitments: sanitizeBasicCrmExportRows(
+			'commitments',
 			commitments.filter(
 				(commitment) =>
 					typeof commitment.contactId === 'string' &&
 					accessibleContactIds.has(commitment.contactId),
 			),
 		),
-		deals: stripSensitiveExportFields(
+		deals: sanitizeBasicCrmExportRows(
+			'deals',
 			deals.filter((deal) => accessibleContactIds.has(String(deal.contactId))),
 		),
 	};

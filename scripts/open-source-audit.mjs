@@ -145,8 +145,10 @@ function assertDocsExist() {
 		'docs/PUBLISHING.md',
 		'docs/OPEN_SOURCE.md',
 		'docs/PUBLIC_STATUS.md',
+		'docs/RELEASE_REGRESSION_SYSTEM.md',
 		'docs/SECURITY_NOTES.md',
 		'docs/ENVIRONMENT_MATRIX.md',
+		'docs/AI_EGRESS_INVENTORY.md',
 	];
 
 	for (const doc of docs) {
@@ -166,6 +168,7 @@ function assertOssGovernance() {
 		'.github/workflows/ci.yml',
 		'.github/workflows/secret-rotation-reminder.yml',
 		'scripts/check-publication-readiness.mjs',
+		'scripts/release-regression-guard.mjs',
 	];
 
 	for (const file of requiredFiles) {
@@ -187,6 +190,94 @@ function assertOssGovernance() {
 		!readFileSync('.github/ISSUE_TEMPLATE/config.yml', 'utf8').includes('/security/policy')
 	) {
 		fail('.github/ISSUE_TEMPLATE/config.yml must point security reports to the security policy');
+	}
+
+	assertContributorGuardrails();
+}
+
+function assertContributorGuardrails() {
+	if (existsSync('.github/CODEOWNERS')) {
+		const codeowners = readFileSync('.github/CODEOWNERS', 'utf8');
+		if (!/^\*\s+@0xLLM73\s+@thegrovest\s*$/m.test(codeowners)) {
+			fail('.github/CODEOWNERS must require @0xLLM73 and @thegrovest review for every path');
+		}
+	}
+
+	if (existsSync('.github/pull_request_template.md')) {
+		const template = readFileSync('.github/pull_request_template.md', 'utf8');
+		for (const phrase of [
+			'No new data model field was added',
+			'No new export path was added',
+			'No new logging, audit event, or error serialization was added',
+			'No new AI provider egress, prompt, embedding, or observability path was added',
+			'No new browser-visible sensitive data surface was added',
+			'No Telegram sending, import, sync, or session-custody behavior changed',
+			'Browser QA is not required for this PR',
+		]) {
+			if (!template.includes(phrase)) {
+				fail(
+					`.github/pull_request_template.md must include sensitive-data checklist item: ${phrase}`,
+				);
+			}
+		}
+	}
+
+	if (existsSync('.github/ISSUE_TEMPLATE/config.yml')) {
+		const config = readFileSync('.github/ISSUE_TEMPLATE/config.yml', 'utf8');
+		if (!/blank_issues_enabled:\s*false/.test(config)) {
+			fail('.github/ISSUE_TEMPLATE/config.yml must keep blank public issues disabled');
+		}
+		if (!config.includes('gordian-v2-public/security/policy')) {
+			fail(
+				'.github/ISSUE_TEMPLATE/config.yml must route security reports to the public mirror security policy',
+			);
+		}
+	}
+
+	for (const issueTemplate of [
+		'.github/ISSUE_TEMPLATE/bug_report.yml',
+		'.github/ISSUE_TEMPLATE/feature_request.yml',
+	]) {
+		if (!existsSync(issueTemplate)) continue;
+		const text = readFileSync(issueTemplate, 'utf8');
+		for (const phrase of [
+			'Do not include real Telegram messages',
+			'session strings',
+			'API keys',
+			'provider logs with secrets',
+		]) {
+			if (!text.includes(phrase)) {
+				fail(`${issueTemplate} must warn contributors not to include ${phrase}`);
+			}
+		}
+	}
+
+	if (existsSync('CONTRIBUTING.md')) {
+		const contributing = readFileSync('CONTRIBUTING.md', 'utf8');
+		for (const phrase of [
+			'docs/DATA_CLASSIFICATION.md',
+			'AI provider calls',
+			'Telegram import, sync, send',
+			'in-app browser or Playwright QA',
+		]) {
+			if (!contributing.includes(phrase)) {
+				fail(`CONTRIBUTING.md must include contributor sensitive-data guidance: ${phrase}`);
+			}
+		}
+	}
+
+	if (existsSync('SECURITY.md')) {
+		const security = readFileSync('SECURITY.md', 'utf8');
+		for (const phrase of [
+			'private vulnerability reporting',
+			'Do not attach `.env`',
+			'AI provider egress',
+			'browser-visible errors',
+		]) {
+			if (!security.includes(phrase)) {
+				fail(`SECURITY.md must include release security guidance: ${phrase}`);
+			}
+		}
 	}
 }
 
@@ -336,6 +427,20 @@ function runLocalRuntimeSafetySmoke() {
 	}
 }
 
+function runReleaseRegressionGuard() {
+	const result = run('node', ['scripts/release-regression-guard.mjs']);
+	if (result.status !== 0) {
+		fail(`release regression guard failed:\n${result.stdout}${result.stderr}`);
+	}
+}
+
+function runAiEgressInventoryAudit() {
+	const result = run('node', ['scripts/ai-egress-inventory-audit.mjs']);
+	if (result.status !== 0) {
+		fail(`AI egress inventory audit failed:\n${result.stdout}${result.stderr}`);
+	}
+}
+
 assertEnvExample();
 assertArchiveTombstoneOnly();
 assertNoGenericDeployScript();
@@ -343,7 +448,9 @@ assertExampleInfraNames();
 assertDocsExist();
 assertOssGovernance();
 scanCurrentTree();
+runAiEgressInventoryAudit();
 runLocalRuntimeSafetySmoke();
+runReleaseRegressionGuard();
 runGitleaks();
 
 if (failures.length > 0) {

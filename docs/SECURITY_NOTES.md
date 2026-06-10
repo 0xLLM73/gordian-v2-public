@@ -79,6 +79,17 @@ endpoint to the network without authentication. KG embedding vectors must remain
 512-dimensional to match the database schema. If the embedding preset/model
 changes, re-embed the KG before trusting semantic search quality.
 
+Deal cockpit AI is local-first and review-first. `/deals/[id]` may save local
+deal briefs, risk explanations, next-action suggestions, follow-up drafts, and
+question answers in `deal_ai_runs`; the output and uncertainty text are
+workspace-encrypted. Source manifests are structural provenance and should store
+opaque source ids, source types, timestamps, counts, and short display-safe
+summaries only. Deal AI actions must not send Telegram messages, change deal
+stages, or create commitments silently. Suggested commitments or stage changes
+remain drafts until the user explicitly accepts or dismisses them. Live local
+model calls are gated behind trusted local model configuration and the deal UI
+keeps deterministic fallback available when the model server is unavailable.
+
 Helicone prompt observability is off by default. Setting `HELICONE_API_KEY`
 alone is not enough; set `HELICONE_ENABLED=true` and `AI_PROCESSING_ENABLED=true`
 only after deciding that prompt and metadata observability may leave the local
@@ -106,6 +117,18 @@ includes contacts, active commitments, and deals. It does not include Telegram
 message transcripts, chats, knowledge graph rows, memories, AI learning data,
 audit logs, embeddings, Redis keys, or BullMQ queue payloads.
 
+Deal artifact titles and URL/file references are classified as sensitive deal
+data. They are encrypted with the workspace envelope in the app layer, and the
+basic CRM export must redact artifact `title`, `url`, and `reference` fields if
+artifact objects are ever included in an export payload. Artifact type, IDs,
+timestamps, and structural metadata may remain plaintext when they do not reveal
+the artifact contents or destination.
+
+Saved deal AI runs are not included in the basic CRM export. If a future export
+surface includes `deal_ai_runs`, it must redact encrypted `output`,
+`uncertainty`, and source-manifest snippet fields by default unless the user
+explicitly requests a decrypted provenance export.
+
 Deleting a user account removes that user's login/session shell, workspace
 memberships, local Telegram session key material, and matching user/workspace
 runtime residue. It does not wipe workspace data. Workspace owners must use the
@@ -121,6 +144,11 @@ workspace and user. The web action also calls the worker's internal
 non-active BullMQ jobs and workspace/user-scoped Redis keys. Active in-flight
 jobs are not force-killed; stop the worker before deletion if you need a fully
 quiescent local teardown.
+
+Deal AI runs store output, uncertainty, and source manifests through encrypted
+workspace columns. Client responses and export surfaces should use source counts
+or structural run metadata only; source labels/snippets stay server-side unless a
+future explicit decrypted provenance export is built.
 
 ## Repository Checks
 

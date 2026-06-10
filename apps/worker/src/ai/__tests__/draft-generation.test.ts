@@ -1,107 +1,115 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mockInferWithCache = vi.hoisted(() => vi.fn());
 const mockSelectPromptVariant = vi.hoisted(() => vi.fn());
-
-vi.mock('../cached-inference', () => ({
-	inferWithCache: mockInferWithCache,
-}));
+const fetchMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../bandit', () => ({
 	selectPromptVariant: mockSelectPromptVariant,
 }));
 
-import { generateDraft, generateDraftWithBandit } from '../draft-generation';
+function enableLocalQwenDrafts() {
+	vi.stubEnv('CHAT_LLM_PROVIDER', 'local');
+	vi.stubEnv('CHAT_LLM_BASE_URL', 'http://localhost:11434/v1');
+	vi.stubEnv('CHAT_LLM_MODEL', 'qwen3.5:9b');
+}
 
-const textResponse = (text: string) => ({
-	stop_reason: 'end_turn',
-	content: [{ type: 'text', text }],
-});
+function localDraftResponse(text: string) {
+	return {
+		ok: true,
+		json: () =>
+			Promise.resolve({
+				message: {
+					content: text,
+				},
+			}),
+		text: () => Promise.resolve(''),
+	};
+}
 
-describe('generateDraft', () => {
+describe('follow-up draft generation', () => {
 	beforeEach(() => {
+		vi.unstubAllEnvs();
+		vi.stubGlobal('fetch', fetchMock);
 		vi.clearAllMocks();
+		mockSelectPromptVariant.mockResolvedValue({
+			variant: 'casual_nudge',
+			traceId: 'trace-1',
+		});
 	});
 
-	it('appends arm-specific style instructions to system kernel', async () => {
-		mockInferWithCache.mockResolvedValue(textResponse('Hi Alice!'));
+	it('generates drafts through the local chat runtime', async () => {
+		enableLocalQwenDrafts();
+		fetchMock.mockResolvedValueOnce(
+			localDraftResponse('<think>private reasoning</think>\nHey, good catching up yesterday.'),
+		);
 
-		await generateDraft('Alice is a VC', 'Recent msgs', 'casual_nudge');
+		const { generateDraft } = await import('../draft-generation');
+		const result = await generateDraft(
+			'Contact: PERSON_masked\nDiscussed local AI setup.',
+			'Follow-up Plan: VC Follow-up\nInstructions: Thank them for meeting',
+			'casual_nudge',
+		);
 
-		const systemArg = mockInferWithCache.mock.calls[0][0] as string;
-		expect(systemArg).toContain('Casual and friendly');
-		expect(systemArg).toContain('drafting assistant');
-	});
-
-	it('uses default (empty) modifier for unknown arm type', async () => {
-		mockInferWithCache.mockResolvedValue(textResponse('Hello.'));
-
-		await generateDraft('Summary', 'Messages', 'unknown_arm');
-
-		const systemArg = mockInferWithCache.mock.calls[0][0] as string;
-		// No extra style modifier appended — just base kernel
-		expect(systemArg).not.toContain('Style:');
-	});
-
-	it('passes correct Helicone metadata (feature + banditArm)', async () => {
-		mockInferWithCache.mockResolvedValue(textResponse('Draft text'));
-
-		await generateDraft('Summary', 'Messages', 'professional_value');
-
-		expect(mockInferWithCache).toHaveBeenCalledWith(
-			expect.any(String),
-			'',
-			'',
-			expect.any(Array),
+		expect(result).toBe('Hey, good catching up yesterday.');
+		expect(fetchMock).toHaveBeenCalledWith(
+			'http://localhost:11434/api/chat',
 			expect.objectContaining({
-				helicone: { feature: 'draft-generation', banditArm: 'professional_value' },
-				maxTokens: 512,
-				temperature: 0.7,
+				method: 'POST',
+				headers: expect.not.objectContaining({
+					Authorization: expect.any(String),
+				}),
+			}),
+		);
+		const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as {
+			model: string;
+			messages: Array<{ role: string; content: string }>;
+			stream: boolean;
+			think: boolean;
+			options: { temperature: number; num_predict: number };
+		};
+		expect(body.model).toBe('qwen3.5:9b');
+		expect(body.stream).toBe(false);
+		expect(body.think).toBe(false);
+		expect(body.options.temperature).toBe(0.7);
+		expect(body.options.num_predict).toBe(512);
+		expect(body.messages[0]).toEqual(
+			expect.objectContaining({
+				role: 'system',
+				content: expect.stringContaining('You are a message drafting assistant'),
+			}),
+		);
+		expect(body.messages[1]).toEqual(
+			expect.objectContaining({
+				role: 'user',
+				content: expect.stringContaining('Contact Summary:'),
 			}),
 		);
 	});
 
-	it('extracts text from content blocks', async () => {
-		mockInferWithCache.mockResolvedValue({
-			stop_reason: 'end_turn',
-			content: [
-				{ type: 'text', text: 'Hello Alice, ' },
-				{ type: 'text', text: 'hope you are well.' },
-			],
-		});
+	it('selects a bandit arm before local draft generation', async () => {
+		enableLocalQwenDrafts();
+		fetchMock.mockResolvedValueOnce(localDraftResponse('Local draft text'));
 
-		const result = await generateDraft('Summary', 'Messages', 'direct_ask');
-
-		expect(result).toBe('Hello Alice, \nhope you are well.');
-	});
-});
-
-describe('generateDraftWithBandit', () => {
-	beforeEach(() => {
-		vi.clearAllMocks();
-	});
-
-	it('calls selectPromptVariant with "draft_generation" domain', async () => {
-		mockSelectPromptVariant.mockResolvedValue({ variant: 'casual_nudge', traceId: 'trace-1' });
-		mockInferWithCache.mockResolvedValue(textResponse('Hey!'));
-
-		await generateDraftWithBandit('Summary', 'Messages', 'user-abc');
+		const { generateDraftWithBandit } = await import('../draft-generation');
+		const result = await generateDraftWithBandit('Summary', 'Context', 'owner-1');
 
 		expect(mockSelectPromptVariant).toHaveBeenCalledWith(
 			'draft_generation',
 			expect.arrayContaining(['casual_nudge', 'professional_value', 'direct_ask', 'soft_memory']),
-			'user-abc',
+			'owner-1',
 		);
+		expect(result).toEqual({
+			text: 'Local draft text',
+			armType: 'casual_nudge',
+			traceId: 'trace-1',
+		});
 	});
 
-	it('returns { text, armType, traceId }', async () => {
-		mockSelectPromptVariant.mockResolvedValue({ variant: 'soft_memory', traceId: 'trace-xyz' });
-		mockInferWithCache.mockResolvedValue(textResponse('Remember when we met at the conference?'));
-
-		const result = await generateDraftWithBandit('Summary', 'Messages', 'user-123');
-
-		expect(result.text).toBe('Remember when we met at the conference?');
-		expect(result.armType).toBe('soft_memory');
-		expect(result.traceId).toBe('trace-xyz');
+	it('fails closed when local follow-up draft AI is not configured', async () => {
+		const { generateDraft } = await import('../draft-generation');
+		await expect(generateDraft('Summary', 'Context', 'casual_nudge')).rejects.toThrow(
+			'Local follow-up draft AI is not configured',
+		);
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 });

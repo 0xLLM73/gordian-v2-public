@@ -120,6 +120,25 @@ describe('POST /telegram/history-import/start', () => {
 		expect(mockEnqueueTelegramHistoryImport).not.toHaveBeenCalled();
 	});
 
+	it('requires internal auth before exposing disabled import state', async () => {
+		vi.stubEnv('TELEGRAM_MTPROTO_ENABLED', 'false');
+
+		const res = await telegram.request('/history-import/start', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				userId: USER_ID,
+				workspaceId: WORKSPACE_ID,
+				sourceAccountId: SOURCE_ACCOUNT_ID,
+				largeImportConfirmed: true,
+			}),
+		});
+
+		expect(res.status).toBe(401);
+		expect(mockCreateTelegramImportRun).not.toHaveBeenCalled();
+		expect(mockEnqueueTelegramHistoryImport).not.toHaveBeenCalled();
+	});
+
 	it('rejects users without current Telegram consent', async () => {
 		mockHasCurrentTelegramConsent.mockResolvedValue(false);
 
@@ -237,6 +256,23 @@ describe('POST /telegram/history-import/start', () => {
 });
 
 describe('POST /telegram/history-import/:runId controls', () => {
+	it('requires internal auth before exposing disabled resume state', async () => {
+		vi.stubEnv('TELEGRAM_MTPROTO_ENABLED', 'false');
+
+		const res = await telegram.request(`/history-import/${RUN_ID}/resume`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				userId: USER_ID,
+				workspaceId: WORKSPACE_ID,
+			}),
+		});
+
+		expect(res.status).toBe(401);
+		expect(mockResumeTelegramImportRun).not.toHaveBeenCalled();
+		expect(mockEnqueueTelegramHistoryImport).not.toHaveBeenCalled();
+	});
+
 	it('resumes a paused run by enqueueing the same run id', async () => {
 		mockResumeTelegramImportRun.mockResolvedValue({
 			id: RUN_ID,

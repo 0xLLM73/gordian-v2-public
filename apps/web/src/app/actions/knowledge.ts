@@ -1,7 +1,12 @@
 'use server';
 
 import { getKnowledgeEvidenceQualityStatsForNodes } from '@/lib/knowledge-evidence-quality';
-import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
+import {
+	LOCAL_WORKER_UNAVAILABLE_MESSAGE,
+	getInternalSecret,
+	isLocalWorkerConnectionError,
+	workspaceAction,
+} from '@/lib/safe-action';
 import { track } from '@/lib/track';
 import { deriveKeys, maskEntities, prefilterEntities, unwrapWrk, withKeys } from '@repo/crypto';
 import { getOpenAIApiKey } from '@repo/crypto/local-secrets';
@@ -104,6 +109,16 @@ interface ManualKnowledgeBuildResponse {
 function workerUrl(path: string): string {
 	const base = process.env.WORKER_URL ?? 'http://localhost:3001';
 	return `${base.replace(/\/$/, '')}${path}`;
+}
+
+function publicWorkerActionError(error: unknown): string {
+	const message = error instanceof Error ? error.message : String(error);
+	if (isLocalWorkerConnectionError(message)) return LOCAL_WORKER_UNAVAILABLE_MESSAGE;
+	return message;
+}
+
+function workerHttpError(status: number): string {
+	return `Local worker returned HTTP ${status}. Check the worker logs, WORKER_URL, and WORKER_INTERNAL_SECRET.`;
 }
 
 function knowledgeSearchMinSimilarity(): number {
@@ -562,7 +577,7 @@ export const getKnowledgeAnalysisEstimateAction = workspaceAction
 				return {
 					mode: parsedInput.mode,
 					canRun: false,
-					error: `Worker returned ${response.status}`,
+					error: workerHttpError(response.status),
 				};
 			}
 
@@ -571,7 +586,7 @@ export const getKnowledgeAnalysisEstimateAction = workspaceAction
 			return {
 				mode: parsedInput.mode,
 				canRun: false,
-				error: (err as Error).message,
+				error: publicWorkerActionError(err),
 			};
 		}
 	});
@@ -787,7 +802,7 @@ export const runLocalKnowledgeAnalysisAction = workspaceAction
 				return {
 					queued: false,
 					mode: parsedInput.mode,
-					error: `Worker returned ${response.status}`,
+					error: workerHttpError(response.status),
 				};
 			}
 
@@ -806,7 +821,7 @@ export const runLocalKnowledgeAnalysisAction = workspaceAction
 			return {
 				queued: false,
 				mode: parsedInput.mode,
-				error: (err as Error).message,
+				error: publicWorkerActionError(err),
 			};
 		}
 	});
@@ -842,7 +857,7 @@ export const runLocalKnowledgeInferenceAction = workspaceAction
 			if (!response.ok) {
 				return {
 					status: 'error',
-					error: `Worker returned ${response.status}`,
+					error: workerHttpError(response.status),
 					nodesProcessed: 0,
 					coOccurrenceLinks: 0,
 					similarityLinks: 0,
@@ -876,7 +891,7 @@ export const runLocalKnowledgeInferenceAction = workspaceAction
 		} catch (err) {
 			return {
 				status: 'error',
-				error: (err as Error).message,
+				error: publicWorkerActionError(err),
 				nodesProcessed: 0,
 				coOccurrenceLinks: 0,
 				similarityLinks: 0,
@@ -1004,10 +1019,10 @@ export const createManualKnowledgeNodeAction = workspaceAction
 							: undefined);
 					inference = data.inference ?? undefined;
 				} else {
-					buildError = `Worker returned ${response.status}`;
+					buildError = workerHttpError(response.status);
 				}
 			} catch (err) {
-				buildError = (err as Error).message;
+				buildError = publicWorkerActionError(err);
 			}
 		}
 

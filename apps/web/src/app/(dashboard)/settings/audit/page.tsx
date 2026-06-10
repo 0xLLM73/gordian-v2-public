@@ -5,7 +5,16 @@ import { useAction } from 'next-safe-action/hooks';
 import { useCallback, useEffect, useState } from 'react';
 
 const ACTOR_TYPES = ['user', 'system', 'ai'] as const;
-const ACTIONS = ['create', 'update', 'delete', 'login', 'sync', 'generate', 'evaluate'] as const;
+const ACTIONS = [
+	'create',
+	'update',
+	'delete',
+	'login',
+	'sync',
+	'generate',
+	'evaluate',
+	'send',
+] as const;
 const RESOURCE_TYPES = [
 	'contact',
 	'commitment',
@@ -20,6 +29,7 @@ const RESOURCE_TYPES = [
 	'feature_flag',
 	'preference',
 	'decision',
+	'message',
 ] as const;
 
 const PAGE_SIZE = 50;
@@ -55,6 +65,7 @@ function formatAction(action: string): string {
 		sync: 'Synced',
 		generate: 'Generated',
 		evaluate: 'Evaluated',
+		send: 'Sent',
 	};
 	return labels[action] ?? action;
 }

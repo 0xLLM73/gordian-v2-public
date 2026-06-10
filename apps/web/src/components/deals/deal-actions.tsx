@@ -142,7 +142,7 @@ export function DealActions({ dealId, stage, stageHistory }: DealActionsProps) {
 		const reopenStage = getLastActiveStage(stageHistory) as DealStage;
 		return (
 			<>
-				<div className="flex gap-1">
+				<div className="flex flex-wrap gap-1">
 					<Button
 						variant="outline"
 						size="sm"
@@ -190,7 +190,7 @@ export function DealActions({ dealId, stage, stageHistory }: DealActionsProps) {
 
 	return (
 		<>
-			<div className="flex gap-1">
+			<div className="flex flex-wrap gap-1">
 				{nextStage ? (
 					<Button
 						variant="ghost"

@@ -71,7 +71,7 @@ const ALLOWLIST: Record<string, { columns: string[]; reason: string }[]> = {
 interface EncryptedColumn {
 	table: string; // SQL table name from pgTable('name') declaration
 	column: string; // DB column name (e.g., "first_name")
-	type: 'encryptedText' | 'encryptedSessionText';
+	type: 'encryptedText' | 'encryptedSessionText' | 'encryptedJson';
 }
 
 /**
@@ -101,7 +101,7 @@ function extractEncryptedColumns(): EncryptedColumn[] {
 		if (tableDecls.length === 0) continue;
 
 		// Find all encrypted column declarations with their positions
-		const colRegex = /(encryptedText|encryptedSessionText)\(['"](\w+)['"]\)/g;
+		const colRegex = /(encryptedText|encryptedSessionText|encryptedJson)\(['"](\w+)['"]\)/g;
 		let colMatch = colRegex.exec(content);
 		while (colMatch !== null) {
 			// Associate with the nearest preceding pgTable declaration
@@ -381,6 +381,14 @@ describe('encrypted column guard', () => {
 		expect(columnNames).toContain('contact_relationships.notes');
 		// Multi-table schema files
 		expect(columnNames).toContain('cadence_steps.prompt');
+		expect(columnNames).toContain('deal_stage_events.note');
+		expect(columnNames).toContain('deal_decisions.label');
+		expect(columnNames).toContain('deal_decisions.rationale');
+		expect(columnNames).toContain('deal_evidence_links.label');
+		expect(columnNames).toContain('deal_evidence_links.summary');
+		expect(columnNames).toContain('deal_ai_runs.output');
+		expect(columnNames).toContain('deal_ai_runs.uncertainty');
+		expect(columnNames).toContain('deal_ai_runs.source_manifest');
 		expect(encryptedColumns.length).toBeGreaterThan(40);
 	});
 
@@ -503,6 +511,12 @@ describe('runtime execute guard', () => {
 		expect(names).toContain('accounts.access_token');
 		expect(names).toContain('memories.content');
 		expect(names).toContain('knowledge_nodes.name');
+		expect(names).toContain('deal_stage_events.note');
+		expect(names).toContain('deal_decisions.label');
+		expect(names).toContain('deal_evidence_links.summary');
+		expect(names).toContain('deal_ai_runs.output');
+		expect(names).toContain('deal_ai_runs.uncertainty');
+		expect(names).toContain('deal_ai_runs.source_manifest');
 	});
 
 	it('should match static scanner inventory', async () => {
@@ -565,6 +579,30 @@ describe('runtime execute guard', () => {
 				where id = $3
 			`),
 		).toThrow(/CRITICAL/);
+	});
+
+	it('should allow encrypted backfill SQL only when explicitly enabled and tagged', async () => {
+		const { guardExecute } = await import('../execute-guard');
+		const previous = process.env.GORDIAN_ENCRYPTION_BACKFILL;
+		const tagged =
+			'/* gordian:encrypted-backfill:v1 */ select id, title, url from deal_artifacts where workspace_id = $1';
+
+		try {
+			process.env.GORDIAN_ENCRYPTION_BACKFILL = undefined;
+			expect(() => guardExecute(tagged)).toThrow();
+
+			process.env.GORDIAN_ENCRYPTION_BACKFILL = '1';
+			expect(() => guardExecute(tagged)).not.toThrow();
+			expect(() =>
+				guardExecute('select id, title, url from deal_artifacts where workspace_id = $1'),
+			).toThrow();
+		} finally {
+			if (previous === undefined) {
+				process.env.GORDIAN_ENCRYPTION_BACKFILL = undefined;
+			} else {
+				process.env.GORDIAN_ENCRYPTION_BACKFILL = previous;
+			}
+		}
 	});
 
 	it('should extract SQL text from Drizzle SQL objects', async () => {

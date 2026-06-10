@@ -1,4 +1,5 @@
 import { ChatContextSetter } from '@/components/chat/chat-context-setter';
+import { ContactHealthFeedbackActions } from '@/components/contact-health-feedback-actions';
 import { ContactTagEditor } from '@/components/contact-tag-editor';
 import { ContactDetailShell } from '@/components/contacts/contact-detail-shell';
 import { ContactSummaryPanel } from '@/components/contacts/contact-summary-panel';
@@ -13,6 +14,7 @@ import {
 	OUTCOME_BADGE,
 	TREND_STYLES,
 } from '@/lib/colors';
+import { getContactInitial } from '@/lib/contact-initial';
 import { formatCurrency, formatRelativeDate } from '@/lib/format';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
 import {
@@ -24,7 +26,6 @@ import {
 	getLatestSummary,
 	getMemoriesByContact,
 	getMessageCount,
-	getMessagesByContact,
 	listKnowledgeByContact,
 	listOutcomes,
 } from '@repo/db';
@@ -55,7 +56,6 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
 		investorProfile,
 		outcomes,
 		healthScore,
-		recentMessages,
 	] = await Promise.all([
 		getCommitmentsByContact(workspaceId, id, envelope, { limit: 50 }),
 		getLatestSummary(workspaceId, id, envelope),
@@ -65,7 +65,6 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
 		getInvestorProfile(workspaceId, id),
 		listOutcomes(workspaceId, id, envelope),
 		getHealthScore(workspaceId, id),
-		getMessagesByContact(workspaceId, id, envelope, { limit: 10 }),
 	]);
 
 	const summaryData = summary
@@ -119,12 +118,12 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
 	const overviewContent = (
 		<div className="space-y-6">
 			<ContactInfoCard contact={contact} />
+			<ContactHealthExplanation contactId={id} healthScore={healthScore} />
 			<ContactSummaryPanel contactId={id} initialSummary={summaryData} />
 			<ContactDealsSection deals={contactDeals} />
 			<ContactGoalsSection goals={contactGoals} />
 			<ContactIntroductionsSection intros={contactIntros} nameMap={introNameMap} />
 			<ContactConnectionsSection connections={contactConnections} />
-			<RecentMessagesList messages={recentMessages} />
 			<ContactNotes contactId={id} initialNotes={(contact.notes as string) ?? null} />
 			<ContactTagEditor contactId={id} initialData={tagData} />
 			<DraftComposer contactId={id} />
@@ -194,6 +193,53 @@ const TREND_ARROWS: Record<string, string> = {
 	stable: '',
 };
 
+type ContactHealthComputationData = {
+	cadence?: {
+		currentGapDays?: number | null;
+		expectedGapDays?: number;
+		expectedGapRange?: string;
+		p75GapDays?: number | null;
+		p90GapDays?: number | null;
+		sessionCount?: number;
+	};
+	confidence?: {
+		label?: string;
+		reasons?: string[];
+		score?: number;
+	};
+	sourceCoverage?: {
+		directChat?: boolean;
+		groupSignals?: boolean;
+		sparse?: boolean;
+	};
+	statusReason?: {
+		code?: string;
+		directionality?: string;
+		plainLanguage?: string;
+		suggestedAction?: string;
+	};
+	version?: number;
+};
+
+function getContactHealthComputationData(
+	healthScore: Record<string, unknown> | null,
+): ContactHealthComputationData {
+	const data = healthScore?.computationData;
+	if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
+	return data as ContactHealthComputationData;
+}
+
+function humanizeHealthLabel(label: string): string {
+	return label
+		.split('_')
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join(' ');
+}
+
+function telegramLinkLabel(contact: Record<string, unknown>) {
+	return contact.telegramId ? 'Linked Telegram contact' : null;
+}
+
 function ContactHeader({
 	contact,
 	healthScore,
@@ -201,11 +247,11 @@ function ContactHeader({
 	const firstName = (contact.firstName as string) || '';
 	const lastName = (contact.lastName as string) || '';
 	const displayName = [firstName, lastName].filter(Boolean).join(' ') || 'Unknown';
-	const initials = (firstName || '?')[0].toUpperCase();
+	const initials = getContactInitial(firstName, lastName);
 	const subtitle =
 		(contact.phone as string) ||
 		(contact.email as string) ||
-		(contact.telegramId as string) ||
+		telegramLinkLabel(contact) ||
 		'No contact info';
 
 	const label = healthScore?.label as string | undefined;
@@ -225,7 +271,7 @@ function ContactHeader({
 							<span
 								className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${HEALTH_BADGE_COLORS[label] || 'bg-muted text-muted-foreground'}`}
 							>
-								{label}
+								{humanizeHealthLabel(label)}
 								{TREND_ARROWS[trend ?? ''] ?? ''}
 							</span>
 						) : null}
@@ -244,26 +290,79 @@ function ContactHeader({
 	);
 }
 
-function RecentMessagesList({ messages }: { messages: Record<string, unknown>[] }) {
-	if (!messages || messages.length === 0) return null;
+function ContactHealthExplanation({
+	contactId,
+	healthScore,
+}: { contactId: string; healthScore: Record<string, unknown> | null }) {
+	if (!healthScore) return null;
+
+	const data = getContactHealthComputationData(healthScore);
+	const label = (healthScore.label as string | undefined) ?? 'unknown';
+	const composite = healthScore.composite as number | undefined;
+	const reason =
+		data.statusReason?.plainLanguage ??
+		'Gordian has not stored a detailed relationship-health explanation yet.';
+	const confidence = data.confidence?.label ?? 'unknown';
+	const confidenceReasons = data.confidence?.reasons ?? [];
+	const currentGap = data.cadence?.currentGapDays;
+	const expectedRange = data.cadence?.expectedGapRange;
+	const sessionCount = data.cadence?.sessionCount;
+	const sourceCoverage = data.sourceCoverage;
+	const showTelegramCaveat = sourceCoverage?.sparse || sourceCoverage?.directChat === false;
+	const labelClass = HEALTH_BADGE_COLORS[label] ?? 'bg-muted text-muted-foreground';
+
+	const factors = [
+		currentGap != null && expectedRange
+			? { label: 'Current gap', value: `${Math.round(currentGap)}d vs ${expectedRange}d usual` }
+			: null,
+		sessionCount ? { label: 'History', value: `${sessionCount} interaction days` } : null,
+		composite != null ? { label: 'Health score', value: `${Math.round(composite * 100)}%` } : null,
+		confidence !== 'unknown'
+			? { label: 'Confidence', value: `${humanizeHealthLabel(confidence)}` }
+			: null,
+	].filter((item): item is { label: string; value: string } => Boolean(item));
 
 	return (
 		<div className="rounded-lg border border-border bg-card p-4">
-			<h3 className="mb-3 text-sm font-semibold text-foreground">Recent Messages</h3>
-			<div className="space-y-2">
-				{messages.map((m) => (
-					<div key={m.id as string} className="flex gap-2 text-sm">
-						<span
-							className={`shrink-0 mt-0.5 h-2 w-2 rounded-full ${m.isOutgoing ? 'bg-blue-400' : 'bg-muted-foreground'}`}
-						/>
-						<div className="min-w-0 flex-1">
-							<p className="text-foreground truncate">{(m.text as string) || '(no text)'}</p>
-							<p className="text-xs text-muted-foreground">
-								{m.sentAt ? formatRelativeDate(new Date(m.sentAt as string)) : ''}
-							</p>
+			<div className="mb-3 flex flex-wrap items-center gap-2">
+				<h3 className="text-sm font-semibold text-foreground">Why Gordian thinks this</h3>
+				<span className={`rounded-full px-2 py-0.5 text-xs font-medium ${labelClass}`}>
+					{humanizeHealthLabel(label)}
+				</span>
+			</div>
+			<p className="text-sm leading-6 text-foreground">{reason}</p>
+			{factors.length > 0 ? (
+				<div className="mt-3 grid gap-2 sm:grid-cols-2">
+					{factors.map((factor) => (
+						<div key={factor.label} className="rounded-md bg-accent/50 px-3 py-2">
+							<p className="text-xs font-medium text-muted-foreground">{factor.label}</p>
+							<p className="text-sm text-foreground">{factor.value}</p>
 						</div>
-					</div>
-				))}
+					))}
+				</div>
+			) : null}
+			{confidenceReasons.length > 0 ? (
+				<p className="mt-3 text-xs text-muted-foreground">
+					Based on {confidenceReasons.slice(0, 3).join(', ')}.
+				</p>
+			) : null}
+			{showTelegramCaveat ? (
+				<p className="mt-2 text-xs text-muted-foreground">
+					Telegram-only data may be incomplete for this relationship.
+				</p>
+			) : null}
+			<div className="mt-3">
+				<ContactHealthFeedbackActions
+					actions={[
+						'snooze',
+						'mark_low_touch',
+						'handled_elsewhere',
+						'not_important',
+						'dismiss_wrong',
+					]}
+					contactId={contactId}
+					statusReasonCode={data.statusReason?.code}
+				/>
 			</div>
 		</div>
 	);
@@ -276,7 +375,7 @@ function ContactInfoCard({ contact }: { contact: Record<string, unknown> }) {
 			<div className="grid grid-cols-2 gap-4">
 				<InfoField label="Phone" value={contact.phone as string} />
 				<InfoField label="Email" value={contact.email as string} />
-				<InfoField label="Telegram ID" value={contact.telegramId as string} />
+				<InfoField label="Telegram" value={telegramLinkLabel(contact)} />
 				<InfoField label="Notes" value={contact.notes as string} />
 			</div>
 		</div>

@@ -1,3 +1,4 @@
+import { BASIC_CRM_EXPORT_COLLECTION_FIELD_ALLOWLISTS } from '@/lib/basic-crm-export-policy';
 import { _resetForTesting as resetRateLimit } from '@/lib/rate-limit';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -7,6 +8,10 @@ const mockGetWorkspaceEnvelope = vi.fn();
 const mockGetAccessibleContacts = vi.fn();
 const mockGetActiveCommitments = vi.fn();
 const mockListDeals = vi.fn();
+
+function expectKeysWithinAllowlist(record: Record<string, unknown>, allowlist: readonly string[]) {
+	expect(Object.keys(record).every((key) => allowlist.includes(key))).toBe(true);
+}
 
 vi.mock('next/headers', () => ({
 	headers: vi.fn(() => Promise.resolve(new Headers())),
@@ -94,7 +99,93 @@ describe('GET /api/export', () => {
 		expect(data.contacts).toHaveLength(1);
 		expect(data.commitments).toHaveLength(1);
 		expect(data.deals).toHaveLength(1);
-		// workspaceId intentionally excluded from export (SEC: no internal IDs in user data)
+		expect(data.contacts[0].workspaceId).toBeUndefined();
+		expect(data.commitments[0].workspaceId).toBeUndefined();
+		expect(data.deals[0].workspaceId).toBeUndefined();
+	});
+
+	it('projects each collection to the documented basic CRM field allowlist', async () => {
+		const envelope = { encryptedWrk: Buffer.from('mock'), kmsContext: {}, wrkVersion: 1 };
+		mockGetSession.mockResolvedValue({ user: { id: 'user-1' } });
+		mockGetUserWorkspaceId.mockResolvedValue('ws-1');
+		mockGetWorkspaceEnvelope.mockResolvedValue(envelope);
+		mockGetAccessibleContacts.mockResolvedValue([
+			{
+				id: 'c-allowed',
+				workspaceId: 'ws-1',
+				firstName: 'Alice',
+				lastName: 'Example',
+				username: 'alice_example',
+				phone: '+1-555-0100',
+				email: 'alice@example.test',
+				notes: 'private contact note',
+				sourceAccountId: '123456789',
+				telegramId: '987654321',
+				firstNameBidx: 'blind-index',
+				createdAt: new Date('2026-06-10T00:00:00.000Z'),
+			},
+		]);
+		mockGetActiveCommitments.mockResolvedValue([
+			{
+				id: 'cm-allowed',
+				workspaceId: 'ws-1',
+				contactId: 'c-allowed',
+				title: 'Follow up',
+				quote: 'raw source quote',
+				sourceMessageIds: ['msg-1'],
+				embedding: [0.1, 0.2],
+			},
+		]);
+		mockListDeals.mockResolvedValue([
+			{
+				id: 'd-allowed',
+				workspaceId: 'ws-1',
+				contactId: 'c-allowed',
+				title: 'SAFT',
+				stage: 'discovery',
+				value: 1000,
+				notes: 'private deal note',
+				titleBlindIndex: 'blind-index',
+				terms: { valuationCap: 100, note: 'term private note' },
+				stageHistory: [
+					{ stage: 'discovery', timestamp: '2026-06-10T00:00:00.000Z', note: 'private' },
+				],
+			},
+		]);
+
+		const { GET } = await import('@/app/api/export/route');
+		const response = await GET();
+
+		expect(response.status).toBe(200);
+		const data = await response.json();
+		expect(Object.keys(data.contacts[0]).sort()).toEqual(
+			['createdAt', 'email', 'firstName', 'id', 'lastName', 'phone', 'username'].sort(),
+		);
+		expect(Object.keys(data.commitments[0]).sort()).toEqual(['contactId', 'id', 'title'].sort());
+		expect(Object.keys(data.deals[0]).sort()).toEqual(
+			['contactId', 'id', 'stage', 'stageHistory', 'terms', 'title', 'value'].sort(),
+		);
+		expect(data.contacts[0].createdAt).toBe('2026-06-10T00:00:00.000Z');
+		expect(data.deals[0].terms).toEqual({ valuationCap: 100 });
+		expect(data.deals[0].stageHistory).toEqual([
+			{ stage: 'discovery', timestamp: '2026-06-10T00:00:00.000Z' },
+		]);
+		expectKeysWithinAllowlist(
+			data.contacts[0],
+			BASIC_CRM_EXPORT_COLLECTION_FIELD_ALLOWLISTS.contacts,
+		);
+		expectKeysWithinAllowlist(
+			data.commitments[0],
+			BASIC_CRM_EXPORT_COLLECTION_FIELD_ALLOWLISTS.commitments,
+		);
+		expectKeysWithinAllowlist(data.deals[0], BASIC_CRM_EXPORT_COLLECTION_FIELD_ALLOWLISTS.deals);
+		const serialized = JSON.stringify(data);
+		expect(serialized).not.toContain('private contact note');
+		expect(serialized).not.toContain('private deal note');
+		expect(serialized).not.toContain('123456789');
+		expect(serialized).not.toContain('987654321');
+		expect(serialized).not.toContain('raw source quote');
+		expect(serialized).not.toContain('blind-index');
 	});
 
 	it('fetches all entity types in parallel', async () => {
@@ -159,6 +250,7 @@ describe('GET /api/export', () => {
 				telegram_id: sentinel,
 				messageText: sentinel,
 				message_text: sentinel,
+				notes: sentinel,
 				messages: [{ text: sentinel }],
 				profile: { telegramMessages: [{ body: sentinel }] },
 			},
@@ -168,6 +260,7 @@ describe('GET /api/export', () => {
 				id: 'cm-allowed',
 				contactId: 'c-allowed',
 				title: 'Follow up',
+				quote: sentinel,
 				sourceMessageText: sentinel,
 				source_message_text: sentinel,
 			},
@@ -177,6 +270,7 @@ describe('GET /api/export', () => {
 				id: 'd-allowed',
 				contactId: 'c-allowed',
 				title: 'SAFT',
+				notes: sentinel,
 				metadata: {
 					embedding: sentinel,
 					kmsContext: sentinel,
@@ -193,6 +287,78 @@ describe('GET /api/export', () => {
 		const serialized = JSON.stringify(await response.json());
 		expect(serialized).not.toContain(sentinel);
 		expect(serialized).toContain('Follow up');
-		expect(serialized).toContain('kept');
+		expect(serialized).not.toContain('safeNote');
+	});
+
+	it('excludes deal artifact extensions from the basic CRM export', async () => {
+		const envelope = { encryptedWrk: Buffer.from('mock'), kmsContext: {}, wrkVersion: 1 };
+		const sentinel = 'CONFIDENTIAL ARTIFACT SENTINEL';
+		mockGetSession.mockResolvedValue({ user: { id: 'user-1' } });
+		mockGetUserWorkspaceId.mockResolvedValue('ws-1');
+		mockGetWorkspaceEnvelope.mockResolvedValue(envelope);
+		mockGetAccessibleContacts.mockResolvedValue([{ id: 'c-allowed', firstName: 'Alice' }]);
+		mockGetActiveCommitments.mockResolvedValue([]);
+		mockListDeals.mockResolvedValue([
+			{
+				id: 'd-allowed',
+				contactId: 'c-allowed',
+				title: 'Deal title stays exportable',
+				artifacts: [
+					{
+						id: 'a-1',
+						artifactType: 'saft',
+						title: sentinel,
+						url: sentinel,
+						reference: sentinel,
+						metadata: { safeStructuralFlag: 'kept' },
+					},
+				],
+			},
+		]);
+
+		const { GET } = await import('@/app/api/export/route');
+		const response = await GET();
+
+		expect(response.status).toBe(200);
+		const serialized = JSON.stringify(await response.json());
+		expect(serialized).toContain('Deal title stays exportable');
+		expect(serialized).not.toContain(sentinel);
+		expect(serialized).not.toContain('artifactType');
+		expect(serialized).not.toContain('safeStructuralFlag');
+	});
+
+	it('excludes saved deal AI output and source manifests from the basic CRM export', async () => {
+		const envelope = { encryptedWrk: Buffer.from('mock'), kmsContext: {}, wrkVersion: 1 };
+		const sentinel = 'CONFIDENTIAL DEAL AI OUTPUT';
+		mockGetSession.mockResolvedValue({ user: { id: 'user-1' } });
+		mockGetUserWorkspaceId.mockResolvedValue('ws-1');
+		mockGetWorkspaceEnvelope.mockResolvedValue(envelope);
+		mockGetAccessibleContacts.mockResolvedValue([{ id: 'c-allowed', firstName: 'Alice' }]);
+		mockGetActiveCommitments.mockResolvedValue([]);
+		mockListDeals.mockResolvedValue([
+			{
+				id: 'd-allowed',
+				contactId: 'c-allowed',
+				title: 'Deal title stays exportable',
+				aiRuns: [
+					{
+						output: sentinel,
+						uncertainty: sentinel,
+						sourceManifest: [{ snippet: sentinel }],
+						sourceCount: 1,
+					},
+				],
+				dealAiRuns: [{ output: sentinel }],
+			},
+		]);
+
+		const { GET } = await import('@/app/api/export/route');
+		const response = await GET();
+
+		expect(response.status).toBe(200);
+		const serialized = JSON.stringify(await response.json());
+		expect(serialized).toContain('Deal title stays exportable');
+		expect(serialized).not.toContain(sentinel);
+		expect(serialized).not.toContain('sourceManifest');
 	});
 });

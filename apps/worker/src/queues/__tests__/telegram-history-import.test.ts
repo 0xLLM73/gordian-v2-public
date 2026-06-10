@@ -69,6 +69,7 @@ const mockQueueCommitmentReprocess = vi.hoisted(() => vi.fn());
 const mockQueueIntroductionReprocess = vi.hoisted(() => vi.fn());
 const mockQueueConnectionReprocess = vi.hoisted(() => vi.fn());
 const mockAppendAuditLog = vi.hoisted(() => vi.fn());
+const mockEnqueueHealthScoringForWorkspace = vi.hoisted(() => vi.fn());
 
 const DATA = {
 	runId: RUN_ID,
@@ -175,6 +176,10 @@ vi.mock('../commitment-reprocess', () => ({
 
 vi.mock('../introduction-reprocess', () => ({
 	queueIntroductionReprocess: mockQueueIntroductionReprocess,
+}));
+
+vi.mock('../health-scoring-queue', () => ({
+	enqueueHealthScoringForWorkspace: mockEnqueueHealthScoringForWorkspace,
 }));
 
 vi.mock('@repo/db', () => {
@@ -415,6 +420,10 @@ beforeEach(() => {
 		maxAgeDays: 30,
 	});
 	mockAppendAuditLog.mockClear();
+	mockEnqueueHealthScoringForWorkspace.mockResolvedValue({
+		queued: true,
+		reason: 'telegram_history_import_completed',
+	});
 	mockTerminateUser.mockResolvedValue(undefined);
 	mockDisconnectUser.mockResolvedValue(undefined);
 });
@@ -1062,6 +1071,10 @@ describe('telegram history import queue', () => {
 			mode: 'incremental',
 			limit: 50,
 			runId: RUN_ID,
+		});
+		expect(mockEnqueueHealthScoringForWorkspace).toHaveBeenCalledWith(WORKSPACE_ID, {
+			force: true,
+			reason: 'telegram_history_import_completed',
 		});
 		expect(mockListContactIdsForTelegramImportRun).toHaveBeenCalledWith({
 			workspaceId: WORKSPACE_ID,
