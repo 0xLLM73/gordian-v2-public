@@ -8,11 +8,11 @@ that cannot be proven by the repository alone.
 The selected publication target is the synced
 `0xLLM73/gordian-v2-public` mirror.
 
-As of the 2026-06-10 final source validation pass:
+As of the 2026-06-10 release evidence refresh:
 
 - `0xLLM73/gordian-v2` is the private source of truth and includes the current
-  release-prep baseline. Source `main` was validated at
-  `c526ac24bdbf8bd7dc418059dbeb58b22cd7bb3f` after PRs #108 through #115
+  release-prep baseline. Source `main` is validated at
+  `c110d801ad769040f788820c4c6bfd5dbf56bae0` after PRs #108 through #116
   merged.
 - `0xLLM73/gordian-v2` `main` is intended to require pull requests, owner
   review, strict `validate` and `demo-smoke` checks, linear history, admin
@@ -25,10 +25,16 @@ As of the 2026-06-10 final source validation pass:
   `fe97ac196451` into mirror `main` at `be88d03dbcc1`; PR #37 refreshed
   docs-only evidence and moved mirror `main` to
   `32662038aa698ddbf8e740d9c9ba6c6d85dd677e`.
-- The mirror must be resynced from the final selected source release commit
-  before publication. If a full-history mirror scan finds real secrets, private
-  user data, or private operational context, abandon the existing mirror history
-  and publish from a fresh sanitized repository instead.
+- Mirror PR #38 synced source commit
+  `c110d801ad769040f788820c4c6bfd5dbf56bae0` into the mirror and merged at
+  `44e3dd0a4df5de5e6a2a030a5952810f6ccc6555` after GitHub `validate`,
+  `demo-smoke`, and `postgres-smoke` passed and required `@thegrovest` review
+  landed. If source changes again before publication, create a later sanitized
+  sync PR and treat PR #38 as historical evidence.
+- The mirror must be synced from the final selected source release commit before
+  publication. If a full-history mirror scan finds real secrets, private user
+  data, or private operational context, abandon the existing mirror history and
+  publish from a fresh sanitized repository instead.
 - Mirror PR #36 passed GitHub `validate`, `demo-smoke`, and `postgres-smoke`
   before merge. Mirror PR #37 passed GitHub `validate` and `demo-smoke` before
   merge.
@@ -38,26 +44,28 @@ As of the 2026-06-10 final source validation pass:
   `main` now pins `hono 4.12.23` and passes `pnpm audit` plus `pnpm audit
   --prod`. The Dependabot alerts API still returns 404 while the mirror remains
   private, so recheck GitHub before publication.
-- The 2026-06-10 source validation pass completed the repository gates listed
-  in [RELEASE_ATTESTATION.md](RELEASE_ATTESTATION.md), including
+- The 2026-06-10 source and mirror validation passes completed the repository
+  gates listed in [RELEASE_ATTESTATION.md](RELEASE_ATTESTATION.md), including
   `pnpm audit:open-source`, `pnpm audit`, `pnpm audit --prod`, `pnpm lint`,
   `pnpm typecheck`, `pnpm test`, `pnpm demo:smoke`,
   `pnpm demo:release-smoke`, `pnpm security:local-runtime-smoke`,
   `pnpm security:derived-data-audit`, `pnpm kg:security:audit`,
-  `pnpm local-ai:doctor`, and `pnpm kg:local:smoke`. `pnpm demo:setup` was
-  partially blocked by already-running local Postgres and Redis services on the
-  standard ports, so the migrate and seed steps were run successfully against
-  those local services instead.
+  `pnpm local-ai:doctor`, and `pnpm kg:local:smoke`. Mirror browser smoke used
+  isolated local database `gordian_release_mirror_c110d80_20260610a` because the
+  default shared local database correctly blocks demo login when it contains
+  Telegram data. `pnpm demo:setup` was partially blocked by already-running
+  local Postgres and Redis services on the standard ports, so the migrate and
+  seed steps were run successfully against local services instead.
 - `pnpm check:publication --repo 0xLLM73/gordian-v2-public` still fails, as it
   should, while the selected mirror is private. Current blockers are mirror
   visibility, secret scanning, push protection, and private vulnerability
   reporting.
 
-Before launch, sync the mirror as a sanitized release tree, verify absolute
-GitHub links point at `gordian-v2-public`, and run every local and GitHub
-publication gate against the mirror checkout and origin. Do not force-push the
-private source repository history into the public mirror unless that history has
-been separately approved for public release.
+Before launch, verify the latest mirror sync includes any source evidence-only
+changes, verify absolute GitHub links point at `gordian-v2-public`, and run
+every local and GitHub publication gate against the mirror checkout and origin.
+Do not force-push the private source repository history into the public mirror
+unless that history has been separately approved for public release.
 
 Notification-product tweaks are intentionally not part of the publication gate
 itself, but they remain queued release work before any announcement because they
