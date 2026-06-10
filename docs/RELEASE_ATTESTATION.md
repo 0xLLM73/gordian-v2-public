@@ -12,20 +12,20 @@ data into this file. Record only status, date, owner, and short evidence notes.
 
 | Field | Value |
 | --- | --- |
-| Release candidate commit | Code release candidate `c110d801ad769040f788820c4c6bfd5dbf56bae0` after PR #116 merged; evidence-only docs were refreshed afterward without app-code changes |
-| Validated source baseline | App-code baseline remains `c110d801ad769040f788820c4c6bfd5dbf56bae0`; source `main` is current through evidence-only PRs #117, #118, #119, #120, #121, and #122 at `a2de1904` |
+| Release candidate commit | Code release candidate `c110d801ad769040f788820c4c6bfd5dbf56bae0` after PR #116 merged; release evidence docs and tests were refreshed afterward without production app-code changes |
+| Validated source baseline | Production app-code baseline remains `c110d801ad769040f788820c4c6bfd5dbf56bae0`; source `main` is current through release evidence and test-only PRs #117, #118, #119, #120, #121, #122, and #123 at `4349c38f` |
 | Source repository | `0xLLM73/gordian-v2` |
 | Release-control accounts | `@0xLLM73` and `@thegrovest` |
 | Attestation owner | Zachary Grove using the `@0xLLM73` and `@thegrovest` release-control accounts, assisted by Codex |
 | Attestation date | 2026-06-10 PT |
-| Publication target | `0xLLM73/gordian-v2-public`; private mirror PR #38 synced source commit `c110d801ad769040f788820c4c6bfd5dbf56bae0`, and mirror PRs #39, #40, #41, #42, and #43 synced later evidence-only release docs through mirror `main` `85f851f` after green CI and required `@thegrovest` review |
+| Publication target | `0xLLM73/gordian-v2-public`; private mirror PR #38 synced source commit `c110d801ad769040f788820c4c6bfd5dbf56bae0`, and mirror PRs #39, #40, #41, #42, #43, and #44 synced later release evidence and test-only changes through mirror `main` `f2c4689` after green CI and required `@thegrovest` review |
 
 This is a readiness attestation, not a final public-release approval. The mirror
 remains private. The existing public mirror remains the selected target because
 the release docs, check scripts, and GitHub links already point at it. Source
 validation is materially stronger after PRs #108 through #116, source PRs #117
-through #122 are evidence-only documentation updates, and mirror PRs #38 through
-#43 reran the required gates from the mirror checkout before merge, but this is
+through #123 are release evidence and test-only updates, and mirror PRs #38
+through #44 reran the required gates from the mirror checkout before merge, but this is
 not a release approval: the mirror remains private, GitHub public-security
 settings are not yet available, provider-side rotation is not signed off,
 runtime cleanup is not signed off, and final release owner/security/runtime
@@ -38,11 +38,11 @@ sanitized repository instead of keeping the current mirror history.
 
 | Gate | Required result | Status | Evidence |
 | --- | --- | --- | --- |
-| Clean checkout | `git status --short --branch` shows a clean release branch | PASS | 2026-06-10 PT: source `main` was clean and synced to `origin/main` at `a2de1904`; mirror `main` was clean and synced to `origin/main` at `85f851f`. |
+| Clean checkout | `git status --short --branch` shows a clean release branch | PASS | 2026-06-10 PT: source `main` was clean and synced to `origin/main` at `4349c38f`; mirror `main` was clean and synced to `origin/main` at `f2c4689`. |
 | Frozen install | `pnpm install --frozen-lockfile` passes | PASS | 2026-06-10 PT: lockfile was up to date and install completed successfully. |
 | Dependency audit | `pnpm audit` and `pnpm audit --prod` pass | PASS | 2026-06-10 PT: both commands reported `No known vulnerabilities found` when run with registry access. |
-| Open-source audit | `pnpm audit:open-source` passes on a full-depth checkout | PASS | 2026-06-10 PT: `Open-source audit passed` on the source release candidate and on the mirror PR #38 checkout. |
-| Lint | `pnpm lint` passes | PASS | 2026-06-10 PT: Biome checked the source and mirror release trees with no fixes required. |
+| Open-source audit | `pnpm audit:open-source` passes on a full-depth checkout | PASS | 2026-06-10 PT: `Open-source audit passed` on the source release candidate and on merged mirror `main` after PR #44. |
+| Lint | `pnpm lint` passes | PASS | 2026-06-10 PT: Biome checked the source and merged mirror release trees with no fixes required. |
 | Typecheck | `pnpm typecheck` passes | PASS | 2026-06-10 PT: Turbo reported 8 successful typecheck/build tasks. |
 | Tests | `pnpm test` passes | PASS | 2026-06-10 PT: Turbo reported 8 successful test tasks; package summaries included 8 crypto files/79 tests, 7 shared files/45 tests, 99 worker files/1201 tests, and 100 web files/529 tests. Worker tests emitted local Redis connection stderr in the sandbox but completed green. |
 | Demo setup | `pnpm demo:setup` can prepare synthetic local services and seed data | PARTIAL | 2026-06-10 PT: source and mirror `demo:setup` passed `demo:guard` but could not start compose Postgres/Redis because user-owned local services were already bound to `127.0.0.1:5432` and `127.0.0.1:6379`. Equivalent validation continued with `pnpm db:migrate` and `pnpm seed:demo`; mirror browser validation used isolated local database `gordian_release_mirror_c110d80_20260610a`. |
@@ -53,7 +53,7 @@ sanitized repository instead of keeping the current mirror history.
 | Derived data audit | `pnpm security:derived-data-audit` passes | PASS | 2026-06-10 PT: source and mirror isolated-DB audits completed with 0 violations. Mirror checked 17 plain derived columns, 72 plain derived rows, 9 vector columns, and 40 populated vector rows. |
 | Knowledge security audit | `pnpm kg:security:audit` passes | PASS | 2026-06-10 PT: source and mirror isolated-DB audits completed with 0 violations. The seeded databases had no plaintext-shaped knowledge leaks in the checked surfaces. |
 | Local AI readiness | `pnpm local-ai:doctor` and `pnpm kg:local:smoke` pass | PASS | 2026-06-10 PT: source validated local AI readiness, and mirror PR #38 validated Qwen local AI through temporary nontracked env `/private/tmp/gordian-mirror-local-ai.env`; doctor had 0 failures and 0 warnings, `qwen3-embedding:0.6b` returned 512 dimensions, and `qwen3.5:9b` handled commitment extraction, chat assistant, and digest generation. Temporary Ollama was stopped after validation. |
-| Publication check | `pnpm check:publication --repo 0xLLM73/gordian-v2-public` passes after the repo is public | BLOCKED | 2026-06-10 PT: post-PR #43 mirror check failed as expected because the selected mirror is private; secret scanning and push protection are unavailable; private vulnerability reporting returns 404. Rerun after the sanitized mirror is synced, intentionally made public, and GitHub-side settings are enabled. |
+| Publication check | `pnpm check:publication --repo 0xLLM73/gordian-v2-public` passes after the repo is public | BLOCKED | 2026-06-10 PT: post-PR #44 mirror check failed as expected because the selected mirror is private; secret scanning and push protection are unavailable; private vulnerability reporting returns 404. Rerun after the sanitized mirror is synced, intentionally made public, and GitHub-side settings are enabled. |
 
 ## GitHub Settings
 
@@ -65,15 +65,15 @@ sanitized repository instead of keeping the current mirror history.
 | Private vulnerability reporting | Enabled | BLOCKED | 2026-06-10 PT: GitHub API returns 404 while the mirror remains private. Re-run after intentional publication and enable private vulnerability reporting. |
 | Dependabot alerts | Enabled | PASS | 2026-06-10 PT: source and mirror Dependabot vulnerability-alert endpoints returned 204, open alert queries returned `[]`, and merged mirror `main` pins `hono 4.12.23` while passing `pnpm audit` plus `pnpm audit --prod`. |
 | Dependabot security updates | Enabled and unpaused | PASS | 2026-06-10 PT: source and mirror automated-security-fixes endpoints returned `{"enabled":true,"paused":false}`. |
-| Branch checks | `main` requires strict `validate` and `demo-smoke` checks | PASS | Source and mirror `main` require strict `validate` and `demo-smoke` checks. Mirror PRs #38, #39, #40, #41, #42, and #43 passed GitHub `validate` and `demo-smoke`; PR #38 also passed `postgres-smoke`. |
-| Review policy | `main` requires owner approval before merge | PASS | 2026-06-10 PT: source and mirror branch protection require CODEOWNER review with one approval, dismiss stale reviews, enforce admins, require linear history, block force pushes, and block deletions. Mirror PRs #38 through #43 stayed blocked until required `@thegrovest` review landed, then merged cleanly. |
+| Branch checks | `main` requires strict `validate` and `demo-smoke` checks | PASS | Source and mirror `main` require strict `validate` and `demo-smoke` checks. Mirror PRs #38, #39, #40, #41, #42, #43, and #44 passed GitHub `validate` and `demo-smoke`; PR #38 also passed `postgres-smoke`. |
+| Review policy | `main` requires owner approval before merge | PASS | 2026-06-10 PT: source and mirror branch protection require CODEOWNER review with one approval, dismiss stale reviews, enforce admins, require linear history, block force pushes, and block deletions. Mirror PRs #38 through #44 stayed blocked until required `@thegrovest` review landed, then merged cleanly. |
 | Protected history | `main` blocks force pushes and deletion, enforces admins and linear history | PASS | Source and mirror branch protection confirms admins enforced, linear history required, force pushes blocked, deletions blocked, and conversation resolution required. |
 
 ## Ongoing Regression System
 
 | Gate | Required result | Status | Evidence |
 | --- | --- | --- | --- |
-| Every PR gate | CI runs open-source audit, package audits, lint, typecheck, tests, and demo smoke before merge | PASS | PRs #108 through #122 merged only after required review and green CI; mirror PRs #38 through #43 merged after required review and green CI. |
+| Every PR gate | CI runs open-source audit, package audits, lint, typecheck, tests, and demo smoke before merge | PASS | PRs #108 through #123 merged only after required review and green CI; mirror PRs #38 through #44 merged after required review and green CI. |
 | Release browser QA matrix | Full route matrix is run for each release candidate and evidence is recorded here | PASS | 2026-06-10 PT: source and mirror release smoke passed 31 desktop/mobile route checks. In-app Browser could read the current `http://localhost:3456/onboarding/connect` page, which showed local Telegram linking copy and had no captured console issues, but direct in-app navigation to localhost and 127.0.0.1 routes returned `ERR_BLOCKED_BY_CLIENT`; fallback Playwright release smoke was therefore used for the full matrix and passed 31/31 after public-release Telegram flags were forced off. Repeat after any later mirror sync if source changes again before publication. |
 | Weekly publication review | Publication readiness, Dependabot, secret scanning, push protection, vulnerability reporting, and branch protection are reviewed | PENDING | Begin after the mirror is public and GitHub-side settings are available. |
 | Monthly sensitive-data review | Data classification, exports, AI egress, logging/audit, Telegram safety, and runtime purge coverage are reviewed | PENDING | Begin after public release; record accepted risks with owner and date. |
@@ -97,9 +97,9 @@ sanitized repository instead of keeping the current mirror history.
 
 | Gate | Required result | Status | Evidence |
 | --- | --- | --- | --- |
-| Runtime purge | `pnpm purge:secrets` run where old real runtime state existed | PARTIAL | 2026-06-10 PT: `pnpm purge:secrets -- --dry-run` printed counts only. The latest post-worker-smoke dry-run found 0 Telegram MTProto account sessions/tokens, 0 account OAuth tokens, 3 Better Auth demo sessions, 0 verification values, 0 calendar OAuth tokens, and 0 Telegram/phone/session Redis keys. It found 1919 `{ai-flow}:*` BullMQ runtime keys covered by purge tooling; destructive `--confirm` purge still requires release-owner approval or explicit owner acceptance of this local non-release residue. |
+| Runtime purge | `pnpm purge:secrets` run where old real runtime state existed | PARTIAL | 2026-06-10 PT: `pnpm purge:secrets -- --dry-run` printed counts only. The latest dry-run found 0 Telegram MTProto account sessions/tokens, 0 account OAuth tokens, 3 Better Auth demo sessions, 0 verification values, 0 calendar OAuth tokens, and 0 Telegram/phone/session Redis keys. It found 1911 `{ai-flow}:*` BullMQ runtime keys covered by purge tooling; destructive `--confirm` purge still requires release-owner approval or explicit owner acceptance of this local non-release residue. |
 | Postgres snapshots | Old snapshots/backups deleted or confirmed free of raw secrets | TODO | TODO |
-| Redis/Dragonfly residue | Old cache/job/session data purged or confirmed absent | PARTIAL | 2026-06-10 PT: dry-run and Telegram smoke found 0 Telegram auth/send/session-lock keys and 0 legacy grammY session keys; 1919 `{ai-flow}:*` BullMQ runtime keys remain and are covered by purge tooling. Confirmed purge or explicit owner acceptance is still pending. |
+| Redis/Dragonfly residue | Old cache/job/session data purged or confirmed absent | PARTIAL | 2026-06-10 PT: dry-run and Telegram smoke found 0 Telegram auth/send/session-lock keys and 0 legacy grammY session keys; 1911 `{ai-flow}:*` BullMQ runtime keys remain and are covered by purge tooling. Confirmed purge or explicit owner acceptance is still pending. |
 | Local developer machines | Old `.env.local`, Telegram sessions, and local DB/cache residue cleaned | PARTIAL | 2026-06-10 PT: `pnpm workspace-key:migrate-local-keychain` dry-run found 3 raw local workspace WRKs, then `pnpm workspace-key:migrate-local-keychain -- --apply` migrated all 3 to macOS Keychain markers. Browser QA reseeding recreated 3 raw demo WRKs, so the migration was rerun and a follow-up Telegram smoke again reported `0 non-Keychain row(s) out of 3`. `.env.local` still exists for local development, and broader local file/backups cleanup still needs human sign-off. |
 | Legacy key material | No known raw workspace keys, Telegram session keys, or KMS context secrets remain | PARTIAL | 2026-06-10 PT: local smoke found 0 unsafe Telegram KEK blobs, 0 plaintext-looking Telegram session rows, 0 Telegram OAuth residue rows, and 0 non-Keychain workspace WRK rows. External provider dashboards, local backups, and old snapshots still require human sign-off. |
 
