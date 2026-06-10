@@ -290,6 +290,9 @@ importers:
       '@repo/crypto':
         specifier: workspace:*
         version: link:../crypto
+      '@repo/shared':
+        specifier: workspace:*
+        version: link:../shared
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@opentelemetry/api@1.9.0)(kysely@0.28.17)(postgres@3.4.8)

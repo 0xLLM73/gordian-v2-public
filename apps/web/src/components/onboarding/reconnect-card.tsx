@@ -1,6 +1,7 @@
 'use client';
 
 import { GuidedActionCard } from '@/components/onboarding/guided-action-card';
+import { getContactInitial } from '@/lib/contact-initial';
 import { useEffect, useState } from 'react';
 
 interface GhostedContact {
@@ -89,7 +90,7 @@ export function ReconnectCard() {
 							>
 								<div className="flex items-center gap-2">
 									<div className="flex h-7 w-7 items-center justify-center rounded-full bg-warning/10 text-xs font-bold text-warning">
-										{name[0].toUpperCase()}
+										{getContactInitial(c.firstName, c.lastName)}
 									</div>
 									<span className="text-sm font-medium text-foreground">{name}</span>
 								</div>

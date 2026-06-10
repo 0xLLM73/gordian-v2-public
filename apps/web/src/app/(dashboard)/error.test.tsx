@@ -11,7 +11,7 @@ describe('DashboardError', () => {
 	it('redacts development error details before rendering them', () => {
 		vi.stubEnv('NODE_ENV', 'development');
 		const error = new Error(
-			'Command failed: security find-generic-password -a workspace-wrk:1f50aaea-32ce-4d96-8719-6cf6c3840dd7:4c630dd1-4e24-4862-9fe0-0121150d864f -s gordian-v2 -w',
+			'Command failed: security find-generic-password -a workspace-wrk:1f50aaea-32ce-4d96-8719-6cf6c3840dd7:4c630dd1-4e24-4862-9fe0-0121150d864f -s gordian-v2 -w for investor@example.com +1 (415) 555-2671',
 		) as Error & { digest?: string };
 		error.digest = '4038471285';
 
@@ -20,6 +20,10 @@ describe('DashboardError', () => {
 		expect(screen.getByText('Diagnostic code: 4038471285')).toBeTruthy();
 		expect(screen.queryByText(/workspace-wrk:1f50aaea/)).toBeNull();
 		expect(screen.queryByText(/gordian-v2/)).toBeNull();
+		expect(screen.queryByText(/investor@example.com/)).toBeNull();
+		expect(screen.queryByText(/\+1 \(415\) 555-2671/)).toBeNull();
 		expect(screen.getByText(/security find-generic-password -a \[redacted\]/)).toBeTruthy();
+		expect(screen.getByText(/\[email\]/)).toBeTruthy();
+		expect(screen.getByText(/\[phone\]/)).toBeTruthy();
 	});
 });

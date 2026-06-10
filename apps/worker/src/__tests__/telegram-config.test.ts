@@ -1,7 +1,12 @@
 import { execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+	isTelegramBotEnabled,
+	isTelegramFullBackfillEnabled,
+	isTelegramMtProtoEnabled,
 	isTelegramMtProtoPerInteractionUnlockEnabled,
+	isTelegramPeriodicSyncEnabled,
+	isTelegramSendEnabled,
 	requireTelegramMtProtoConfig,
 } from '../telegram-config';
 
@@ -15,12 +20,59 @@ const telegramKeychainServiceEnv = ['TELEGRAM', 'KEYCHAIN', 'SERVICE'].join('_')
 const telegramApiHashEnv = ['TELEGRAM', 'API', 'HASH'].join('_');
 const fakeKeychainService = ['gordian', 'v2', 'test'].join('-');
 const fakeTelegramApiHash = ['0123456789abcdef', '0123456789abcdef'].join('');
+const telegramFeatureFlagEnvNames = [
+	'TELEGRAM_BOT_ENABLED',
+	'TELEGRAM_MTPROTO_ENABLED',
+	'TELEGRAM_SEND_ENABLED',
+	'TELEGRAM_FULL_BACKFILL_ENABLED',
+	'TELEGRAM_PERIODIC_SYNC_ENABLED',
+] as const;
 
 function stubProcessPlatform(platform: NodeJS.Platform) {
 	Object.defineProperty(process, 'platform', {
 		value: platform,
 	});
 }
+
+describe('Telegram deployment feature gates', () => {
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
+	it('keeps all Telegram runtime capabilities disabled by default', () => {
+		for (const envName of telegramFeatureFlagEnvNames) {
+			vi.stubEnv(envName, '');
+		}
+
+		expect(isTelegramBotEnabled()).toBe(false);
+		expect(isTelegramMtProtoEnabled()).toBe(false);
+		expect(isTelegramSendEnabled()).toBe(false);
+		expect(isTelegramFullBackfillEnabled()).toBe(false);
+		expect(isTelegramPeriodicSyncEnabled()).toBe(false);
+	});
+
+	it('requires explicit true values before enabling Telegram runtime capabilities', () => {
+		for (const envName of telegramFeatureFlagEnvNames) {
+			vi.stubEnv(envName, 'false');
+		}
+
+		expect(isTelegramBotEnabled()).toBe(false);
+		expect(isTelegramMtProtoEnabled()).toBe(false);
+		expect(isTelegramSendEnabled()).toBe(false);
+		expect(isTelegramFullBackfillEnabled()).toBe(false);
+		expect(isTelegramPeriodicSyncEnabled()).toBe(false);
+
+		for (const envName of telegramFeatureFlagEnvNames) {
+			vi.stubEnv(envName, 'true');
+		}
+
+		expect(isTelegramBotEnabled()).toBe(true);
+		expect(isTelegramMtProtoEnabled()).toBe(true);
+		expect(isTelegramSendEnabled()).toBe(true);
+		expect(isTelegramFullBackfillEnabled()).toBe(true);
+		expect(isTelegramPeriodicSyncEnabled()).toBe(true);
+	});
+});
 
 describe('requireTelegramMtProtoConfig', () => {
 	afterEach(() => {

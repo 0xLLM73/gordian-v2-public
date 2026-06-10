@@ -14,6 +14,8 @@ import { sql } from 'drizzle-orm';
 import { db } from '../client';
 import { workspaces } from '../schema/workspaces';
 
+process.env.GORDIAN_ENCRYPTION_BACKFILL = '1';
+
 const BATCH_SIZE = 500;
 
 interface ColumnSpec {
@@ -44,6 +46,14 @@ const SPECS: ColumnSpec[] = [
 	{
 		table: 'deal_participants',
 		columns: ['notes'],
+	},
+	{
+		table: 'deal_artifacts',
+		columns: ['title', 'url'],
+	},
+	{
+		table: 'deal_ai_runs',
+		columns: ['output', 'uncertainty', 'source_manifest'],
 	},
 	{
 		table: 'goals',
@@ -128,7 +138,7 @@ async function backfillTable(
 
 	while (true) {
 		const rows = (await db.execute(
-			sql`SELECT ${sql.raw(selectCols.join(', '))} FROM ${sql.raw(spec.table)} WHERE workspace_id = ${workspaceId} ORDER BY id LIMIT ${BATCH_SIZE} OFFSET ${offset}`,
+			sql`/* gordian:encrypted-backfill:v1 */ SELECT ${sql.raw(selectCols.join(', '))} FROM ${sql.raw(spec.table)} WHERE workspace_id = ${workspaceId} ORDER BY id LIMIT ${BATCH_SIZE} OFFSET ${offset}`,
 		)) as unknown as Record<string, unknown>[];
 
 		if (!rows || rows.length === 0) break;
@@ -156,7 +166,9 @@ async function backfillTable(
 				const setClause = sql.join(updates, sql`, `);
 				const rowId = row.id as string;
 				// SEC-ENC-003: All values bound via Drizzle sql template — no string interpolation
-				await db.execute(sql`UPDATE ${sql.raw(spec.table)} SET ${setClause} WHERE id = ${rowId}`);
+				await db.execute(
+					sql`/* gordian:encrypted-backfill:v1 */ UPDATE ${sql.raw(spec.table)} SET ${setClause} WHERE id = ${rowId}`,
+				);
 				total++;
 			}
 		}

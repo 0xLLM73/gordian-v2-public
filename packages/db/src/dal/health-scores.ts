@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 import { db } from '../client';
 import { contactHealthScores } from '../schema/health-scores';
 
@@ -75,7 +75,9 @@ export async function getHealthScore(workspaceId: string, contactId: string) {
 export interface GetHealthScoresOptions {
 	minComposite?: number;
 	label?: string;
+	labels?: string[];
 	limit?: number;
+	sort?: 'composite_asc' | 'composite_desc';
 }
 
 export async function getHealthScoresByWorkspace(
@@ -90,14 +92,35 @@ export async function getHealthScoresByWorkspace(
 	}
 	if (options?.label) {
 		conditions.push(eq(contactHealthScores.label, options.label));
+	} else if (options?.labels?.length) {
+		conditions.push(inArray(contactHealthScores.label, options.labels));
 	}
 
 	return db
 		.select()
 		.from(contactHealthScores)
 		.where(and(...conditions))
-		.orderBy(sql`${contactHealthScores.composite} desc`)
+		.orderBy(
+			options?.sort === 'composite_asc'
+				? asc(contactHealthScores.composite)
+				: desc(contactHealthScores.composite),
+		)
 		.limit(limit);
+}
+
+export async function getHealthScoresByContactIds(workspaceId: string, contactIds: string[]) {
+	if (contactIds.length === 0) return [];
+
+	return db
+		.select()
+		.from(contactHealthScores)
+		.where(
+			and(
+				eq(contactHealthScores.workspaceId, workspaceId),
+				inArray(contactHealthScores.contactId, contactIds),
+			),
+		)
+		.orderBy(asc(contactHealthScores.composite));
 }
 
 export interface GetDecliningContactsOptions {

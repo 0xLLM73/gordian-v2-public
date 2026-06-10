@@ -10,15 +10,26 @@ release owner intentionally makes the mirror public. Treat
 `0xLLM73/gordian-v2-public` only after it has been synced as a sanitized release
 tree and all release gates have been rerun against that checkout.
 
-As of the 2026-06-08 PT readiness pass, the mirror remains private and PR #36
-merged a sanitized snapshot from source commit `fe97ac196451` into mirror
-`main` at `be88d03dbcc1`. The merged mirror checkout passed `pnpm install
---frozen-lockfile`, `pnpm audit:open-source`, `pnpm audit`, `pnpm audit
---prod`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm demo:smoke`, and
-`pnpm security:local-runtime-smoke`. GitHub CI for PR #36 passed `validate`,
-`demo-smoke`, and `postgres-smoke` before merge. Do not make the mirror public
-until follow-up notification tweaks, provider-side rotation/cleanup, and final
-sign-off are complete.
+As of the 2026-06-10 PT release-target refresh, the mirror remains private and
+is still the selected publication target. The 2026-06-08 mirror evidence is now
+historical: PR #36 merged a sanitized snapshot from source commit
+`fe97ac196451` into mirror `main` at `be88d03dbcc1`, then PR #37 refreshed
+docs-only evidence and moved mirror `main` to `32662038aa69`. That mirror
+checkout passed `pnpm install --frozen-lockfile`, `pnpm audit:open-source`,
+`pnpm audit`, `pnpm audit --prod`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
+`pnpm demo:smoke`, and `pnpm security:local-runtime-smoke`; after PR #37
+merged, mirror `main` passed `pnpm audit:open-source`, `pnpm audit`, `pnpm
+audit --prod`, `pnpm lint`, and `pnpm security:local-runtime-smoke` again.
+GitHub CI for PR #36 passed `validate`, `demo-smoke`, and `postgres-smoke`;
+GitHub CI for PR #37 passed `validate` and `demo-smoke`.
+
+Before publication, resync `0xLLM73/gordian-v2-public` from the final selected
+private source release commit, rerun full-history scanning and release gates
+against the mirror, and keep the mirror private unless that evidence is clean.
+If full-history scanning finds real secrets, private user data, or private
+operational context in the mirror, publish from a fresh sanitized repository
+instead. Do not make the mirror public until provider-side rotation/cleanup and
+final sign-off are complete.
 
 The previous mirror default branch reported 4 moderate Hono advisories because
 it pinned `hono 4.12.18`. Merged mirror `main` now pins `hono 4.12.23`, which
@@ -121,4 +132,7 @@ data, embeddings, audit logs, Redis state, or BullMQ queue payloads.
 - Choose the publication target and confirm it is synced to the selected release commit.
 - Confirm the mirror PR has the required human approval and no unresolved
   Dependabot alerts on `main` after merge.
-- Run `pnpm check:publication` against the selected target after it is public and GitHub-side security settings are available.
+- Run `pnpm check:publication` from the mirror checkout, or
+  `GORDIAN_PUBLICATION_REPO=0xLLM73/gordian-v2-public pnpm check:publication`
+  from the private source checkout, after the selected target is public and
+  GitHub-side security settings are available.

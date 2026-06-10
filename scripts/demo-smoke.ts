@@ -15,6 +15,7 @@ const demoEnv = {
 	TELEGRAM_MTPROTO_ENABLED: 'false',
 	TELEGRAM_SEND_ENABLED: 'false',
 	WEB_URL: 'http://localhost:3456',
+	WORKSPACE_KEY_PROVIDER: 'dev-insecure',
 	WORKER_URL: 'http://localhost:3001',
 };
 
@@ -34,5 +35,17 @@ function run(command: string, args: string[]) {
 	}
 }
 
-run('pnpm', ['--filter', 'web', 'exec', 'playwright', 'install', 'chromium']);
-run('pnpm', ['--filter', 'web', 'test:e2e', '--', 'demo-smoke.spec.ts']);
+const auditOnly = process.argv.includes('--audit-only');
+const releaseSmoke = process.argv.includes('--release');
+
+run('pnpm', ['--filter', '@repo/db', 'exec', 'tsx', 'scripts/demo-data-audit.ts']);
+if (!auditOnly) {
+	run('pnpm', ['--filter', 'web', 'exec', 'playwright', 'install', 'chromium']);
+	run('pnpm', [
+		'--filter',
+		'web',
+		'test:e2e',
+		'--',
+		releaseSmoke ? 'release-smoke.spec.ts' : 'demo-smoke.spec.ts',
+	]);
+}

@@ -138,6 +138,21 @@ describe('POST /send-message — SEC-SEND-300 audit log', () => {
 		});
 	});
 
+	it('requires internal auth before exposing the disabled send state', async () => {
+		vi.stubEnv('TELEGRAM_MTPROTO_ENABLED', 'false');
+		vi.stubEnv('TELEGRAM_SEND_ENABLED', 'false');
+
+		const res = await telegram.request('/send-message', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(VALID_BODY),
+		});
+
+		expect(res.status).toBe(401);
+		expect(sendToUser).not.toHaveBeenCalled();
+		expect(mockAppendAuditLog).not.toHaveBeenCalled();
+	});
+
 	it('rejects sends when the deployment send gate is disabled', async () => {
 		vi.stubEnv('TELEGRAM_SEND_ENABLED', 'false');
 
@@ -165,6 +180,32 @@ describe('POST /send-message — SEC-SEND-300 audit log', () => {
 
 		expect(res.status).toBe(502);
 		expect(mockAppendAuditLog).not.toHaveBeenCalled();
+	});
+
+	it('redacts send failure details before logging worker errors', async () => {
+		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		const fakeBotToken = ['123456', 'ABCdefGHIjklMNOpqrSTU'].join(':');
+		(sendToUser as ReturnType<typeof vi.fn>).mockRejectedValue(
+			new Error(
+				`${`GramJS failed BOT_TOKEN=${fakeBotToken} session=1`.padEnd(150, 'A')} investor@example.com +1 (415) 555-2671`,
+			),
+		);
+
+		const res = await postSendMessage(VALID_BODY);
+
+		expect(res.status).toBe(502);
+		expect(await res.json()).toEqual({ error: 'Send failed' });
+		const logged = consoleError.mock.calls.flat().join('\n');
+		expect(logged).toContain('[send-message] GramJS error');
+		expect(logged).not.toContain(fakeBotToken);
+		expect(logged).not.toContain('investor@example.com');
+		expect(logged).not.toContain('+1 (415) 555-2671');
+		expect(logged).toContain('[redacted]');
+		expect(logged).toContain('[email]');
+		expect(logged).toContain('[phone]');
+		expect(mockAppendAuditLog).not.toHaveBeenCalled();
+
+		consoleError.mockRestore();
 	});
 
 	it('does NOT call appendAuditLog when rate limited', async () => {
@@ -229,6 +270,20 @@ describe('POST /notify-session — outbound Bot API gate', () => {
 		expect(fetch).not.toHaveBeenCalled();
 	});
 
+	it('requires internal auth before exposing Bot API or send gate state', async () => {
+		vi.stubEnv('TELEGRAM_BOT_ENABLED', 'false');
+		vi.stubEnv('TELEGRAM_SEND_ENABLED', 'false');
+
+		const res = await telegram.request('/notify-session', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ telegramUserId: TG_ID }),
+		});
+
+		expect(res.status).toBe(401);
+		expect(fetch).not.toHaveBeenCalled();
+	});
+
 	it('sends session notifications when Bot API and send gates are both enabled', async () => {
 		const res = await postNotifySession({ telegramUserId: TG_ID });
 
@@ -237,5 +292,30 @@ describe('POST /notify-session — outbound Bot API gate', () => {
 			'https://api.telegram.org/bottest-bot-token/sendMessage',
 			expect.objectContaining({ method: 'POST' }),
 		);
+	});
+
+	it('redacts Bot API tokens from notification failure logs and responses', async () => {
+		const botToken = '123456:ABCdefGHIjklMNOpqrSTUvwxyz';
+		const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.stubEnv('BOT_TOKEN', botToken);
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(() =>
+				Promise.reject(
+					new Error(`request failed https://api.telegram.org/bot${botToken}/sendMessage`),
+				),
+			),
+		);
+
+		const res = await postNotifySession({ telegramUserId: TG_ID });
+		const body = await res.json();
+		const logOutput = consoleErrorSpy.mock.calls.flat().join(' ');
+
+		expect(res.status).toBe(200);
+		expect(body).toEqual({ sent: false });
+		expect(logOutput).not.toContain(botToken);
+		expect(logOutput).toContain('https://api.telegram.org/bot[redacted]');
+
+		consoleErrorSpy.mockRestore();
 	});
 });

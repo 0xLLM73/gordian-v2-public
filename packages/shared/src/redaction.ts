@@ -116,6 +116,7 @@ export function redactText(text: string): string {
 		.replace(/\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/g, REDACTED)
 		.replace(/\b1[A-Za-z0-9+/=_-]{80,}\b/g, REDACTED)
 		.replace(/\b[A-Za-z0-9+/=_-]{120,}\b/g, REDACTED)
+		.replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[email]')
 		.replace(
 			/(?<![A-Za-z0-9])(?:\+\d[\d\s().-]{6,}\d|\(\d{3}\)\s*\d{3}[\s.-]?\d{4}|\d{3}[\s.-]\d{3}[\s.-]\d{4})(?![A-Za-z0-9])/g,
 			'[phone]',

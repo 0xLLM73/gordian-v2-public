@@ -1,3 +1,4 @@
+import { getContactInitial } from '@/lib/contact-initial';
 import { formatRelativeDate } from '@/lib/format';
 import {
 	classifyKnowledgeEvidenceQuality,
@@ -128,7 +129,7 @@ function EvidenceContactList({
 		<ul className="divide-y divide-gray-100">
 			{contacts.map((contact) => {
 				const name = displayName(contact);
-				const initials = (contact.firstName || name || '?')[0].toUpperCase();
+				const initials = getContactInitial(contact.firstName, contact.lastName, name);
 				const latestEvidence = contact.evidence[0];
 				const claimLabel = claimLabelForEvidenceKind(latestEvidence?.evidenceKind);
 				const confidence = latestEvidence?.confidence ?? contact.strength;

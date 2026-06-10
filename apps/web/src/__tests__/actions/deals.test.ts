@@ -32,6 +32,10 @@ vi.mock('@/lib/workspace', () => ({
 	),
 }));
 
+vi.mock('next/cache', () => ({
+	revalidatePath: vi.fn(),
+}));
+
 const mockCreate = vi.fn(() =>
 	Promise.resolve({
 		id: DEAL_ID,
@@ -67,6 +71,19 @@ vi.mock('@repo/db', () => ({
 	createDeal: mockCreate,
 	listDeals: mockList,
 	updateDeal: mockUpdate,
+	getDeal: vi.fn(),
+	listDealParticipants: vi.fn(),
+	listDealArtifacts: vi.fn(),
+	listDealStageEvents: vi.fn(),
+	listDealEvidenceLinks: vi.fn(),
+	listDealAiRuns: vi.fn(),
+	saveDealAiRun: vi.fn(),
+	updateDealAiRunStatus: vi.fn(),
+	addDealParticipant: vi.fn(),
+	removeDealParticipant: vi.fn(),
+	updateDealParticipant: vi.fn(),
+	addDealArtifact: vi.fn(),
+	removeDealArtifact: vi.fn(),
 	trackBehavior: vi.fn().mockResolvedValue(null),
 }));
 
@@ -193,6 +210,7 @@ describe('deal actions', () => {
 				{
 					title: undefined,
 					stage: 'negotiation',
+					stageNote: undefined,
 					dealType: undefined,
 					value: undefined,
 					notes: undefined,
@@ -216,6 +234,7 @@ describe('deal actions', () => {
 				{
 					title: undefined,
 					stage: undefined,
+					stageNote: undefined,
 					dealType: 'investment',
 					value: undefined,
 					notes: undefined,

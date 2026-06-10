@@ -30,15 +30,34 @@ const SAFE_ERROR_MESSAGES = new Set([
 	'Failed to find commitments',
 	'Failed to find introductions',
 	'Failed to find connections',
+	'Snooze must be in the future',
 ]);
+
+export const LOCAL_WORKER_UNAVAILABLE_MESSAGE =
+	'Could not reach the local worker. Start it with pnpm --filter worker dev or update WORKER_URL, then retry.';
+
+export function isLocalWorkerConnectionError(message: string) {
+	const normalized = message.toLowerCase();
+	return (
+		normalized === 'fetch failed' ||
+		normalized.includes('econnrefused') ||
+		normalized.includes('connection refused') ||
+		normalized.includes('worker_url is not configured')
+	);
+}
+
+export function publicServerActionErrorMessage(error: Error) {
+	if (SAFE_ERROR_MESSAGES.has(error.message)) return error.message;
+	if (error.message.startsWith('Rate limit exceeded')) return error.message;
+	if (isLocalWorkerConnectionError(error.message)) return LOCAL_WORKER_UNAVAILABLE_MESSAGE;
+	return 'An unexpected error occurred. Please try again.';
+}
 
 export const actionClient = createSafeActionClient({
 	handleServerError(e) {
 		console.error('Action error:', e.message);
 		// Only return known-safe messages to the client; generic fallback for everything else
-		if (SAFE_ERROR_MESSAGES.has(e.message)) return e.message;
-		if (e.message.startsWith('Rate limit exceeded')) return e.message;
-		return 'An unexpected error occurred. Please try again.';
+		return publicServerActionErrorMessage(e);
 	},
 });
 

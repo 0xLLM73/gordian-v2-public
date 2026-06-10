@@ -1,6 +1,7 @@
 import { getLatestBriefAction } from '@/app/actions/brief';
 import { MorningBriefCard, MorningBriefSkeleton } from '@/components/brief/morning-brief-card';
 import { CommitmentActions } from '@/components/commitment-actions';
+import { ContactHealthFeedbackActions } from '@/components/contact-health-feedback-actions';
 import { ActNowViewTracker } from '@/components/dashboard/act-now-view-tracker';
 import { NewIntelViewTracker } from '@/components/dashboard/new-intel-view-tracker';
 import { SectionTimeWrapper } from '@/components/dashboard/section-time-wrapper';
@@ -11,12 +12,15 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { DEAL_STAGE_BG_COLORS, HEALTH_BADGE_COLORS } from '@/lib/colors';
+import { getContactInitial } from '@/lib/contact-initial';
 import { formatCurrency, formatRelativeDate } from '@/lib/format';
+import { ensureHealthScoringFreshness } from '@/lib/health-scoring';
 import { isRuntimeEnvEnabled } from '@/lib/runtime-env';
 import { isStoredSessionUnwrapOutsideImportsAllowed } from '@/lib/telegram-session-policy';
 import { track } from '@/lib/track';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
 import {
+	getActiveContactHealthFeedback,
 	getCalibrationCompletionStatus,
 	getCommitmentsByWorkspace,
 	getContactsByIds,
@@ -30,7 +34,7 @@ import {
 	listIntroductions,
 	listKnowledgeNodes,
 } from '@repo/db';
-import type { UpcomingCommitment } from '@repo/db';
+import type { ContactHealthFeedbackRow, UpcomingCommitment } from '@repo/db';
 import Link from 'next/link';
 import { Suspense } from 'react';
 import { StatsBar } from './stats-bar';
@@ -46,6 +50,7 @@ export default async function DashboardPage({
 	if (!workspaceId) return <NoWorkspaceBanner />;
 
 	track(workspaceId, session.user.id, 'dashboard.visited');
+	await ensureHealthScoringFreshness(workspaceId, { reason: 'dashboard_open' });
 
 	const params = await searchParams;
 	const showWelcome = params.welcome === '1';
@@ -110,6 +115,9 @@ export default async function DashboardPage({
 				<div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
 					<Suspense fallback={<SectionSkeleton title="Contacts Cooling Off" />}>
 						<DecayingHealthSection workspaceId={workspaceId} />
+					</Suspense>
+					<Suspense fallback={<SectionSkeleton title="Contacts Thriving" />}>
+						<ThrivingHealthSection workspaceId={workspaceId} />
 					</Suspense>
 					<Suspense fallback={<SectionSkeleton title="Deals Going Quiet" />}>
 						<QuietDealsSection workspaceId={workspaceId} />
@@ -412,24 +420,260 @@ async function NewIntelCountFetcher({ workspaceId }: { workspaceId: string }) {
 
 /* ─── WATCH SECTIONS ──────────────────────────────────────────────────────── */
 
-async function DecayingHealthSection({ workspaceId }: { workspaceId: string }) {
-	const scores = await getHealthScoresByWorkspace(workspaceId, { limit: 50 });
+type DashboardHealthScore = Awaited<ReturnType<typeof getHealthScoresByWorkspace>>[number];
 
-	const needsAttention = scores
-		.filter((s) => s.label === 'cooling' || s.label === 'dormant')
-		.sort((a, b) => a.composite - b.composite)
+type HealthComputationData = {
+	aiSignals?: {
+		directAsk?: {
+			confidence?: number;
+			userOwesReply?: boolean;
+		};
+	};
+	attention?: {
+		score?: number;
+	};
+	cadence?: {
+		currentGapDays?: number | null;
+		expectedGapRange?: string;
+		sessionCount?: number;
+	};
+	confidence?: {
+		label?: string;
+		score?: number;
+	};
+	statusReason?: {
+		code?: string;
+		plainLanguage?: string;
+		suggestedAction?: string;
+	};
+	version?: number;
+};
+
+const COOLING_ATTENTION_CODES = new Set([
+	'frequency_drop',
+	'gap_longer_than_usual',
+	'mutual_gap',
+	'one_sided_initiation',
+]);
+
+const RECENT_NEEDS_REPLY_MAX_DAYS = 30;
+const MAX_ACTIONABLE_COOLING_GAP_DAYS = 90;
+const MIN_ESTABLISHED_CADENCE_SESSIONS = 5;
+
+const SUPPRESSED_HEALTH_FEEDBACK_ACTIONS = new Set([
+	'snooze',
+	'mark_low_touch',
+	'handled_elsewhere',
+	'not_important',
+	'dismiss_wrong',
+]);
+
+function getHealthComputationData(score: DashboardHealthScore): HealthComputationData {
+	const data = score.computationData;
+	if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
+	return data as HealthComputationData;
+}
+
+function humanizeHealthLabel(label: string): string {
+	return label
+		.split('_')
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join(' ');
+}
+
+function getHealthAttentionScore(score: DashboardHealthScore): number {
+	const attention = Number(getHealthComputationData(score).attention?.score);
+	if (Number.isFinite(attention)) return attention;
+	return score.label === 'cooling' || score.label === 'dormant' ? 1 - score.composite : 0;
+}
+
+function isCoolingAttentionScore(score: DashboardHealthScore): boolean {
+	const data = getHealthComputationData(score);
+	const reasonCode = data.statusReason?.code;
+	if (reasonCode === 'learning' || reasonCode === 'steady_low_touch') return false;
+	const confidenceLabel = data.confidence?.label;
+	const confidenceScore = Number(data.confidence?.score);
+	const currentGapDays = Number(data.cadence?.currentGapDays);
+	const sessionCount = Number(data.cadence?.sessionCount);
+	const isLowConfidence =
+		confidenceLabel === 'low' || (Number.isFinite(confidenceScore) && confidenceScore < 0.45);
+	const hasEstablishedCadence =
+		Number.isFinite(sessionCount) && sessionCount >= MIN_ESTABLISHED_CADENCE_SESSIONS;
+
+	if (reasonCode === 'needs_reply') {
+		const localAskConfidence = Number(data.aiSignals?.directAsk?.confidence);
+		const localAskDetected =
+			data.aiSignals?.directAsk?.userOwesReply === true &&
+			Number.isFinite(localAskConfidence) &&
+			localAskConfidence >= 0.7;
+		return (
+			Number.isFinite(currentGapDays) &&
+			currentGapDays <= RECENT_NEEDS_REPLY_MAX_DAYS &&
+			(!isLowConfidence || localAskDetected)
+		);
+	}
+
+	if (reasonCode && COOLING_ATTENTION_CODES.has(reasonCode)) {
+		return (
+			hasEstablishedCadence &&
+			!isLowConfidence &&
+			Number.isFinite(currentGapDays) &&
+			currentGapDays <= MAX_ACTIONABLE_COOLING_GAP_DAYS
+		);
+	}
+	if (reasonCode) return false;
+	return score.label === 'cooling';
+}
+
+function compareCoolingAttention(a: DashboardHealthScore, b: DashboardHealthScore): number {
+	const attentionDelta = getHealthAttentionScore(b) - getHealthAttentionScore(a);
+	if (attentionDelta !== 0) return attentionDelta;
+	return a.composite - b.composite;
+}
+
+function getLatestFeedbackByContact(rows: ContactHealthFeedbackRow[]) {
+	const map = new Map<string, ContactHealthFeedbackRow>();
+	for (const row of rows) {
+		if (!map.has(row.contactId)) map.set(row.contactId, row);
+	}
+	return map;
+}
+
+function isSuppressedByFeedback(feedback: ContactHealthFeedbackRow | undefined): boolean {
+	return feedback ? SUPPRESSED_HEALTH_FEEDBACK_ACTIONS.has(feedback.action) : false;
+}
+
+function getHealthReasonText(score: DashboardHealthScore): string {
+	const reason = getHealthComputationData(score).statusReason?.plainLanguage;
+	if (reason) return reason;
+	if (score.label === 'thriving') return 'Communication looks consistent with this relationship.';
+	if (score.label === 'healthy') return 'No immediate relationship-health concern detected.';
+	if (score.label === 'cooling') return 'Communication appears to be slowing.';
+	if (score.label === 'dormant') return 'No recent relationship activity is recorded.';
+	return 'Gordian is still learning this relationship cadence.';
+}
+
+function getHealthMetaText(score: DashboardHealthScore): string {
+	const data = getHealthComputationData(score);
+	const parts: string[] = [];
+	if (data.confidence?.label) parts.push(`${data.confidence.label} confidence`);
+	if (data.cadence?.currentGapDays != null && data.cadence.expectedGapRange) {
+		parts.push(
+			`${Math.round(data.cadence.currentGapDays)}d gap vs ${data.cadence.expectedGapRange}d usual`,
+		);
+	} else if (data.cadence?.sessionCount) {
+		parts.push(`${data.cadence.sessionCount} interaction days`);
+	}
+	return parts.join(' · ');
+}
+
+async function DecayingHealthSection({ workspaceId }: { workspaceId: string }) {
+	const healthScores = await getHealthScoresByWorkspace(workspaceId, {
+		label: 'cooling',
+		sort: 'composite_asc',
+		limit: 500,
+	});
+	const activeFeedback = await getActiveContactHealthFeedback(
+		workspaceId,
+		healthScores.map((score) => score.contactId),
+	);
+	const feedbackMap = getLatestFeedbackByContact(activeFeedback);
+	const needsAttention = healthScores
+		.filter((score) => !isSuppressedByFeedback(feedbackMap.get(score.contactId)))
+		.filter(isCoolingAttentionScore)
+		.sort(compareCoolingAttention)
 		.slice(0, 5);
 
 	if (needsAttention.length === 0) {
+		const hasHealthScores =
+			healthScores.length > 0 ||
+			(await getHealthScoresByWorkspace(workspaceId, { limit: 1 })).length > 0;
+		return (
+			<ContactHealthScoreCard
+				avatarClassName="bg-orange-100 text-orange-700"
+				emptyText={
+					hasHealthScores
+						? 'No recent cadence breaks right now.'
+						: 'No relationship health data yet.'
+				}
+				scores={needsAttention}
+				showFeedbackActions
+				title="Contacts Cooling Off"
+				workspaceId={workspaceId}
+			/>
+		);
+	}
+
+	return (
+		<ContactHealthScoreCard
+			avatarClassName="bg-orange-100 text-orange-700"
+			emptyText="No recent cadence breaks right now."
+			scores={needsAttention}
+			showFeedbackActions
+			title="Contacts Cooling Off"
+			workspaceId={workspaceId}
+		/>
+	);
+}
+
+async function ThrivingHealthSection({ workspaceId }: { workspaceId: string }) {
+	const thriving = await getHealthScoresByWorkspace(workspaceId, {
+		label: 'thriving',
+		sort: 'composite_desc',
+		limit: 5,
+	});
+
+	if (thriving.length === 0) {
+		const hasHealthScores =
+			(await getHealthScoresByWorkspace(workspaceId, { limit: 1 })).length > 0;
+
+		return (
+			<ContactHealthScoreCard
+				avatarClassName="bg-emerald-100 text-emerald-700"
+				emptyText={
+					hasHealthScores ? 'No thriving contacts yet.' : 'No relationship health data yet.'
+				}
+				scores={thriving}
+				title="Contacts Thriving"
+				workspaceId={workspaceId}
+			/>
+		);
+	}
+
+	return (
+		<ContactHealthScoreCard
+			avatarClassName="bg-emerald-100 text-emerald-700"
+			emptyText="No thriving contacts yet."
+			scores={thriving}
+			title="Contacts Thriving"
+			workspaceId={workspaceId}
+		/>
+	);
+}
+
+async function ContactHealthScoreCard({
+	avatarClassName,
+	emptyText,
+	scores,
+	showFeedbackActions = false,
+	title,
+	workspaceId,
+}: {
+	avatarClassName: string;
+	emptyText: string;
+	scores: DashboardHealthScore[];
+	showFeedbackActions?: boolean;
+	title: string;
+	workspaceId: string;
+}) {
+	if (scores.length === 0) {
 		return (
 			<Card className="shadow-stripe-sm">
 				<CardHeader className="pb-2">
-					<CardTitle className="text-base">Contacts Cooling Off</CardTitle>
+					<CardTitle className="text-base">{title}</CardTitle>
 				</CardHeader>
 				<CardContent>
-					<p className="text-sm text-muted-foreground">
-						{scores.length === 0 ? 'No relationship health data yet.' : 'All contacts are healthy.'}
-					</p>
+					<p className="text-sm text-muted-foreground">{emptyText}</p>
 				</CardContent>
 			</Card>
 		);
@@ -438,18 +682,18 @@ async function DecayingHealthSection({ workspaceId }: { workspaceId: string }) {
 	const envelope = await getWorkspaceEnvelope(workspaceId);
 	if (!envelope) return null;
 
-	const contactIds = needsAttention.map((s) => s.contactId);
+	const contactIds = scores.map((s) => s.contactId);
 	const contactRows = await getContactsByIds(workspaceId, contactIds, envelope);
 	const contactMap = new Map(contactRows.map((c) => [c.id, c]));
 
 	return (
 		<Card className="shadow-stripe-sm">
 			<CardHeader className="pb-2">
-				<CardTitle className="text-base">Contacts Cooling Off</CardTitle>
+				<CardTitle className="text-base">{title}</CardTitle>
 			</CardHeader>
 			<CardContent>
 				<div className="space-y-2">
-					{needsAttention.map((score) => {
+					{scores.map((score) => {
 						const contact = contactMap.get(score.contactId);
 						if (!contact) return null;
 						const firstName = (contact.firstName as string) || '';
@@ -457,24 +701,51 @@ async function DecayingHealthSection({ workspaceId }: { workspaceId: string }) {
 						const name = [firstName, lastName].filter(Boolean).join(' ') || 'Unknown';
 						const pct = Math.round(score.composite * 100);
 						const badgeColor = HEALTH_BADGE_COLORS[score.label] || 'bg-muted text-muted-foreground';
+						const reason = getHealthReasonText(score);
+						const meta = getHealthMetaText(score);
+						const statusReasonCode = getHealthComputationData(score).statusReason?.code;
 
 						return (
-							<Link
-								key={score.contactId}
-								href={`/contacts/${score.contactId}`}
-								className="flex items-center justify-between rounded-md bg-accent/50 px-3 py-2 hover:bg-accent"
-							>
-								<div className="flex items-center gap-2">
-									<div className="flex h-6 w-6 items-center justify-center rounded-full bg-orange-100 text-xs font-bold text-orange-700">
-										{(firstName || '?')[0].toUpperCase()}
+							<div key={score.contactId} className="rounded-md bg-accent/50 px-3 py-3">
+								<div className="flex items-start justify-between gap-3">
+									<div className="min-w-0 flex-1">
+										<div className="flex flex-wrap items-center gap-2">
+											<div
+												className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${avatarClassName}`}
+											>
+												{getContactInitial(firstName, lastName)}
+											</div>
+											<span className="min-w-0 text-sm font-medium text-foreground">{name}</span>
+											<span
+												className={`rounded-full px-2 py-0.5 text-xs font-medium ${badgeColor}`}
+											>
+												{humanizeHealthLabel(score.label)}
+											</span>
+										</div>
+										<p className="mt-1 text-xs leading-5 text-muted-foreground">{reason}</p>
+										{meta ? (
+											<p className="mt-0.5 text-xs text-muted-foreground/80">{meta}</p>
+										) : null}
+										{showFeedbackActions ? (
+											<div className="mt-2">
+												<ContactHealthFeedbackActions
+													contactId={score.contactId}
+													statusReasonCode={statusReasonCode}
+												/>
+											</div>
+										) : null}
 									</div>
-									<span className="text-sm font-medium text-foreground">{name}</span>
-									<span className={`rounded-full px-2 py-0.5 text-xs font-medium ${badgeColor}`}>
-										{score.label}
-									</span>
+									<div className="shrink-0 text-right">
+										<span className="block text-xs font-semibold text-foreground">{pct}%</span>
+										<Link
+											href={`/contacts/${score.contactId}`}
+											className="text-xs font-medium text-indigo-600 hover:underline"
+										>
+											Review
+										</Link>
+									</div>
 								</div>
-								<span className="text-xs text-muted-foreground">{pct}%</span>
-							</Link>
+							</div>
 						);
 					})}
 				</div>

@@ -4,8 +4,10 @@ import { updateDealAction } from '@/app/actions/deals';
 import { DEAL_STAGE_BORDER_COLORS } from '@/lib/colors';
 import { formatCurrency } from '@/lib/format';
 import type { StageVelocityStats } from '@repo/db';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useState } from 'react';
+import { DealStageMoveMenu } from './deal-stage-move-menu';
 import { type GhostCandidate, GhostCard } from './ghost-card';
 
 interface DealItem {
@@ -13,7 +15,7 @@ interface DealItem {
 	title: string;
 	value: number;
 	stage: string;
-	dealType: string;
+	dealType: string | null;
 	contactFirstName?: string | null;
 	contactLastName?: string | null;
 	stageHistory?: unknown;
@@ -91,7 +93,7 @@ export function DealsKanban({
 	const convRates = velocityStats?.conversionRates;
 
 	return (
-		<div className="flex gap-3 overflow-x-auto pb-4">
+		<div data-testid="deals-board" className="grid gap-3 pb-4 md:flex md:overflow-x-auto">
 			{STAGES.map((stage, stageIdx) => {
 				const stageDeals = deals.filter((d) => d.stage === stage);
 				const totalValue = stageDeals.reduce((sum, d) => sum + d.value, 0);
@@ -102,7 +104,9 @@ export function DealsKanban({
 				return (
 					<div
 						key={stage}
-						className={`min-w-[200px] flex-1 rounded-lg border-t-2 bg-muted ${DEAL_STAGE_BORDER_COLORS[stage]}`}
+						data-testid="deals-board-column"
+						data-stage={stage}
+						className={`min-w-0 flex-1 rounded-lg border-t-2 bg-muted md:min-w-[200px] ${DEAL_STAGE_BORDER_COLORS[stage]}`}
 						onDragOver={handleDragOver}
 						onDrop={(e) => handleDrop(e, stage)}
 					>
@@ -135,6 +139,9 @@ export function DealsKanban({
 						<div className="space-y-2 p-2">
 							{stage === 'discovery' && ghosts.length > 0 ? (
 								<>
+									<div className="rounded border border-dashed border-border bg-background px-2 py-1 text-[10px] font-semibold uppercase tracking-normal text-muted-foreground">
+										Unconfirmed candidates
+									</div>
 									{ghosts.map((candidate) => (
 										<GhostCard
 											key={candidate.id}
@@ -142,7 +149,7 @@ export function DealsKanban({
 											onRemove={handleGhostRemove}
 										/>
 									))}
-									<div className="border-t border-dashed border-border" />
+									<div key="ghost-divider" className="border-t border-dashed border-border" />
 								</>
 							) : null}
 							{stageDeals.map((deal) => {
@@ -155,14 +162,31 @@ export function DealsKanban({
 								return (
 									<div
 										key={deal.id}
+										data-testid="deal-board-card"
+										data-deal-id={deal.id}
 										draggable
 										onDragStart={() => handleDragStart(deal.id)}
 										className={`cursor-grab rounded-md border border-border bg-card p-2.5 shadow-stripe-sm transition-shadow hover:shadow-stripe ${
 											dragging === deal.id ? 'opacity-50' : ''
 										}`}
 									>
-										<p className="text-sm font-medium text-foreground">{deal.title}</p>
-										<p className="mt-0.5 text-xs text-muted-foreground">{name}</p>
+										<div className="flex items-start justify-between gap-2">
+											<div className="min-w-0">
+												<Link
+													href={`/deals/${deal.id}`}
+													className="break-words text-sm font-medium text-foreground hover:text-primary hover:underline"
+												>
+													{deal.title}
+												</Link>
+												<p className="mt-0.5 text-xs text-muted-foreground">{name}</p>
+											</div>
+											<Link
+												href={`/deals/${deal.id}`}
+												className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/10"
+											>
+												Open
+											</Link>
+										</div>
 										<div className="mt-1 flex items-center justify-between">
 											<p className="text-xs font-medium text-foreground">
 												{formatCurrency(deal.value)}
@@ -175,6 +199,14 @@ export function DealsKanban({
 													{days}d in stage
 												</span>
 											) : null}
+										</div>
+										<div className="mt-2">
+											<DealStageMoveMenu
+												dealId={deal.id}
+												currentStage={deal.stage}
+												label={`Move stage for ${deal.title}`}
+												className="w-full"
+											/>
 										</div>
 									</div>
 								);

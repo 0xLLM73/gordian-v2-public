@@ -629,6 +629,27 @@ describe('knowledge actions', () => {
 			fetchSpy.mockRestore();
 		});
 
+		it('returns actionable local worker copy when analysis cannot reach the worker', async () => {
+			const originalFetch = globalThis.fetch;
+			globalThis.fetch = vi.fn(() =>
+				Promise.reject(new Error('fetch failed')),
+			) as unknown as typeof fetch;
+
+			try {
+				const { runLocalKnowledgeAnalysisAction } = await import('@/app/actions/knowledge');
+				const result = await runLocalKnowledgeAnalysisAction({ mode: 'incremental', limit: 25 });
+
+				expect(result?.data).toEqual({
+					queued: false,
+					mode: 'incremental',
+					error:
+						'Could not reach the local worker. Start it with pnpm --filter worker dev or update WORKER_URL, then retry.',
+				});
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
+		});
+
 		it('creates a manual local knowledge node and runs targeted message evidence build', async () => {
 			vi.stubEnv('KNOWLEDGE_EMBEDDING_PROVIDER', 'local');
 			vi.stubEnv('KNOWLEDGE_EMBEDDING_MODEL', 'nomic-embed-text');

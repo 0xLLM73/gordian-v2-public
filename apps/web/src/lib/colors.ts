@@ -38,8 +38,10 @@ export const HEALTH_BADGE_COLORS: Record<string, string> = {
 	thriving: 'bg-green-100 text-green-700',
 	strong: 'bg-green-100 text-green-700',
 	healthy: 'bg-blue-100 text-blue-700',
+	steady_low_touch: 'bg-cyan-100 text-cyan-700',
 	stable: 'bg-blue-100 text-blue-700',
 	cooling: 'bg-yellow-100 text-yellow-700',
+	learning: 'bg-gray-100 text-gray-600',
 	weak: 'bg-yellow-100 text-yellow-700',
 	at_risk: 'bg-red-100 text-red-700',
 	dormant: 'bg-red-100 text-red-700',
@@ -48,7 +50,9 @@ export const HEALTH_BADGE_COLORS: Record<string, string> = {
 export const HEALTH_HEX_COLORS: Record<string, string> = {
 	thriving: '#16a34a',
 	healthy: '#2563eb',
+	steady_low_touch: '#0891b2',
 	cooling: '#d97706',
+	learning: '#6b7280',
 	dormant: '#dc2626',
 	unknown: '#6b7280',
 };

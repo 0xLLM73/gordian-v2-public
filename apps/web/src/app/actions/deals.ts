@@ -8,12 +8,27 @@ import {
 	createDeal as dalCreate,
 	listDeals as dalList,
 	updateDeal as dalUpdate,
+	getDeal,
+	listDealAiRuns,
 	listDealArtifacts,
+	listDealEvidenceLinks,
 	listDealParticipants,
+	listDealStageEvents,
 	removeDealArtifact,
 	removeDealParticipant,
+	saveDealAiRun,
+	updateDealAiRunStatus,
+	updateDealParticipant,
 } from '@repo/db';
-import { dealStageSchema, dealTermsSchema, dealTypeSchema } from '@repo/shared';
+import {
+	buildDealContextPack,
+	dealStageSchema,
+	dealTermsSchema,
+	dealTypeSchema,
+	generateDealLocalAiOutput,
+	getDealLocalAiStatus,
+} from '@repo/shared';
+import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 const dealSortSchema = z.enum([
@@ -194,6 +209,26 @@ export const removeDealParticipantAction = workspaceAction
 		return removeDealParticipant(ctx.workspaceId, parsedInput.participantId);
 	});
 
+export const updateDealParticipantAction = workspaceAction
+	.schema(
+		z.object({
+			participantId: z.string().uuid(),
+			role: participantRoleSchema.optional(),
+			notes: z.string().max(2000).nullable().optional(),
+		}),
+	)
+	.action(async ({ parsedInput, ctx }) => {
+		return updateDealParticipant(
+			ctx.workspaceId,
+			parsedInput.participantId,
+			{
+				role: parsedInput.role,
+				notes: parsedInput.notes,
+			},
+			ctx.envelope,
+		);
+	});
+
 // ─── Artifacts ────────────────────────────────────────────────────────────────
 
 const artifactTypeSchema = z.enum([
@@ -210,24 +245,143 @@ const artifactTypeSchema = z.enum([
 export const listDealArtifactsAction = workspaceAction
 	.schema(z.object({ dealId: z.string().uuid() }))
 	.action(async ({ parsedInput, ctx }) => {
-		return listDealArtifacts(ctx.workspaceId, parsedInput.dealId);
+		return listDealArtifacts(ctx.workspaceId, parsedInput.dealId, ctx.envelope);
 	});
 
 export const addDealArtifactAction = workspaceAction
 	.schema(
 		z.object({
 			dealId: z.string().uuid(),
-			title: z.string().min(1).max(200),
+			title: z.string().trim().min(1).max(200),
 			artifactType: artifactTypeSchema.optional(),
-			url: z.string().url().optional(),
+			url: z.string().trim().url().optional(),
 		}),
 	)
 	.action(async ({ parsedInput, ctx }) => {
-		return addDealArtifact(ctx.workspaceId, parsedInput);
+		return addDealArtifact(ctx.workspaceId, parsedInput, ctx.envelope);
 	});
 
 export const removeDealArtifactAction = workspaceAction
 	.schema(z.object({ artifactId: z.string().uuid() }))
 	.action(async ({ parsedInput, ctx }) => {
 		return removeDealArtifact(ctx.workspaceId, parsedInput.artifactId);
+	});
+
+// ─── Local Deal AI ──────────────────────────────────────────────────────────
+
+const dealLocalAiRunTypeSchema = z.enum([
+	'brief',
+	'risk',
+	'next_action',
+	'follow_up_draft',
+	'question_answer',
+	'commitment_suggestion',
+	'stage_update_suggestion',
+]);
+
+function dealAiRunForClient(run: {
+	id: string;
+	runType: string;
+	status: string;
+	modelRole: string;
+	modelName: string;
+	localVendorMode: string;
+	output: string;
+	uncertainty: string | null;
+	sourceManifest?: unknown;
+	createdAt?: Date | string;
+}) {
+	return {
+		id: run.id,
+		runType: run.runType,
+		status: run.status,
+		modelRole: run.modelRole,
+		modelName: run.modelName,
+		localVendorMode: run.localVendorMode,
+		output: run.output,
+		uncertainty: run.uncertainty,
+		sourceCount: Array.isArray(run.sourceManifest) ? run.sourceManifest.length : 0,
+		createdAt:
+			run.createdAt instanceof Date ? run.createdAt.toISOString() : String(run.createdAt ?? ''),
+	};
+}
+
+export const getDealLocalAiStatusAction = workspaceAction
+	.schema(z.object({ dealId: z.string().uuid() }))
+	.action(async () => {
+		return getDealLocalAiStatus(process.env);
+	});
+
+export const listDealAiRunsAction = workspaceAction
+	.schema(z.object({ dealId: z.string().uuid() }))
+	.action(async ({ parsedInput, ctx }) => {
+		return listDealAiRuns(ctx.workspaceId, parsedInput.dealId, ctx.envelope);
+	});
+
+export const generateDealLocalAiAction = workspaceAction
+	.schema(
+		z.object({
+			dealId: z.string().uuid(),
+			runType: dealLocalAiRunTypeSchema,
+			question: z.string().trim().max(500).optional(),
+		}),
+	)
+	.action(async ({ parsedInput, ctx }) => {
+		const [deal, participants, artifacts, stageEvents, evidenceLinks] = await Promise.all([
+			getDeal(ctx.workspaceId, parsedInput.dealId, ctx.envelope),
+			listDealParticipants(ctx.workspaceId, parsedInput.dealId, ctx.envelope),
+			listDealArtifacts(ctx.workspaceId, parsedInput.dealId, ctx.envelope),
+			listDealStageEvents(ctx.workspaceId, parsedInput.dealId, ctx.envelope),
+			listDealEvidenceLinks(ctx.workspaceId, parsedInput.dealId, ctx.envelope),
+		]);
+		if (!deal) throw new Error('Not found');
+
+		const context = buildDealContextPack({
+			workspaceId: ctx.workspaceId,
+			deal,
+			participants,
+			artifacts,
+			stageEvents,
+			evidenceLinks,
+		});
+		const generated = await generateDealLocalAiOutput(context, parsedInput.runType, {
+			question: parsedInput.question,
+			allowLiveModel: process.env.DEAL_LOCAL_AI_LIVE_MODEL_ENABLED === 'true',
+		});
+		const result = await saveDealAiRun(
+			ctx.workspaceId,
+			{
+				dealId: parsedInput.dealId,
+				runType: generated.runType,
+				status: 'draft',
+				modelRole: generated.modelRole,
+				modelName: generated.modelName,
+				localVendorMode: generated.localVendorMode,
+				output: generated.output,
+				uncertainty: generated.uncertainty,
+				sourceManifest: generated.sourceManifest,
+			},
+			ctx.envelope,
+		);
+
+		revalidatePath(`/deals/${parsedInput.dealId}`);
+		if (!result) return null;
+		return dealAiRunForClient(result);
+	});
+
+export const updateDealAiRunStatusAction = workspaceAction
+	.schema(
+		z.object({
+			runId: z.string().uuid(),
+			status: z.enum(['accepted', 'dismissed']),
+		}),
+	)
+	.action(async ({ parsedInput, ctx }) => {
+		const result = await updateDealAiRunStatus(
+			ctx.workspaceId,
+			parsedInput.runId,
+			parsedInput.status,
+		);
+		revalidatePath('/deals');
+		return result;
 	});

@@ -1,7 +1,7 @@
 import { GhostingAlertCard } from '@/components/ghosting-alert-card';
 import type { GhostingContact } from '@/components/ghosting-alert-card';
 import { getWorkspaceEnvelope } from '@/lib/workspace';
-import { getHealthScoresByWorkspace, getPreferences, getStaleContacts } from '@repo/db';
+import { getHealthScoresByContactIds, getPreferences, getStaleContacts } from '@repo/db';
 
 interface GhostingAlertSectionProps {
 	workspaceId: string;
@@ -20,6 +20,7 @@ export async function GhostingAlertSection({ workspaceId, userId }: GhostingAler
 	]);
 
 	if (!envelope) return null;
+	if (prefs.ghostingAlertStatuses.length === 0) return null;
 
 	const staleContacts = await getStaleContacts(workspaceId, envelope, {
 		staleDays: prefs.ghostingStaleDays,
@@ -28,8 +29,11 @@ export async function GhostingAlertSection({ workspaceId, userId }: GhostingAler
 
 	if (staleContacts.length === 0) return null;
 
-	// Enrich with health labels — fetch scores for contacts that match user's alert preferences
-	const healthScores = await getHealthScoresByWorkspace(workspaceId, { limit: 200 });
+	// Enrich the exact stale contacts; a top-N health slice can miss neglected contacts.
+	const healthScores = await getHealthScoresByContactIds(
+		workspaceId,
+		staleContacts.map((c) => c.id),
+	);
 	const healthMap = new Map(healthScores.map((h) => [h.contactId, h.label]));
 
 	const alertStatuses: Set<string> = new Set(prefs.ghostingAlertStatuses);
@@ -45,7 +49,6 @@ export async function GhostingAlertSection({ workspaceId, userId }: GhostingAler
 		}))
 		.filter((c) => {
 			// If user configured alert statuses, only show contacts matching those labels
-			if (alertStatuses.size === 0) return true;
 			if (!c.healthLabel) return true; // No health data yet — show by default
 			return alertStatuses.has(c.healthLabel);
 		});

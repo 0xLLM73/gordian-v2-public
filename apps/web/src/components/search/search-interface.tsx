@@ -3,6 +3,7 @@ import { listGoalsAction } from '@/app/actions/goals';
 import { listKnowledgeNodesAction } from '@/app/actions/knowledge';
 import { searchAction } from '@/app/actions/search';
 import { GOAL_STATUS_COLORS, KNOWLEDGE_TYPE_COLORS } from '@/lib/colors';
+import { getContactInitial } from '@/lib/contact-initial';
 import type { KnowledgeNodePublic } from '@repo/db';
 import { BrainCircuit, Database, Loader2, Search as SearchIcon, ShieldCheck } from 'lucide-react';
 import Link from 'next/link';
@@ -169,7 +170,7 @@ export function SearchInterface() {
 											className="flex items-center gap-3 rounded-lg border border-border p-3 transition-colors hover:bg-accent"
 										>
 											<div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-medium text-blue-700">
-												{((c.firstName as string) || '?')[0].toUpperCase()}
+												{getContactInitial(c.firstName, c.lastName)}
 											</div>
 											<div>
 												<p className="font-medium text-foreground">

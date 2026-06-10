@@ -1,3 +1,4 @@
+import { getContactInitial } from '@/lib/contact-initial';
 import { cn } from '@/lib/utils';
 
 interface ContactBubbleProps {
@@ -15,7 +16,7 @@ const BUBBLE_COLORS = [
 ];
 
 export function ContactBubble({ firstName, lastName, index }: ContactBubbleProps) {
-	const initial = (firstName || lastName || '?')[0].toUpperCase();
+	const initial = getContactInitial(firstName, lastName);
 	const color = BUBBLE_COLORS[index % BUBBLE_COLORS.length];
 	const name = [firstName, lastName].filter(Boolean).join(' ') || 'Unknown';
 

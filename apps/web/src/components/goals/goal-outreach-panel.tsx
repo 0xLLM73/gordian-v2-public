@@ -117,13 +117,13 @@ function SuggestionCard({
 					<span className="text-[10px] text-muted-foreground">no history</span>
 				)}
 				<Link
-					href={`/follow-up-plans/new?contactId=${suggestion.contactId}`}
+					href={`/follow-up-plans?new=1&contactId=${suggestion.contactId}`}
 					className="rounded px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50"
 				>
 					Draft
 				</Link>
 				<Link
-					href={`/follow-up-plans/new?contactId=${suggestion.contactId}&goalId=${goalId}`}
+					href={`/follow-up-plans?new=1&contactId=${suggestion.contactId}&goalId=${goalId}`}
 					className="rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
 				>
 					Enroll

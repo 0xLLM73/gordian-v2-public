@@ -16,15 +16,17 @@ export function DealsFilter({ workspaceId: _workspaceId }: { workspaceId: string
 		} else {
 			params.set('stage', stage);
 		}
-		router.push(`${pathname}?${params.toString()}`);
+		const query = params.toString();
+		router.push(query ? `${pathname}?${query}` : pathname);
 	}
 
 	return (
-		<div className="flex flex-wrap gap-2">
+		<div className="flex flex-wrap gap-2" aria-label="Filter deals by stage">
 			{DEAL_STAGE_FILTERS.map((stage) => (
 				<button
 					key={stage}
 					type="button"
+					aria-pressed={currentStage === stage}
 					onClick={() => handleFilter(stage)}
 					className={`rounded-full px-3 py-1 text-sm font-medium transition-colors ${
 						currentStage === stage

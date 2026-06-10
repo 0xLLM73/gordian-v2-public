@@ -3,13 +3,11 @@
 
 import { listDealsAction } from '@/app/actions/deals';
 import { DealActions } from '@/components/deals/deal-actions';
+import { DealRow } from '@/components/deals/deal-row';
 import { EditDealButton } from '@/components/deals/edit-deal-button';
 import { Button } from '@/components/ui/button';
-import { DEAL_STAGE_COLORS } from '@/lib/colors';
-import { formatCurrency } from '@/lib/format';
 import type { DealStage } from '@repo/shared';
 import { useAction } from 'next-safe-action/hooks';
-import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
 
@@ -21,15 +19,6 @@ const dealTypeLabels: Record<string, string> = {
 	partnership: 'Partnership',
 	token: 'Token',
 	other: 'Other',
-};
-
-const stageLabels: Record<string, string> = {
-	discovery: 'Discovery',
-	diligence: 'Diligence',
-	negotiation: 'Negotiation',
-	committed: 'Committed',
-	won: 'Won',
-	lost: 'Lost',
 };
 
 interface Deal {
@@ -85,45 +74,34 @@ export function DealsLoadMore({
 							'Unknown contact';
 
 						return (
-							<div key={deal.id} className="flex items-center justify-between p-4">
-								<div className="min-w-0">
-									<div className="flex items-center gap-2">
-										<EditDealButton
-											dealId={deal.id}
-											initialTitle={deal.title}
-											initialValue={deal.value}
-											initialDealType={deal.dealType || 'other'}
-											initialNotes={deal.notes}
-										/>
-										{deal.dealType && deal.dealType !== 'other' ? (
-											<span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-												{dealTypeLabels[deal.dealType] || deal.dealType}
-											</span>
-										) : null}
-									</div>
-									<Link
-										href={`/deals/${deal.id}`}
-										className="mt-0.5 block text-sm text-muted-foreground hover:text-primary"
-									>
-										{contactName}
-									</Link>
-								</div>
-								<div className="flex items-center gap-3">
+							<DealRow
+								key={deal.id}
+								dealId={deal.id}
+								titleControl={
+									<EditDealButton
+										dealId={deal.id}
+										initialTitle={deal.title}
+										initialValue={deal.value}
+										initialDealType={deal.dealType || 'other'}
+										initialNotes={deal.notes}
+									/>
+								}
+								contactName={contactName}
+								dealTypeLabel={
+									deal.dealType && deal.dealType !== 'other'
+										? dealTypeLabels[deal.dealType] || deal.dealType
+										: null
+								}
+								actions={
 									<DealActions
 										dealId={deal.id}
 										stage={deal.stage}
 										stageHistory={deal.stageHistory as Array<{ stage: string; timestamp: string }>}
 									/>
-									<span className="text-sm font-medium text-foreground">
-										{formatCurrency(deal.value)}
-									</span>
-									<span
-										className={`rounded-full px-2 py-0.5 text-xs font-medium ${DEAL_STAGE_COLORS[deal.stage] || 'bg-muted text-muted-foreground'}`}
-									>
-										{stageLabels[deal.stage] || deal.stage}
-									</span>
-								</div>
-							</div>
+								}
+								value={deal.value}
+								stage={deal.stage}
+							/>
 						);
 					})}
 				</div>

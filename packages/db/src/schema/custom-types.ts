@@ -63,6 +63,24 @@ export const encryptedText = customType<{ data: string; driverData: string }>({
 });
 
 /**
+ * Encrypted JSON column. Stores JSON as encrypted text and parses it after
+ * decrypting with the workspace DEK.
+ */
+export const encryptedJson = customType<{ data: unknown; driverData: string }>({
+	dataType: () => 'text',
+	fromDriver: (value: string): unknown => {
+		const keys = keyStore.getStore();
+		if (!keys) return value; // Return ciphertext when no keys are active.
+		return JSON.parse(decrypt(value, keys.dek));
+	},
+	toDriver: (value: unknown): string => {
+		const keys = keyStore.getStore();
+		if (!keys) throw new Error('No encryption context — wrap call in withKeys()');
+		return encrypt(JSON.stringify(value), keys.dek);
+	},
+});
+
+/**
  * Encrypted session text column. Like encryptedText but uses TSK (Telegram Session Key)
  * instead of DEK. Isolates Telegram auth_key from general field encryption so a DEK
  * compromise does not expose Telegram sessions.

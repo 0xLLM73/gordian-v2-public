@@ -99,6 +99,16 @@ function post(path: string, body: object) {
 	});
 }
 
+function postWithoutSecret(path: string, body: object) {
+	return telegram.request(path, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+		},
+		body: JSON.stringify(body),
+	});
+}
+
 beforeEach(() => {
 	vi.stubEnv('TELEGRAM_MTPROTO_ENABLED', 'true');
 	vi.stubEnv('TELEGRAM_SEND_ENABLED', 'true');
@@ -120,6 +130,15 @@ describe('/send-code rate limiting (SEC-021)', () => {
 		const res = await post('/send-code', { phone: PHONE_A });
 
 		expect(res.status).toBe(503);
+		expect(sendToUser).not.toHaveBeenCalled();
+	});
+
+	it('requires internal auth before exposing disabled MTProto state', async () => {
+		vi.stubEnv('TELEGRAM_MTPROTO_ENABLED', 'false');
+
+		const res = await postWithoutSecret('/send-code', { phone: PHONE_A });
+
+		expect(res.status).toBe(401);
 		expect(sendToUser).not.toHaveBeenCalled();
 	});
 
@@ -257,6 +276,19 @@ describe('ASA-003 — verify-code retrieves hash from Redis, one-time use', () =
 		expect(connection.get).toHaveBeenCalledWith(expectedAuthKey(PHONE_A));
 	});
 
+	it('requires internal auth before exposing disabled verify-code state', async () => {
+		vi.stubEnv('TELEGRAM_MTPROTO_ENABLED', 'false');
+
+		const res = await postWithoutSecret('/verify-code', {
+			phone: PHONE_A,
+			code: '12345',
+			userId: USER_ID,
+		});
+
+		expect(res.status).toBe(401);
+		expect(connection.get).not.toHaveBeenCalled();
+	});
+
 	it('deletes the Redis key immediately after retrieval (one-time use)', async () => {
 		await post('/verify-code', { phone: PHONE_A, code: '12345', userId: USER_ID });
 
@@ -351,6 +383,18 @@ describe('/sync-contacts personal-account scope', () => {
 			'123456789',
 			'987654321',
 		]);
+	});
+
+	it('requires auth before exposing disabled sync state', async () => {
+		vi.stubEnv('TELEGRAM_MTPROTO_ENABLED', 'false');
+
+		const res = await postWithoutSecret('/sync-contacts', {
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+		});
+
+		expect(res.status).toBe(401);
+		expect(syncQueue.add).not.toHaveBeenCalled();
 	});
 
 	it('queues contacts-only sync by default', async () => {

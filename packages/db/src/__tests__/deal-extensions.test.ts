@@ -112,11 +112,15 @@ describe('deal-artifacts DAL', () => {
 		mockReturning.mockResolvedValue([{ id: 'da-1' }]);
 
 		const { addDealArtifact } = await import('../dal/deal-artifacts');
-		const result = await addDealArtifact('ws-1', {
-			dealId: 'deal-1',
-			title: 'SAFT Agreement',
-			artifactType: 'saft',
-		});
+		const result = await addDealArtifact(
+			'ws-1',
+			{
+				dealId: 'deal-1',
+				title: 'SAFT Agreement',
+				artifactType: 'saft',
+			},
+			MOCK_ENVELOPE,
+		);
 
 		expect(mockInsert).toHaveBeenCalled();
 		expect(result).toEqual({ id: 'da-1' });
@@ -127,9 +131,19 @@ describe('deal-artifacts DAL', () => {
 		mockLimit.mockResolvedValueOnce([]);
 
 		const { addDealArtifact } = await import('../dal/deal-artifacts');
-		await expect(addDealArtifact('ws-1', { dealId: 'deal-other', title: 'Test' })).rejects.toThrow(
-			'Not found',
-		);
+		await expect(
+			addDealArtifact('ws-1', { dealId: 'deal-other', title: 'Test' }, MOCK_ENVELOPE),
+		).rejects.toThrow('Not found');
+	});
+
+	it('listDealArtifacts filters by workspace and deal with an envelope', async () => {
+		mockWhere.mockResolvedValueOnce([{ id: 'da-1', title: 'SAFT Agreement' }]);
+
+		const { listDealArtifacts } = await import('../dal/deal-artifacts');
+		const result = await listDealArtifacts('ws-1', 'deal-1', MOCK_ENVELOPE);
+
+		expect(mockSelect).toHaveBeenCalled();
+		expect(result).toHaveLength(1);
 	});
 
 	it('removeDealArtifact deletes by id and workspace', async () => {

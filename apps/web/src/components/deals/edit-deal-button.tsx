@@ -44,7 +44,7 @@ export function EditDealButton({
 			<button
 				type="button"
 				onClick={() => setOpen(true)}
-				className="text-left font-medium text-foreground hover:text-primary"
+				className="max-w-full break-words text-left font-medium text-foreground hover:text-primary"
 			>
 				{initialTitle}
 			</button>

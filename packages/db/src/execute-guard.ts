@@ -102,6 +102,7 @@ export function extractSqlText(sqlObj: unknown): string | null {
 
 const SAFE_PATTERNS = [/^\s*set\s+local\b/i, /^\s*select\s+1\b/i, /^\s*show\b/i];
 const PRE_ENCRYPTED_TELEGRAM_SESSION_TAG = 'gordian:pre-encrypted-telegram-session:v1';
+const ENCRYPTION_BACKFILL_TAG = 'gordian:encrypted-backfill:v1';
 
 function isTaggedPreEncryptedTelegramSessionWrite(sqlText: string, violations: string[]): boolean {
 	if (!sqlText.includes(PRE_ENCRYPTED_TELEGRAM_SESSION_TAG)) return false;
@@ -109,6 +110,14 @@ function isTaggedPreEncryptedTelegramSessionWrite(sqlText: string, violations: s
 	if (!/\b(update|insert\s+into)\s+accounts\b/i.test(sqlText)) return false;
 	if (!/\bsession_kek_encrypted\b/i.test(sqlText)) return false;
 	if (!/\bprovider_id\b/i.test(sqlText) || !/\baccount_id\b/i.test(sqlText)) return false;
+	return true;
+}
+
+function isTaggedEncryptionBackfill(sqlText: string): boolean {
+	if (process.env.GORDIAN_ENCRYPTION_BACKFILL !== '1') return false;
+	if (!sqlText.includes(ENCRYPTION_BACKFILL_TAG)) return false;
+	if (!/\b(select|update)\b/i.test(sqlText)) return false;
+	if (!/\bworkspace_id\b/i.test(sqlText) && !/\bwhere\s+id\b/i.test(sqlText)) return false;
 	return true;
 }
 
@@ -146,6 +155,7 @@ export function guardExecute(sqlText: string): void {
 	if (violations.length === 0) return;
 
 	const isWrite = /\b(update\s|insert\s|delete\s)/i.test(trimmed);
+	if (isTaggedEncryptionBackfill(trimmed)) return;
 	if (isWrite && isTaggedPreEncryptedTelegramSessionWrite(trimmed, violations)) return;
 
 	const severity = isWrite ? 'CRITICAL' : 'WARNING';

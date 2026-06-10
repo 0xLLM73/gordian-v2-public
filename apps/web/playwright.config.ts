@@ -4,6 +4,7 @@ export default defineConfig({
 	globalSetup: './e2e/fixtures/auth',
 	testDir: './e2e',
 	timeout: 90000,
+	workers: 1,
 	retries: 0,
 	use: {
 		baseURL: 'http://localhost:3456',

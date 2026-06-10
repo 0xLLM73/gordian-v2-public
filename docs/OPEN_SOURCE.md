@@ -86,7 +86,8 @@ The public repository must therefore assume:
    - Branch protection for `main`
 
 9. Run the external publication check after the repository is public.
-   - `pnpm check:publication`
+   - From the mirror checkout: `pnpm check:publication`
+   - From the private source checkout: `GORDIAN_PUBLICATION_REPO=0xLLM73/gordian-v2-public pnpm check:publication`
    - This command is expected to fail while the repository is private or while the GitHub account cannot enable secret scanning, push protection, or private vulnerability reporting.
    - See [PUBLISHING.md](PUBLISHING.md) for the full GitHub and provider-side checklist.
 

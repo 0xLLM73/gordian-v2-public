@@ -39,6 +39,8 @@ const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 
 export const LOCAL_REDIS_PURGE_PATTERNS = [
 	'auth:phone:*',
+	'rate:send-code:*',
+	'rate:verify-code:*',
 	'tg:send:*',
 	'telegram:session:lock:*',
 	'telegram:session:blocked:*',

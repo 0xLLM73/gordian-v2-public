@@ -122,13 +122,13 @@ async function atomicRateLimit(
 }
 
 telegram.post('/send-code', async (c) => {
-	if (!isTelegramMtProtoEnabled()) {
-		return c.json(telegramDisabled(), 503);
-	}
-
 	const internalSecret = c.req.header('X-Internal-Secret');
 	if (!validateInternalSecret(internalSecret)) {
 		return c.json({ error: 'Unauthorized' }, 401);
+	}
+
+	if (!isTelegramMtProtoEnabled()) {
+		return c.json(telegramDisabled(), 503);
 	}
 
 	const body = await c.req.json<{ phone?: unknown }>();
@@ -170,13 +170,13 @@ telegram.post('/send-code', async (c) => {
 });
 
 telegram.post('/verify-code', async (c) => {
-	if (!isTelegramMtProtoEnabled()) {
-		return c.json(telegramDisabled(), 503);
-	}
-
 	const internalSecret = c.req.header('X-Internal-Secret');
 	if (!validateInternalSecret(internalSecret)) {
 		return c.json({ error: 'Unauthorized' }, 401);
+	}
+
+	if (!isTelegramMtProtoEnabled()) {
+		return c.json(telegramDisabled(), 503);
 	}
 
 	// ASA-003: phoneCodeHash no longer accepted from client — looked up from Redis below
@@ -275,17 +275,24 @@ telegram.post('/verify-code', async (c) => {
 
 /** Trigger contact sync — requires handoff token (authenticated user) */
 telegram.post('/sync-contacts', async (c) => {
-	if (!isTelegramMtProtoEnabled()) {
-		return c.json(telegramDisabled(), 503);
-	}
-
 	// Support both: handoff token (Bearer) and internal secret (X-Internal-Secret)
 	const internalSecret = c.req.header('X-Internal-Secret');
+	const authHeader = c.req.header('Authorization');
+	const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+	if (!internalSecret && !bearerToken) {
+		return c.json({ error: 'Missing bearer token' }, 401);
+	}
 	if (internalSecret) {
 		if (!validateInternalSecret(internalSecret)) {
 			return c.json({ error: 'Unauthorized' }, 401);
 		}
+	}
 
+	if (!isTelegramMtProtoEnabled()) {
+		return c.json(telegramDisabled(), 503);
+	}
+
+	if (internalSecret) {
 		try {
 			const body = await c.req.json<{
 				userId?: unknown;
@@ -344,13 +351,8 @@ telegram.post('/sync-contacts', async (c) => {
 		}
 	}
 
-	const authHeader = c.req.header('Authorization');
-	if (!authHeader?.startsWith('Bearer ')) {
-		return c.json({ error: 'Missing bearer token' }, 401);
-	}
-
 	try {
-		const token = authHeader.slice(7);
+		const token = bearerToken ?? '';
 		const payload = await verifyHandoffToken(token, connection);
 
 		if (payload.action !== 'sync-contacts') {
@@ -375,13 +377,13 @@ telegram.post('/sync-contacts', async (c) => {
 });
 
 telegram.post('/history-import/start', async (c) => {
-	if (!isTelegramMtProtoEnabled()) {
-		return c.json(telegramDisabled(), 503);
-	}
-
 	const internalSecret = c.req.header('X-Internal-Secret');
 	if (!validateInternalSecret(internalSecret)) {
 		return c.json({ error: 'Unauthorized' }, 401);
+	}
+
+	if (!isTelegramMtProtoEnabled()) {
+		return c.json(telegramDisabled(), 503);
 	}
 
 	try {
@@ -482,13 +484,13 @@ telegram.post('/history-import/:runId/pause', async (c) => {
 });
 
 telegram.post('/history-import/:runId/resume', async (c) => {
-	if (!isTelegramMtProtoEnabled()) {
-		return c.json(telegramDisabled(), 503);
-	}
-
 	const internalSecret = c.req.header('X-Internal-Secret');
 	if (!validateInternalSecret(internalSecret)) {
 		return c.json({ error: 'Unauthorized' }, 401);
+	}
+
+	if (!isTelegramMtProtoEnabled()) {
+		return c.json(telegramDisabled(), 503);
 	}
 
 	const runId = c.req.param('runId');
@@ -584,16 +586,16 @@ telegram.post('/disconnect-session', async (c) => {
  * Called by the web app when an existing Telegram account re-authenticates (P2 security).
  */
 telegram.post('/notify-session', async (c) => {
+	const internalSecret = c.req.header('X-Internal-Secret');
+	if (!validateInternalSecret(internalSecret)) {
+		return c.json({ error: 'Unauthorized' }, 401);
+	}
+
 	if (!isTelegramBotEnabled()) {
 		return c.json(telegramDisabled('Telegram Bot API integration is disabled'), 503);
 	}
 	if (!isTelegramSendEnabled()) {
 		return c.json(telegramDisabled('Telegram message sending is disabled'), 503);
-	}
-
-	const internalSecret = c.req.header('X-Internal-Secret');
-	if (!validateInternalSecret(internalSecret)) {
-		return c.json({ error: 'Unauthorized' }, 401);
 	}
 
 	const body = await c.req.json<{ telegramUserId?: unknown }>();
@@ -642,6 +644,12 @@ telegram.post('/notify-session', async (c) => {
  * 7. Synchronous RPC via sendToUser() — no BullMQ, no retries
  */
 telegram.post('/send-message', async (c) => {
+	// Auth first: unauthenticated callers should not be able to probe Telegram runtime state.
+	const internalSecret = c.req.header('X-Internal-Secret');
+	if (!validateInternalSecret(internalSecret)) {
+		return c.json({ error: 'Unauthorized' }, 401);
+	}
+
 	if (!isTelegramMtProtoEnabled() || !isTelegramSendEnabled()) {
 		return c.json(telegramDisabled('Telegram message sending is disabled'), 503);
 	}
@@ -652,12 +660,6 @@ telegram.post('/send-message', async (c) => {
 			),
 			503,
 		);
-	}
-
-	// 1. Auth: internal secret required
-	const internalSecret = c.req.header('X-Internal-Secret');
-	if (!validateInternalSecret(internalSecret)) {
-		return c.json({ error: 'Unauthorized' }, 401);
 	}
 
 	const body = await c.req.json();

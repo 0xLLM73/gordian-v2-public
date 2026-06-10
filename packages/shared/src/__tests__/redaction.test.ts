@@ -24,6 +24,7 @@ describe('redaction utilities', () => {
 			'password="alpha beta gamma"',
 			'Authorization: Bearer eyJhbGciOiJabc.eyJzdWIiOiIxMjMifQ.signaturevalue',
 			'redis://default:secret@localhost:6379/0',
+			'contact email investor@example.com',
 			'phone +1 (415) 555-2671',
 			'due=2026-05-15',
 			'security add-generic-password -a acct -s svc -w supersecret -U',
@@ -43,8 +44,10 @@ describe('redaction utilities', () => {
 		expect(redacted).not.toContain('workspace-wrk:1f50aaea');
 		expect(redacted).not.toContain('gordian-v2');
 		expect(redacted).not.toContain('default:secret');
+		expect(redacted).not.toContain('investor@example.com');
 		expect(redacted).not.toContain('+1 (415) 555-2671');
 		expect(redacted).toContain('bot[redacted]');
+		expect(redacted).toContain('[email]');
 		expect(redacted).toContain('[phone]');
 		expect(redacted).toContain('due=2026-05-15');
 	});

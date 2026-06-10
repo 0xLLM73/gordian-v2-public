@@ -33,6 +33,8 @@ smoke-*.png
 
 # Planning & Research
 docs/research/
+**/*-goal.md
+**/*-goals.md
 docs/DEEP_RESEARCH_PROMPTS_ROUND3.md
 docs/FEATURE_AUDIT.md
 docs/research/CROSS_CUTTING_ANALYSIS.md

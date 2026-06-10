@@ -98,3 +98,21 @@ describe('workspaceAction IDOR prevention', () => {
 		expect(mockGetWorkspaceEnvelope).toHaveBeenCalledWith(REAL_WORKSPACE_ID);
 	});
 });
+
+describe('publicServerActionErrorMessage', () => {
+	it('maps local worker connection failures to actionable setup copy', async () => {
+		const { publicServerActionErrorMessage } = await import('@/lib/safe-action');
+
+		expect(publicServerActionErrorMessage(new Error('fetch failed'))).toBe(
+			'Could not reach the local worker. Start it with pnpm --filter worker dev or update WORKER_URL, then retry.',
+		);
+	});
+
+	it('keeps unknown server errors generic', async () => {
+		const { publicServerActionErrorMessage } = await import('@/lib/safe-action');
+
+		expect(publicServerActionErrorMessage(new Error('database exploded'))).toBe(
+			'An unexpected error occurred. Please try again.',
+		);
+	});
+});

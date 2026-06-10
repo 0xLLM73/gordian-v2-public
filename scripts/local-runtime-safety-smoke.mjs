@@ -107,6 +107,8 @@ assert.equal(packageJson.scripts['setup:local'], 'node scripts/local-setup.mjs')
 
 for (const pattern of [
 	'auth:phone:*',
+	'rate:send-code:*',
+	'rate:verify-code:*',
 	'tg:send:*',
 	'telegram:session:lock:*',
 	'telegram:session:blocked:*',

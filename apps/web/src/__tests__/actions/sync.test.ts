@@ -286,6 +286,28 @@ describe('telegram history import actions', () => {
 		expect(requestBody.sourceAccountId).toBe('987654321');
 	});
 
+	it('does not surface sensitive worker error bodies when history import fails', async () => {
+		const { startTelegramImportAction } = await import('@/app/actions/sync');
+		const sensitiveWorkerError = [
+			'TELEGRAM_API_HASH=0123456789abcdef0123456789abcdef',
+			'telegram-session:4da901a7-131d-4c70-86b6-6a99008f67b1:656f07d7-b526-46d8-938b-e8679d9d7557',
+			'https://api.telegram.org/bot123456:ABCdefGHIjklMNOpqrSTUvwxyz/sendMessage',
+		].join(' ');
+		mockFetch.mockResolvedValueOnce({
+			ok: false,
+			json: () => Promise.resolve({ error: sensitiveWorkerError }),
+			text: () => Promise.resolve(sensitiveWorkerError),
+		});
+
+		const result = await startTelegramImportAction({ confirmLargeImport: true });
+		const serialized = JSON.stringify(result);
+
+		expect(result?.serverError).toBe('Failed to start Telegram import');
+		expect(serialized).not.toContain('0123456789abcdef');
+		expect(serialized).not.toContain('telegram-session:4da901a7');
+		expect(serialized).not.toContain('ABCdefGHIjkl');
+	});
+
 	it('can explicitly request inline local analysis during history import', async () => {
 		const { startTelegramImportAction } = await import('@/app/actions/sync');
 

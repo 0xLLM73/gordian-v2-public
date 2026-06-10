@@ -8,24 +8,50 @@ that cannot be proven by the repository alone.
 The selected publication target is the synced
 `0xLLM73/gordian-v2-public` mirror.
 
-As of the 2026-06-08 readiness audit:
+As of the 2026-06-10 final source validation pass:
 
 - `0xLLM73/gordian-v2` is the private source of truth and includes the current
-  MTProto Touch ID hardening baseline.
-- `0xLLM73/gordian-v2` `main` now requires one approving review, strict
-  `validate` and `demo-smoke` checks, linear history, admin enforcement,
-  conversation resolution, and blocks force pushes/deletions.
-- `0xLLM73/gordian-v2-public` exists, is also private, and PR #36 merged a
-  sanitized mirror snapshot from source commit `fe97ac196451` into mirror
-  `main` at `be88d03dbcc1`.
+  release-prep baseline. Source `main` was validated at
+  `c526ac24bdbf8bd7dc418059dbeb58b22cd7bb3f` after PRs #108 through #115
+  merged.
+- `0xLLM73/gordian-v2` `main` is intended to require pull requests, owner
+  review, strict `validate` and `demo-smoke` checks, linear history, admin
+  enforcement, conversation resolution, and blocked force pushes/deletions.
+- `.github/CODEOWNERS` assigns every path to the release-control accounts
+  `@0xLLM73` and `@thegrovest`, so public contributors cannot merge changes
+  without owner review once the matching GitHub branch rule is enabled.
+- `0xLLM73/gordian-v2-public` remains the selected publication target. It is
+  also private. PR #36 merged a sanitized mirror snapshot from source commit
+  `fe97ac196451` into mirror `main` at `be88d03dbcc1`; PR #37 refreshed
+  docs-only evidence and moved mirror `main` to
+  `32662038aa698ddbf8e740d9c9ba6c6d85dd677e`.
+- The mirror must be resynced from the final selected source release commit
+  before publication. If a full-history mirror scan finds real secrets, private
+  user data, or private operational context, abandon the existing mirror history
+  and publish from a fresh sanitized repository instead.
 - Mirror PR #36 passed GitHub `validate`, `demo-smoke`, and `postgres-smoke`
-  before merge.
+  before merge. Mirror PR #37 passed GitHub `validate` and `demo-smoke` before
+  merge.
 - A GitHub push warning previously reported 4 moderate Dependabot alerts on the
   mirror default branch. Direct audits identified them as Hono advisories
   against stale mirror `main` lockfile version `hono 4.12.18`; merged mirror
   `main` now pins `hono 4.12.23` and passes `pnpm audit` plus `pnpm audit
   --prod`. The Dependabot alerts API still returns 404 while the mirror remains
   private, so recheck GitHub before publication.
+- The 2026-06-10 source validation pass completed the repository gates listed
+  in [RELEASE_ATTESTATION.md](RELEASE_ATTESTATION.md), including
+  `pnpm audit:open-source`, `pnpm audit`, `pnpm audit --prod`, `pnpm lint`,
+  `pnpm typecheck`, `pnpm test`, `pnpm demo:smoke`,
+  `pnpm demo:release-smoke`, `pnpm security:local-runtime-smoke`,
+  `pnpm security:derived-data-audit`, `pnpm kg:security:audit`,
+  `pnpm local-ai:doctor`, and `pnpm kg:local:smoke`. `pnpm demo:setup` was
+  partially blocked by already-running local Postgres and Redis services on the
+  standard ports, so the migrate and seed steps were run successfully against
+  those local services instead.
+- `pnpm check:publication --repo 0xLLM73/gordian-v2-public` still fails, as it
+  should, while the selected mirror is private. Current blockers are mirror
+  visibility, secret scanning, push protection, and private vulnerability
+  reporting.
 
 Before launch, sync the mirror as a sanitized release tree, verify absolute
 GitHub links point at `gordian-v2-public`, and run every local and GitHub
@@ -36,6 +62,11 @@ been separately approved for public release.
 Notification-product tweaks are intentionally not part of the publication gate
 itself, but they remain queued release work before any announcement because they
 affect the first-run user experience.
+
+The ongoing release regression system is documented in
+[docs/RELEASE_REGRESSION_SYSTEM.md](./RELEASE_REGRESSION_SYSTEM.md). Use it for
+the every-PR, release-candidate, weekly, and monthly follow-up cadence after the
+first public release.
 
 ## Local Release Gate
 
@@ -76,13 +107,21 @@ separate production-runtime signal.
 
 ## GitHub Publication Gate
 
-After the repo is public, run:
+After the selected mirror is public, run this from the mirror checkout:
 
 ```bash
 pnpm check:publication
 ```
 
-This read-only check uses `gh api` against the origin repository and fails until:
+From the private source checkout, pass the mirror target explicitly:
+
+```bash
+GORDIAN_PUBLICATION_REPO=0xLLM73/gordian-v2-public pnpm check:publication
+# or
+pnpm check:publication --repo 0xLLM73/gordian-v2-public
+```
+
+This read-only check uses `gh api` against the selected repository and fails until:
 
 - repository visibility is public;
 - Dependabot version-update coverage includes npm, GitHub Actions, the web and
@@ -93,6 +132,8 @@ This read-only check uses `gh api` against the origin repository and fails until
 - secret scanning push protection is enabled;
 - private vulnerability reporting is enabled;
 - `main` requires the `validate` and `demo-smoke` checks;
+- `main` requires at least one approving pull request review;
+- `main` requires CODEOWNER review for every changed path;
 - `main` blocks force pushes and deletion;
 - `main` enforces admins, linear history, and conversation resolution.
 
@@ -123,6 +164,14 @@ the project publicly, verify each item in the provider dashboards:
 Record the final human sign-off in [RELEASE_ATTESTATION.md](RELEASE_ATTESTATION.md).
 Do not paste secret values, raw session strings, database URLs, or customer data
 into that record; use dates, owners, and short evidence notes only.
+
+## Post-Launch Regression Practice
+
+After launch, keep the release regression system current with every release
+candidate. Any change that adds a data field, export, logger, audit event,
+provider integration, AI prompt or embedding flow, Telegram send/import path,
+runtime cache, purge path, or browser-visible sensitive data requires the
+expanded checks in [docs/RELEASE_REGRESSION_SYSTEM.md](./RELEASE_REGRESSION_SYSTEM.md).
 
 ## Release Note
 

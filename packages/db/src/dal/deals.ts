@@ -5,6 +5,7 @@ import { db } from '../client';
 import { contacts } from '../schema/contacts';
 import { dealArtifacts } from '../schema/deal-artifacts';
 import { dealParticipants } from '../schema/deal-participants';
+import { dealStageEvents } from '../schema/deal-stage-events';
 import { deals } from '../schema/deals';
 import { messages } from '../schema/messages';
 import { getActiveGoalsByType, updateGoalProgress } from './goals';
@@ -164,19 +165,37 @@ export async function updateDeal(
 			const wasTerminal = current.stage === 'won' || current.stage === 'lost';
 
 			const result = await withKeys(envelope, async () => {
-				return await db
-					.update(deals)
-					.set({
-						...dbUpdates,
-						stage: updates.stage as (typeof deals.stage.enumValues)[number],
-						dealType: updates.dealType as (typeof deals.dealType.enumValues)[number],
-						stageHistory: history,
-						closedAt: isTerminal ? sql`now()` : wasTerminal ? null : undefined,
-						updatedAt: sql`now()`,
-						...(updates.title !== undefined ? { titleBlindIndex: updates.title } : {}),
-					})
-					.where(and(eq(deals.id, dealId), eq(deals.workspaceId, workspaceId)))
-					.returning();
+				return await db.transaction(async (tx) => {
+					const updated = await tx
+						.update(deals)
+						.set({
+							...dbUpdates,
+							stage: updates.stage as (typeof deals.stage.enumValues)[number],
+							dealType: updates.dealType as (typeof deals.dealType.enumValues)[number],
+							stageHistory: history,
+							closedAt: isTerminal ? sql`now()` : wasTerminal ? null : undefined,
+							updatedAt: sql`now()`,
+							...(updates.title !== undefined ? { titleBlindIndex: updates.title } : {}),
+						})
+						.where(and(eq(deals.id, dealId), eq(deals.workspaceId, workspaceId)))
+						.returning();
+
+					if (updated[0]) {
+						await tx.insert(dealStageEvents).values({
+							workspaceId,
+							dealId,
+							previousStage:
+								current.stage as (typeof dealStageEvents.previousStage.enumValues)[number],
+							nextStage: updates.stage as (typeof dealStageEvents.nextStage.enumValues)[number],
+							source: 'manual',
+							actorType: 'user',
+							note: stageNote || null,
+							occurredAt: new Date(),
+						});
+					}
+
+					return updated;
+				});
 			});
 
 			// Goal hook: increment business goals when deal reaches committed or won

@@ -37,15 +37,31 @@ type RelationshipScanStatus = {
 	sampledAt: string;
 };
 
+const RELATIONSHIP_SCAN_WORKER_HELP =
+	'Start the local worker with pnpm --filter worker dev or update WORKER_URL, then refresh scan status.';
+
 function liveJobCount(status: RelationshipScanStatus | null) {
 	if (!status) return 0;
 	return status.active + status.waiting + status.delayed;
 }
 
-function statusLabel(status: RelationshipScanStatus | null) {
+function statusLabel(status: RelationshipScanStatus | null, error: string | null) {
+	if (error && !status) return 'Unavailable';
 	if (!status) return 'Checking';
 	if (liveJobCount(status) > 0) return 'Running';
 	return 'Idle';
+}
+
+function scanStatusErrorDetail(error: string | null) {
+	if (!error) return null;
+	if (error.startsWith('Could not reach the local worker.')) return error;
+	if (error === 'An unexpected error occurred. Please try again.') {
+		return `Relationship scan status failed unexpectedly. ${RELATIONSHIP_SCAN_WORKER_HELP}`;
+	}
+	if (/worker|WORKER_URL|fetch failed|connection refused/i.test(error)) {
+		return `${error}. ${RELATIONSHIP_SCAN_WORKER_HELP}`;
+	}
+	return error;
 }
 
 function formatDate(value: string | null) {
@@ -108,9 +124,17 @@ export function RelationshipScanStatusPanel() {
 	}, [refreshStatus]);
 
 	const liveJobs = liveJobCount(status);
-	const label = statusLabel(status);
-	const Icon = liveJobs > 0 ? Activity : status?.failed ? AlertTriangle : CheckCircle2;
+	const label = statusLabel(status, error);
+	const Icon =
+		error && !status
+			? AlertTriangle
+			: liveJobs > 0
+				? Activity
+				: status?.failed
+					? AlertTriangle
+					: CheckCircle2;
 	const hasDiagnostics = Boolean(status?.progressReports);
+	const errorDetail = scanStatusErrorDetail(error);
 
 	return (
 		<section className="mb-4 rounded-lg border border-border bg-background p-4">
@@ -131,11 +155,13 @@ export function RelationshipScanStatusPanel() {
 							</span>
 						</div>
 						<p className="mt-1 text-sm text-muted-foreground">
-							{!status
-								? 'Checking the relationship scan queue for this workspace.'
-								: liveJobs > 0
-									? `${liveJobs.toLocaleString()} relationship scan job${liveJobs === 1 ? '' : 's'} still queued or active. Results appear after each job finishes.`
-									: 'No relationship scan jobs are currently queued for this workspace.'}
+							{error && !status
+								? 'Relationship scan status is unavailable. Check worker configuration before queuing scans.'
+								: !status
+									? 'Checking the relationship scan queue for this workspace.'
+									: liveJobs > 0
+										? `${liveJobs.toLocaleString()} relationship scan job${liveJobs === 1 ? '' : 's'} still queued or active. Results appear after each job finishes.`
+										: 'No relationship scan jobs are currently queued for this workspace.'}
 						</p>
 					</div>
 				</div>
@@ -244,7 +270,7 @@ export function RelationshipScanStatusPanel() {
 				</p>
 			) : null}
 
-			{error ? <p className="mt-3 text-xs text-red-700">{error}</p> : null}
+			{errorDetail ? <p className="mt-3 text-xs text-red-700">{errorDetail}</p> : null}
 		</section>
 	);
 }

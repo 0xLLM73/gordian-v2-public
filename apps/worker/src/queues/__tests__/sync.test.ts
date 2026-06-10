@@ -13,6 +13,7 @@ const mockUpdateChatLastSync = vi.fn();
 const mockCreateContact = vi.fn();
 const mockUpdateContact = vi.fn();
 const mockBufferMessage = vi.fn();
+const mockEnqueueHealthScoringForWorkspace = vi.fn();
 
 vi.mock('@repo/crypto', () => ({
 	decryptSessionKek: vi.fn(() => Promise.resolve(Buffer.alloc(32))),
@@ -193,6 +194,10 @@ vi.mock('../message-buffer', () => ({
 	bufferMessage: mockBufferMessage,
 }));
 
+vi.mock('../health-scoring-queue', () => ({
+	enqueueHealthScoringForWorkspace: mockEnqueueHealthScoringForWorkspace,
+}));
+
 vi.mock('../backfill', () => ({
 	backfillQueue: { add: vi.fn() },
 	backfillWorker: { on: vi.fn() },
@@ -242,6 +247,10 @@ describe('Message Sync Pipeline', () => {
 					})),
 				),
 		);
+		mockEnqueueHealthScoringForWorkspace.mockResolvedValue({
+			queued: true,
+			reason: 'telegram_sync_completed',
+		});
 		mockUpdateContact.mockResolvedValue({ id: 'contact-uuid-1' });
 	});
 
@@ -808,6 +817,15 @@ describe('Message Sync Pipeline', () => {
 				'chat-uuid-1',
 				'contact-uuid-1',
 			);
+			expect(mockEnqueueHealthScoringForWorkspace).toHaveBeenCalledWith('ws-1', {
+				force: true,
+				keyEnvelope: expect.objectContaining({
+					encryptedWrk: expect.any(String),
+					kmsContext: expect.any(Object),
+					wrkVersion: expect.any(Number),
+				}),
+				reason: 'telegram_sync_completed',
+			});
 		});
 
 		it('creates contacts from message sender users and repairs duplicate group rows', async () => {

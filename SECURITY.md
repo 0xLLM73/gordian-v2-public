@@ -18,6 +18,12 @@ Use GitHub private vulnerability reporting if it is enabled for this repository.
 - whether credentials, Telegram sessions, or user data may be exposed;
 - any logs or proof of concept that do not include real secrets.
 
+Use synthetic identifiers in reports whenever possible. Do not attach `.env`
+files, database dumps, Telegram export archives, raw session strings, provider
+logs with credentials, screenshots containing secrets, or real user messages.
+If proof requires sensitive material, ask the maintainer for a private handling
+path first.
+
 ## High-Risk Areas
 
 - Telegram MTProto sessions and outbound sending.
@@ -25,6 +31,10 @@ Use GitHub private vulnerability reporting if it is enabled for this repository.
 - KMS credentials and workspace root key handling.
 - Internal service secrets used between web and worker.
 - Supabase service role keys.
+- AI provider egress, prompt observability, embeddings, and derived knowledge
+  graph data.
+- Public/demo exports, audit logs, browser-visible errors, and release
+  artifacts.
 
 ## Telegram Guidance
 

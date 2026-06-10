@@ -33,6 +33,20 @@ export {
 export type { UpsertContactTagInput, ListContactsByTagFilters } from './contact-tags';
 
 export {
+	CONTACT_HEALTH_FEEDBACK_ACTIONS,
+	CONTACT_HEALTH_FEEDBACK_REASONS,
+	getActiveContactHealthFeedback,
+	getLatestContactHealthFeedback,
+	recordContactHealthFeedback,
+} from './contact-health-feedback';
+export type {
+	ContactHealthFeedbackAction,
+	ContactHealthFeedbackReason,
+	ContactHealthFeedbackRow,
+	RecordContactHealthFeedbackInput,
+} from './contact-health-feedback';
+
+export {
 	createMemory,
 	getMemoriesByContact,
 	getUnembeddedMemories,
@@ -90,6 +104,30 @@ export type {
 	StageVelocityStats,
 	UpdateDealInput,
 } from './deals';
+
+export {
+	addDealStageEvent,
+	listDealStageEvents,
+	createDealDecision,
+	linkDealEvidence,
+	listDealEvidenceLinks,
+	listDealDecisionsWithEvidence,
+	getDealCockpitCounts,
+} from './deal-cockpit';
+export type {
+	CreateDealDecisionInput,
+	CreateDealEvidenceLinkInput,
+	CreateDealStageEventInput,
+	DealDecisionWithEvidence,
+	DealEvidenceSourceType,
+} from './deal-cockpit';
+
+export {
+	saveDealAiRun,
+	listDealAiRuns,
+	updateDealAiRunStatus,
+} from './deal-ai-runs';
+export type { DealAiRunStatus, DealAiRunType, SaveDealAiRunInput } from './deal-ai-runs';
 
 export {
 	createDecision,
@@ -255,6 +293,7 @@ export type {
 export {
 	upsertHealthScore,
 	getHealthScore,
+	getHealthScoresByContactIds,
 	getHealthScoresByWorkspace,
 	getDecliningContacts,
 } from './health-scores';
@@ -337,24 +376,70 @@ export {
 	pauseFollowUpPlan,
 	resumeFollowUpPlan,
 	cancelFollowUpPlan,
+	seedBuiltInFollowUpPlanTemplates,
+	listFollowUpPlanTemplates,
+	createFollowUpPlanTemplate,
+	createFollowUpPlanTemplateVersion,
+	createFollowUpPlanTemplateFromPlan,
+	FOLLOW_UP_PLAN_READY_STEP_BATCH_SIZE,
 	getReadySteps,
+	claimReadyFollowUpPlanStep,
+	recordFollowUpPlanStepProcessingFailure,
+	markStepPendingReview,
+	rescheduleFollowUpPlanStep,
+	requestFollowUpPlanStepRegeneration,
 	advanceStep,
 	skipStep,
 	listFollowUpPlans,
 	getFollowUpPlan,
 	getFollowUpPlanSteps,
+	listFollowUpPlanActivity,
+	listFollowUpPlanSendRecords,
+	listFollowUpPlanDraftRevisions,
+	appendFollowUpPlanActivity,
+	createFollowUpPlanDraftRevision,
+	recordFollowUpPlanStepCopied,
+	recordFollowUpPlanTelegramOpened,
+	recordFollowUpPlanWorkerHeartbeat,
+	getFollowUpPlanWorkerHealth,
 	autoPauseOnReply,
 	approveStep,
 	editAndApproveStep,
 	rejectStep,
+	FOLLOW_UP_PLAN_ACTIVITY_TYPES,
+	FOLLOW_UP_PLAN_DRAFT_STATUSES,
+	FOLLOW_UP_PLAN_SEND_STATUSES,
+	FOLLOW_UP_PLAN_WORKER_HEARTBEAT_STATUSES,
+	FOLLOW_UP_PLAN_WORKER_HEARTBEAT_STALE_MS,
+	FOLLOW_UP_PLAN_WORKER_ID,
+	FOLLOW_UP_PLAN_STEP_PROCESSING_LEASE_MS,
 	FOLLOW_UP_PLAN_TEMPLATES,
 } from './follow-up-plans';
-export type { CreateFollowUpPlanInput, FollowUpPlanTemplate } from './follow-up-plans';
+export type {
+	AppendFollowUpPlanActivityInput,
+	ClaimReadyFollowUpPlanStepInput,
+	CreateFollowUpPlanInput,
+	CreateFollowUpPlanTemplateInput,
+	FollowUpPlanActivityType,
+	FollowUpPlanDraftStatus,
+	FollowUpPlanSendStatus,
+	FollowUpPlanTemplate,
+	FollowUpPlanWorkerHeartbeatStatus,
+	FollowUpPlanWorkerHealth,
+	FollowUpPlanWorkerHealthStatus,
+	InsertFollowUpPlanDraftRevisionInput,
+	InsertFollowUpPlanSendRecordInput,
+	MarkStepPendingReviewOptions,
+	RecordFollowUpPlanStepProcessingFailureInput,
+	RecordFollowUpPlanWorkerHeartbeatInput,
+	RescheduleFollowUpPlanStepInput,
+} from './follow-up-plans';
 
 export {
 	addDealParticipant,
 	listDealParticipants,
 	removeDealParticipant,
+	updateDealParticipant,
 } from './deal-participants';
 export type { CreateDealParticipantInput } from './deal-participants';
 

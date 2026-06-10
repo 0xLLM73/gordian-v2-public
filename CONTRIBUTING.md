@@ -27,6 +27,25 @@ Keep Telegram disabled unless your change specifically needs it. If you do enabl
 - Do not add private project archives, runbooks, incident notes, launch notes, or old infrastructure plans.
 - Run `pnpm audit:open-source`, `pnpm audit --prod`, `pnpm lint`, `pnpm typecheck`, and relevant tests before requesting review.
 
+## Sensitive Data Changes
+
+Before opening a PR, check whether your change adds or modifies any sensitive
+surface:
+
+- data model fields or migrations;
+- exports, downloads, or API response shapes;
+- logs, audit events, error serialization, or browser console output;
+- AI provider calls, prompts, embeddings, retrieval, or observability;
+- Telegram import, sync, send, or MTProto session custody;
+- browser-visible copies of private data, provider config, identifiers, or
+  degraded-state details.
+
+If any item applies, update or reference [docs/DATA_CLASSIFICATION.md](docs/DATA_CLASSIFICATION.md)
+and include tests that prove the new path does not expose secrets, session
+material, raw Telegram internals, provider credentials, or unexpected user data.
+Use in-app browser or Playwright QA for browser-visible changes and list the
+routes checked in the PR description.
+
 ## Security Work
 
 For security-sensitive changes, include the threat model and the failure mode the change prevents. Report suspected vulnerabilities privately through the process in [SECURITY.md](SECURITY.md).

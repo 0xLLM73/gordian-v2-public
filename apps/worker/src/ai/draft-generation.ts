@@ -1,5 +1,5 @@
+import { getChatLlmRuntime } from '@repo/shared';
 import { selectPromptVariant } from './bandit';
-import { inferWithCache } from './cached-inference';
 
 const DRAFT_SYSTEM_KERNEL = `You are a message drafting assistant for a Telegram CRM called Gordian.
 Generate a natural, contextual message draft the user can send to their contact.
@@ -23,11 +23,83 @@ const ARM_INSTRUCTIONS: Record<string, string> = {
 };
 
 const DRAFT_VARIANTS = Object.keys(ARM_INSTRUCTIONS);
+const LOCAL_DRAFT_MAX_TOKENS = 512;
+const LOCAL_DRAFT_TEMPERATURE = 0.7;
 
 export interface DraftResult {
 	text: string;
 	armType: string;
 	traceId: string;
+}
+
+function cleanLocalDraftText(value: string): string {
+	return value
+		.replace(/<think>[\s\S]*?<\/think>/gi, '')
+		.replace(/^```(?:text|markdown)?\s*/i, '')
+		.replace(/\s*```$/i, '')
+		.trim();
+}
+
+async function callLocalDraftLlm(systemPrompt: string, userPrompt: string): Promise<string> {
+	const runtime = getChatLlmRuntime(process.env);
+	if (runtime.mode !== 'local' || !runtime.model) {
+		throw new Error(
+			'Local follow-up draft AI is not configured. Use template-only or reminder-only mode, or configure CHAT_LLM_PROVIDER=local.',
+		);
+	}
+
+	const headers: Record<string, string> = {
+		'Content-Type': 'application/json',
+	};
+	if (runtime.apiKey) headers.Authorization = `Bearer ${runtime.apiKey}`;
+
+	const messages = [
+		{ role: 'system', content: systemPrompt },
+		{ role: 'user', content: userPrompt },
+	];
+	const response =
+		runtime.api === 'ollama'
+			? await fetch(runtime.ollamaChatUrl ?? '', {
+					method: 'POST',
+					headers,
+					body: JSON.stringify({
+						model: runtime.model,
+						messages,
+						stream: false,
+						think: false,
+						options: {
+							temperature: LOCAL_DRAFT_TEMPERATURE,
+							num_predict: LOCAL_DRAFT_MAX_TOKENS,
+						},
+					}),
+				})
+			: await fetch(runtime.chatCompletionsUrl ?? '', {
+					method: 'POST',
+					headers,
+					body: JSON.stringify({
+						model: runtime.model,
+						messages,
+						temperature: LOCAL_DRAFT_TEMPERATURE,
+						max_tokens: LOCAL_DRAFT_MAX_TOKENS,
+					}),
+				});
+
+	if (!response.ok) {
+		const error = await response.text();
+		throw new Error(`Local follow-up draft AI error (${response.status}): ${error}`);
+	}
+
+	const data = (await response.json()) as {
+		choices?: Array<{ message?: { content?: string | null } }>;
+		message?: { content?: string | null };
+	};
+	const text =
+		runtime.api === 'ollama'
+			? data.message?.content?.trim()
+			: data.choices?.[0]?.message?.content?.trim();
+	const draft = cleanLocalDraftText(text ?? '');
+	if (!draft) throw new Error('Local follow-up draft AI returned no message content');
+	return draft;
 }
 
 export async function generateDraft(
@@ -42,22 +114,7 @@ export async function generateDraft(
 
 	const userPrompt = `Contact Summary:\n${contactSummary}\n\nRecent Messages:\n${recentMessages}\n\nGenerate a message draft for this contact.`;
 
-	const response = await inferWithCache(
-		systemKernel,
-		'',
-		'',
-		[{ role: 'user', content: userPrompt }],
-		{
-			maxTokens: 512,
-			temperature: 0.7,
-			helicone: { feature: 'draft-generation', banditArm: armType },
-		},
-	);
-
-	return response.content
-		.filter((block) => block.type === 'text')
-		.map((block) => (block.type === 'text' ? block.text : ''))
-		.join('\n');
+	return callLocalDraftLlm(systemKernel, userPrompt);
 }
 
 export async function generateDraftWithBandit(

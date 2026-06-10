@@ -4,7 +4,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockDbSelect = vi.hoisted(() => vi.fn());
 const mockDbExecute = vi.hoisted(() => vi.fn());
+const mockAnalyzeRelationshipHealthLocal = vi.hoisted(() => vi.fn());
+const mockCanRunLocalRelationshipHealthAnalysis = vi.hoisted(() => vi.fn());
+const mockGetActiveContactHealthFeedback = vi.hoisted(() => vi.fn());
 const mockGetHealthScoresByWorkspace = vi.hoisted(() => vi.fn());
+const mockGetMessagesByContact = vi.hoisted(() => vi.fn());
+const mockHasWorkspaceAiAnalysisConsent = vi.hoisted(() => vi.fn());
 const mockUpsertHealthScore = vi.hoisted(() => vi.fn());
 const mockBroadcastUpdate = vi.hoisted(() => vi.fn());
 const mockEnqueueRelationshipEvaluation = vi.hoisted(() => vi.fn());
@@ -16,7 +21,12 @@ vi.mock('@repo/db', () => ({
 		relationshipType: 'relationshipType',
 		workspaceId: 'workspaceId',
 	},
-	contactTags: { contactId: 'contactId', relationship: 'relationship', workspaceId: 'workspaceId' },
+	contactTags: {
+		contactId: 'contactId',
+		priority: 'priority',
+		relationship: 'relationship',
+		workspaceId: 'workspaceId',
+	},
 	contacts: { id: 'id', workspaceId: 'workspaceId' },
 	messages: {
 		contactId: 'contactId',
@@ -31,8 +41,19 @@ vi.mock('@repo/db', () => ({
 	},
 	eq: vi.fn(),
 	sql: vi.fn(),
+	getActiveContactHealthFeedback: (...args: unknown[]) =>
+		mockGetActiveContactHealthFeedback(...args),
 	getHealthScoresByWorkspace: (...args: unknown[]) => mockGetHealthScoresByWorkspace(...args),
+	getMessagesByContact: (...args: unknown[]) => mockGetMessagesByContact(...args),
+	hasWorkspaceAiAnalysisConsent: (...args: unknown[]) => mockHasWorkspaceAiAnalysisConsent(...args),
 	upsertHealthScore: (...args: unknown[]) => mockUpsertHealthScore(...args),
+}));
+
+vi.mock('../../ai/relationship-health', () => ({
+	analyzeRelationshipHealthLocal: (...args: unknown[]) =>
+		mockAnalyzeRelationshipHealthLocal(...args),
+	canRunLocalRelationshipHealthAnalysis: (...args: unknown[]) =>
+		mockCanRunLocalRelationshipHealthAnalysis(...args),
 }));
 
 vi.mock('../../realtime/broadcast', () => ({
@@ -68,6 +89,7 @@ vi.mock('../../redis', () => ({
 // ─── Import after mocks ─────────────────────────────────────────────────────
 
 import {
+	buildHealthScoringInsight,
 	computeFrequency,
 	computeFulfillment,
 	computeLabel,
@@ -156,27 +178,162 @@ describe('isGhostingTransition', () => {
 	});
 });
 
+describe('buildHealthScoringInsight', () => {
+	const baseInput = {
+		baseLabel: 'cooling',
+		cadence: {
+			baselineSessions: 14,
+			historyDays: 210,
+			lastInteractionAt: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString(),
+			medianGapDays: 8,
+			p75GapDays: 12,
+			p90GapDays: 20,
+			recentSessions: 0,
+			sessionCount: 16,
+		},
+		composite: 0.42,
+		daysSinceLast: 45,
+		incoming: 6,
+		lastIsOutgoing: true,
+		medianResponseHours: null,
+		outgoing: 6,
+		priority: 'medium' as const,
+		recentMessages: 0,
+		relationshipType: null,
+		totalMessages: 12,
+	};
+
+	it('flags a relationship gap longer than the learned cadence', () => {
+		const insight = buildHealthScoringInsight(baseInput);
+
+		expect(insight.version).toBe(2);
+		expect(insight.statusReason.code).toBe('gap_longer_than_usual');
+		expect(insight.statusReason.privacyLevel).toBe('aggregate_only');
+		expect(insight.cadence.sessionCount).toBe(16);
+		expect(insight.confidence.label).toBe('high');
+		expect(insight.statusReason.plainLanguage).toContain('No meaningful 1:1');
+	});
+
+	it('separates steady low-touch contacts from real cooling risk', () => {
+		const insight = buildHealthScoringInsight({
+			...baseInput,
+			baseLabel: 'cooling',
+			cadence: {
+				...baseInput.cadence,
+				medianGapDays: 60,
+				p75GapDays: 75,
+				p90GapDays: 100,
+			},
+			daysSinceLast: 80,
+			relationshipType: 'investor',
+		});
+
+		expect(insight.statusReason.code).toBe('steady_low_touch');
+		expect(insight.statusReason.suggestedAction).toBe('none');
+		expect(insight.attention.actionability).toBeLessThan(0.1);
+	});
+
+	it('prioritizes cases where the user owes a reply', () => {
+		const insight = buildHealthScoringInsight({
+			...baseInput,
+			daysSinceLast: 6,
+			lastIsOutgoing: false,
+			priority: 'high',
+		});
+
+		expect(insight.statusReason.code).toBe('needs_reply');
+		expect(insight.statusReason.directionality).toBe('user_owes');
+		expect(insight.statusReason.suggestedAction).toBe('open_chat');
+		expect(insight.attention.priorityWeight).toBe(1.25);
+	});
+
+	it('does not treat ancient sparse inbound history as a pending reply', () => {
+		const insight = buildHealthScoringInsight({
+			...baseInput,
+			cadence: {
+				...baseInput.cadence,
+				historyDays: 1,
+				sessionCount: 1,
+			},
+			daysSinceLast: 355,
+			incoming: 1,
+			lastIsOutgoing: false,
+			outgoing: 0,
+			totalMessages: 1,
+		});
+
+		expect(insight.statusReason.code).toBe('learning');
+		expect(insight.statusReason.suggestedAction).toBe('set_cadence');
+		expect(insight.confidence.label).toBe('low');
+	});
+
+	it('treats old established-cadence silence as a cadence gap, not a pending reply', () => {
+		const insight = buildHealthScoringInsight({
+			...baseInput,
+			daysSinceLast: 90,
+			incoming: 10,
+			lastIsOutgoing: false,
+			outgoing: 8,
+			totalMessages: 18,
+		});
+
+		expect(insight.statusReason.code).toBe('gap_longer_than_usual');
+		expect(insight.statusReason.suggestedAction).toBe('send_light_checkin');
+	});
+
+	it('marks sparse histories as learning instead of overclaiming risk', () => {
+		const insight = buildHealthScoringInsight({
+			...baseInput,
+			cadence: {
+				...baseInput.cadence,
+				historyDays: 7,
+				sessionCount: 2,
+			},
+			daysSinceLast: 10,
+			totalMessages: 3,
+		});
+
+		expect(insight.statusReason.code).toBe('learning');
+		expect(insight.confidence.label).toBe('low');
+		expect(insight.sourceCoverage.sparse).toBe(true);
+	});
+});
+
 // ─── Worker integration tests ────────────────────────────────────────────────
 
 // Capture the processor at import time (before any clearAllMocks)
 import { Worker } from 'bullmq';
 const workerCalls = (Worker as unknown as ReturnType<typeof vi.fn>).mock.calls;
 const hsCall = workerCalls.find((c: unknown[]) => c[0] === 'health-scoring');
-const workerProcessor = hsCall?.[1] as (job: { data: { workspaceId: string } }) => Promise<void>;
+const workerProcessor = hsCall?.[1] as (job: {
+	data: {
+		keyEnvelope?: {
+			encryptedWrk: string;
+			kmsContext: Record<string, string>;
+			wrkVersion: number;
+		};
+		workspaceId: string;
+	};
+}) => Promise<void>;
 
 describe('health-scoring worker', () => {
 	const processor = workerProcessor;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockAnalyzeRelationshipHealthLocal.mockResolvedValue(undefined);
+		mockCanRunLocalRelationshipHealthAnalysis.mockReturnValue(false);
+		mockGetActiveContactHealthFeedback.mockResolvedValue([]);
+		mockGetMessagesByContact.mockResolvedValue([]);
+		mockHasWorkspaceAiAnalysisConsent.mockResolvedValue(false);
 	});
 
 	/**
 	 * Sets up the db mock chain for the worker.
-	 * Worker makes 5 db.select calls: contacts, messageStats, commitmentStats, contactTags, relTypes
-	 * Plus 1 db.execute call for latencyStats.
+	 * Worker makes 5 db.select calls: contacts, messageStats, commitmentStats, contactTags, relTypes.
+	 * It also makes 2 db.execute calls: latencyStats and cadenceStats.
 	 */
-	function setupDbChain(selectResults: unknown[], executeResult: unknown[] = []) {
+	function setupDbChain(selectResults: unknown[], executeResults: unknown[] | unknown[][] = []) {
 		for (const result of selectResults) {
 			const groupBy = vi.fn().mockResolvedValue(result);
 			const where = vi.fn().mockImplementation(() => {
@@ -187,23 +344,53 @@ describe('health-scoring worker', () => {
 			const from = vi.fn().mockReturnValue({ where });
 			mockDbSelect.mockReturnValueOnce({ from });
 		}
-		mockDbExecute.mockResolvedValueOnce(executeResult);
+		const maybeRows = executeResults as unknown[];
+		const normalized = Array.isArray(maybeRows[0])
+			? (executeResults as unknown[][])
+			: [executeResults as unknown[]];
+		mockDbExecute.mockResolvedValueOnce(normalized[0] ?? []);
+		mockDbExecute.mockResolvedValueOnce(normalized[1] ?? []);
 	}
 
 	it('detects transitions and broadcasts ghosting alerts', async () => {
 		const wsId = 'ws-001';
 
 		// db.select: contacts, messageStats, commitmentStats, contactTags, relTypes
-		// db.execute: latencyStats
+		// db.execute: latencyStats, cadenceStats
 		setupDbChain(
 			[
 				[{ id: 'contact-a' }, { id: 'contact-b' }],
-				[], // no messages
+				[
+					{
+						contactId: 'contact-a',
+						totalMessages: 12,
+						recentMessages: 0,
+						lastMessageAt: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString(),
+						lastIsOutgoing: true,
+						outgoingCount: 6,
+						incomingCount: 6,
+					},
+				],
 				[], // no commitments
 				[], // no contactTags
 				[], // no relTypes
 			],
-			[], // no latencyStats
+			[
+				[], // no latencyStats
+				[
+					{
+						contact_id: 'contact-a',
+						session_count: 8,
+						history_days: 120,
+						last_interaction_at: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString(),
+						recent_sessions: 0,
+						baseline_sessions: 8,
+						median_gap_days: 8,
+						p75_gap_days: 12,
+						p90_gap_days: 20,
+					},
+				],
+			],
 		);
 
 		mockGetHealthScoresByWorkspace.mockResolvedValue([
@@ -226,7 +413,7 @@ describe('health-scoring worker', () => {
 					expect.objectContaining({
 						contactId: 'contact-a',
 						previousLabel: 'healthy',
-						newLabel: 'cooling', // no messages → composite ~0.31 (cooling tier)
+						newLabel: 'cooling',
 					}),
 				]),
 				generatedAt: expect.any(String),
@@ -434,6 +621,295 @@ describe('health-scoring worker', () => {
 		expect(compData.relationshipType).toBe('investor');
 		expect(compData.medianResponseHours).toBeNull();
 	});
+
+	it('stores aggregate reason and cadence data without raw message text', async () => {
+		const wsId = 'ws-reasons';
+
+		setupDbChain(
+			[
+				[{ id: 'contact-reason' }],
+				[
+					{
+						contactId: 'contact-reason',
+						totalMessages: 12,
+						recentMessages: 0,
+						lastMessageAt: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString(),
+						lastIsOutgoing: true,
+						outgoingCount: 6,
+						incomingCount: 6,
+					},
+				],
+				[],
+				[{ contactId: 'contact-reason', priority: 'high', relationship: 'colleague' }],
+				[],
+			],
+			[
+				[],
+				[
+					{
+						contact_id: 'contact-reason',
+						session_count: 8,
+						history_days: 120,
+						last_interaction_at: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString(),
+						recent_sessions: 0,
+						baseline_sessions: 8,
+						median_gap_days: 8,
+						p75_gap_days: 12,
+						p90_gap_days: 20,
+					},
+				],
+			],
+		);
+
+		mockGetHealthScoresByWorkspace.mockResolvedValue([]);
+		mockUpsertHealthScore.mockResolvedValue(undefined);
+
+		await processor({ data: { workspaceId: wsId } });
+
+		const upsertCall = (mockUpsertHealthScore.mock.calls as unknown[][])[0];
+		const input = upsertCall[1] as Record<string, unknown>;
+		const compData = input.computationData as Record<string, unknown>;
+		const statusReason = compData.statusReason as Record<string, unknown>;
+		const cadence = compData.cadence as Record<string, unknown>;
+		const attention = compData.attention as Record<string, unknown>;
+
+		expect(compData.version).toBe(2);
+		expect(statusReason.code).toBe('gap_longer_than_usual');
+		expect(statusReason.privacyLevel).toBe('aggregate_only');
+		expect(cadence.sessionCount).toBe(8);
+		expect(attention.priorityWeight).toBe(1.25);
+		expect(compData).not.toHaveProperty('text');
+		expect(compData).not.toHaveProperty('messageText');
+	});
+
+	it('applies active low-touch feedback during health recompute', async () => {
+		const wsId = 'ws-feedback';
+		const createdAt = new Date();
+
+		setupDbChain(
+			[
+				[{ id: 'contact-feedback' }],
+				[
+					{
+						contactId: 'contact-feedback',
+						totalMessages: 12,
+						recentMessages: 0,
+						lastMessageAt: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString(),
+						lastIsOutgoing: true,
+						outgoingCount: 6,
+						incomingCount: 6,
+					},
+				],
+				[],
+				[],
+				[],
+			],
+			[
+				[],
+				[
+					{
+						contact_id: 'contact-feedback',
+						session_count: 8,
+						history_days: 120,
+						last_interaction_at: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString(),
+						recent_sessions: 0,
+						baseline_sessions: 8,
+						median_gap_days: 8,
+						p75_gap_days: 12,
+						p90_gap_days: 20,
+					},
+				],
+			],
+		);
+
+		mockGetHealthScoresByWorkspace.mockResolvedValue([]);
+		mockGetActiveContactHealthFeedback.mockResolvedValue([
+			{
+				id: 'feedback-1',
+				workspaceId: wsId,
+				contactId: 'contact-feedback',
+				userId: 'user-1',
+				action: 'mark_low_touch',
+				reason: 'normal_low_touch',
+				statusReasonCode: 'gap_longer_than_usual',
+				snoozedUntil: null,
+				metadata: {},
+				createdAt,
+				updatedAt: createdAt,
+			},
+		]);
+		mockUpsertHealthScore.mockResolvedValue(undefined);
+
+		await processor({ data: { workspaceId: wsId } });
+
+		expect(mockGetActiveContactHealthFeedback).toHaveBeenCalledWith(wsId, ['contact-feedback']);
+		const upsertCall = (mockUpsertHealthScore.mock.calls as unknown[][])[0];
+		const input = upsertCall[1] as Record<string, unknown>;
+		const compData = input.computationData as Record<string, unknown>;
+		const statusReason = compData.statusReason as Record<string, unknown>;
+		const attention = compData.attention as Record<string, unknown>;
+		const feedback = compData.feedback as Record<string, unknown>;
+
+		expect(input.label).toBe('steady_low_touch');
+		expect(statusReason.code).toBe('steady_low_touch');
+		expect(attention.score).toBe(0);
+		expect(feedback.action).toBe('mark_low_touch');
+		expect(feedback.reason).toBe('normal_low_touch');
+	});
+
+	it('skips local relationship classifiers when no key envelope is present', async () => {
+		const wsId = 'ws-no-key';
+
+		setupDbChain(
+			[
+				[{ id: 'contact-no-key' }],
+				[
+					{
+						contactId: 'contact-no-key',
+						totalMessages: 12,
+						recentMessages: 0,
+						lastMessageAt: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString(),
+						lastIsOutgoing: true,
+						outgoingCount: 6,
+						incomingCount: 6,
+					},
+				],
+				[],
+				[],
+				[],
+			],
+			[
+				[],
+				[
+					{
+						contact_id: 'contact-no-key',
+						session_count: 8,
+						history_days: 120,
+						last_interaction_at: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString(),
+						recent_sessions: 0,
+						baseline_sessions: 8,
+						median_gap_days: 8,
+						p75_gap_days: 12,
+						p90_gap_days: 20,
+					},
+				],
+			],
+		);
+
+		mockCanRunLocalRelationshipHealthAnalysis.mockReturnValue(true);
+		mockHasWorkspaceAiAnalysisConsent.mockResolvedValue(true);
+		mockGetHealthScoresByWorkspace.mockResolvedValue([]);
+		mockUpsertHealthScore.mockResolvedValue(undefined);
+
+		await processor({ data: { workspaceId: wsId } });
+
+		expect(mockHasWorkspaceAiAnalysisConsent).not.toHaveBeenCalled();
+		expect(mockGetMessagesByContact).not.toHaveBeenCalled();
+		expect(mockAnalyzeRelationshipHealthLocal).not.toHaveBeenCalled();
+	});
+
+	it('stores bounded local AI signals when consent and key envelope are present', async () => {
+		const wsId = 'ws-local-ai';
+		const keyEnvelope = {
+			encryptedWrk: Buffer.from('encrypted-wrk').toString('base64'),
+			kmsContext: { workspaceId: wsId },
+			wrkVersion: 1,
+		};
+
+		setupDbChain(
+			[
+				[{ id: 'contact-ai' }],
+				[
+					{
+						contactId: 'contact-ai',
+						totalMessages: 18,
+						recentMessages: 0,
+						lastMessageAt: new Date(Date.now() - 12 * 24 * 60 * 60 * 1000).toISOString(),
+						lastIsOutgoing: false,
+						outgoingCount: 8,
+						incomingCount: 10,
+					},
+				],
+				[],
+				[{ contactId: 'contact-ai', priority: 'high', relationship: 'colleague' }],
+				[],
+			],
+			[
+				[],
+				[
+					{
+						contact_id: 'contact-ai',
+						session_count: 10,
+						history_days: 140,
+						last_interaction_at: new Date(Date.now() - 12 * 24 * 60 * 60 * 1000).toISOString(),
+						recent_sessions: 0,
+						baseline_sessions: 10,
+						median_gap_days: 6,
+						p75_gap_days: 8,
+						p90_gap_days: 10,
+					},
+				],
+			],
+		);
+
+		mockCanRunLocalRelationshipHealthAnalysis.mockReturnValue(true);
+		mockHasWorkspaceAiAnalysisConsent.mockResolvedValue(true);
+		mockGetHealthScoresByWorkspace.mockResolvedValue([]);
+		mockGetMessagesByContact.mockResolvedValue([
+			{
+				id: 'm1',
+				text: 'Can you send the deck?',
+				isOutgoing: false,
+				sentAt: new Date(),
+			},
+		]);
+		mockAnalyzeRelationshipHealthLocal.mockResolvedValue({
+			version: 1,
+			meaningfulExchange: { label: 'meaningful', confidence: 0.86 },
+			directAsk: { detected: true, userOwesReply: true, confidence: 0.92 },
+			topicLabels: ['work', 'planning'],
+			draftCheckIn: { available: true, reviewRequired: true, autoSend: false },
+			runtime: { mode: 'local', model: 'qwen3:4b-instruct', source: 'commitment-fallback' },
+		});
+		mockUpsertHealthScore.mockResolvedValue(undefined);
+
+		await processor({ data: { workspaceId: wsId, keyEnvelope } });
+
+		expect(mockHasWorkspaceAiAnalysisConsent).toHaveBeenCalledWith(wsId);
+		expect(mockGetMessagesByContact).toHaveBeenCalledWith(
+			wsId,
+			'contact-ai',
+			expect.objectContaining({
+				encryptedWrk: expect.any(Buffer),
+				kmsContext: { workspaceId: wsId },
+				wrkVersion: 1,
+			}),
+			{ limit: 12 },
+		);
+		expect(mockAnalyzeRelationshipHealthLocal).toHaveBeenCalledWith([
+			expect.objectContaining({
+				content: 'Can you send the deck?',
+				isOutgoing: false,
+			}),
+		]);
+
+		const upsertCall = (mockUpsertHealthScore.mock.calls as unknown[][])[0];
+		const input = upsertCall[1] as Record<string, unknown>;
+		const compData = input.computationData as Record<string, unknown>;
+		const statusReason = compData.statusReason as Record<string, unknown>;
+		const aiSignals = compData.aiSignals as Record<string, unknown>;
+
+		expect(statusReason.code).toBe('needs_reply');
+		expect(statusReason.privacyLevel).toBe('aggregate_only');
+		expect(aiSignals).toEqual(
+			expect.objectContaining({
+				version: 1,
+				topicLabels: ['work', 'planning'],
+				draftCheckIn: { available: true, reviewRequired: true, autoSend: false },
+			}),
+		);
+		expect(JSON.stringify(compData)).not.toContain('Can you send the deck?');
+	});
 });
 
 // ─── Additional pure function tests ──────────────────────────────────────────
@@ -601,9 +1077,14 @@ describe('H6 — dormancy floor (worker integration)', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockAnalyzeRelationshipHealthLocal.mockResolvedValue(undefined);
+		mockCanRunLocalRelationshipHealthAnalysis.mockReturnValue(false);
+		mockGetActiveContactHealthFeedback.mockResolvedValue([]);
+		mockGetMessagesByContact.mockResolvedValue([]);
+		mockHasWorkspaceAiAnalysisConsent.mockResolvedValue(false);
 	});
 
-	function setupDbChain(selectResults: unknown[], executeResult: unknown[] = []) {
+	function setupDbChain(selectResults: unknown[], executeResults: unknown[] | unknown[][] = []) {
 		for (const result of selectResults) {
 			const groupBy = vi.fn().mockResolvedValue(result);
 			const where = vi.fn().mockImplementation(() => {
@@ -614,7 +1095,12 @@ describe('H6 — dormancy floor (worker integration)', () => {
 			const from = vi.fn().mockReturnValue({ where });
 			mockDbSelect.mockReturnValueOnce({ from });
 		}
-		mockDbExecute.mockResolvedValueOnce(executeResult);
+		const maybeRows = executeResults as unknown[];
+		const normalized = Array.isArray(maybeRows[0])
+			? (executeResults as unknown[][])
+			: [executeResults as unknown[]];
+		mockDbExecute.mockResolvedValueOnce(normalized[0] ?? []);
+		mockDbExecute.mockResolvedValueOnce(normalized[1] ?? []);
 	}
 
 	it('applies 0.20 floor when totalMessages >= 50', async () => {

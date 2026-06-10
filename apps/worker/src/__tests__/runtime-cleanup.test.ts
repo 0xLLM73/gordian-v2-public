@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
 	cleanupQueueJobsForDeletion,
+	cleanupRedisKeysForDeletion,
 	jobDataTargetsDeletedScope,
 	runtimeCleanupQueueDefinitions,
 	runtimeDeletionRedisPatterns,
@@ -17,6 +18,8 @@ describe('runtime cleanup helpers', () => {
 		expect(
 			jobDataTargetsDeletedScope({ nested: { workspaceId: TARGET.workspaceId } }, TARGET),
 		).toBe(true);
+		expect(jobDataTargetsDeletedScope({ workspace_id: TARGET.workspaceId }, TARGET)).toBe(true);
+		expect(jobDataTargetsDeletedScope({ nested: { user_id: TARGET.userId } }, TARGET)).toBe(true);
 		expect(jobDataTargetsDeletedScope({ text: TARGET.userId }, TARGET)).toBe(false);
 		expect(jobDataTargetsDeletedScope({ contactId: TARGET.workspaceId }, TARGET)).toBe(false);
 	});
@@ -63,5 +66,34 @@ describe('runtime cleanup helpers', () => {
 			name: 'telegram-history-import',
 			prefix: '{ai-flow}',
 		});
+	});
+
+	it('uses raw scoped Redis patterns for deletion but redacts them from summaries', async () => {
+		const scannedPatterns: string[] = [];
+		const redis: NonNullable<Parameters<typeof cleanupRedisKeysForDeletion>[1]> = {
+			scan: vi.fn(async (_cursor: string, _match: 'MATCH', pattern: string) => {
+				scannedPatterns.push(pattern);
+				return ['0', [`matched:${scannedPatterns.length}`]] as [string, string[]];
+			}),
+			pipeline: vi.fn(() => ({
+				del: vi.fn(),
+				exec: vi.fn(async () => [[null, 1] as [Error | null, unknown]]),
+			})),
+		};
+
+		const result = await cleanupRedisKeysForDeletion(TARGET, redis);
+
+		expect(scannedPatterns).toEqual(runtimeDeletionRedisPatterns(TARGET));
+		expect(result).toEqual(
+			runtimeDeletionRedisPatterns(TARGET).map((pattern) => ({
+				changed: 1,
+				matched: 1,
+				pattern: pattern
+					.replaceAll(TARGET.workspaceId, '[workspace]')
+					.replaceAll(TARGET.userId, '[user]'),
+			})),
+		);
+		expect(JSON.stringify(result)).not.toContain(TARGET.workspaceId);
+		expect(JSON.stringify(result)).not.toContain(TARGET.userId);
 	});
 });

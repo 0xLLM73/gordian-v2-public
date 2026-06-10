@@ -1,7 +1,11 @@
 'use client';
 
 import { listContactsAction } from '@/app/actions/contacts';
-import { addDealParticipantAction, removeDealParticipantAction } from '@/app/actions/deals';
+import {
+	addDealParticipantAction,
+	removeDealParticipantAction,
+	updateDealParticipantAction,
+} from '@/app/actions/deals';
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -180,5 +184,68 @@ export function RemoveParticipantButton({ participantId }: { participantId: stri
 				</AlertDialogContent>
 			</AlertDialog>
 		</>
+	);
+}
+
+const roleLabels: Record<string, string> = {
+	lead: 'Lead',
+	co_investor: 'Co-investor',
+	advisor: 'Advisor',
+	counterparty: 'Counterparty',
+	introducer: 'Introducer',
+	other: 'Other',
+};
+
+export function ParticipantRoleSelect({
+	participantId,
+	currentRole,
+	label,
+}: {
+	participantId: string;
+	currentRole: string;
+	label: string;
+}) {
+	const [role, setRole] = useState(currentRole);
+	const router = useRouter();
+	const { execute, isExecuting } = useAction(updateDealParticipantAction, {
+		onSuccess: () => {
+			toast.success('Participant role updated');
+			router.refresh();
+		},
+		onError: () => {
+			toast.error('Failed to update participant role');
+			setRole(currentRole);
+		},
+	});
+
+	function handleChange(nextRole: string) {
+		setRole(nextRole);
+		if (nextRole === currentRole) return;
+		execute({
+			participantId,
+			role: nextRole as
+				| 'lead'
+				| 'co_investor'
+				| 'advisor'
+				| 'counterparty'
+				| 'introducer'
+				| 'other',
+		});
+	}
+
+	return (
+		<select
+			aria-label={label}
+			value={role}
+			disabled={isExecuting}
+			onChange={(event) => handleChange(event.target.value)}
+			className="rounded-md border border-input bg-background px-2 py-1 text-xs text-muted-foreground ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:opacity-50"
+		>
+			{Object.entries(roleLabels).map(([value, roleLabel]) => (
+				<option key={value} value={value}>
+					{roleLabel}
+				</option>
+			))}
+		</select>
 	);
 }

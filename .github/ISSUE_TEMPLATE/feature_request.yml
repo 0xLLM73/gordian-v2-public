@@ -8,6 +8,8 @@ body:
     attributes:
       value: |
         Keep requests focused on reusable CRM capabilities, local demo quality, security posture, or Telegram integration boundaries.
+
+        Do not include real Telegram messages, phone numbers, session strings, API keys, `.env` files, database dumps, screenshots with secrets, or provider logs with secrets. Report sensitive security issues privately through the process in `SECURITY.md`.
   - type: textarea
     id: problem
     attributes:
@@ -37,4 +39,13 @@ body:
     id: safety
     attributes:
       label: Safety Considerations
-      description: Note any credential, privacy, tenant-isolation, outbound-send, or user-data risks.
+      description: Note any credential, privacy, data-field, export, logging, AI-provider, tenant-isolation, outbound-send, Telegram import, or user-data risks. Use synthetic examples only.
+      placeholder: |
+        Data fields:
+        Exports:
+        Logs/audit events:
+        AI/provider egress:
+        Telegram/send/import impact:
+        Browser-visible sensitive data:
+    validations:
+      required: true

@@ -1,4 +1,5 @@
 import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockRequireSession = vi.fn();
@@ -20,12 +21,26 @@ vi.mock('next/link', () => ({
 	default: 'a',
 }));
 
-vi.mock('@/components/chat/chat-context-setter', () => ({ ChatContextSetter: 'div' }));
-vi.mock('@/components/contact-tag-editor', () => ({ ContactTagEditor: 'div' }));
-vi.mock('@/components/contacts/contact-detail-shell', () => ({ ContactDetailShell: 'div' }));
-vi.mock('@/components/contacts/contact-summary-panel', () => ({ ContactSummaryPanel: 'div' }));
-vi.mock('@/components/drafts/draft-composer', () => ({ DraftComposer: 'div' }));
-vi.mock('@/components/contact-notes', () => ({ ContactNotes: 'div' }));
+vi.mock('@/components/chat/chat-context-setter', () => ({
+	ChatContextSetter: () => React.createElement('div'),
+}));
+vi.mock('@/components/contact-health-feedback-actions', () => ({
+	ContactHealthFeedbackActions: () => React.createElement('div'),
+}));
+vi.mock('@/components/contact-tag-editor', () => ({
+	ContactTagEditor: () => React.createElement('div'),
+}));
+vi.mock('@/components/contacts/contact-detail-shell', () => ({
+	ContactDetailShell: ({ overviewContent }: { overviewContent: React.ReactNode }) =>
+		React.createElement('div', null, overviewContent),
+}));
+vi.mock('@/components/contacts/contact-summary-panel', () => ({
+	ContactSummaryPanel: () => React.createElement('div'),
+}));
+vi.mock('@/components/drafts/draft-composer', () => ({
+	DraftComposer: () => React.createElement('div'),
+}));
+vi.mock('@/components/contact-notes', () => ({ ContactNotes: () => React.createElement('div') }));
 
 vi.mock('@/lib/workspace', () => ({
 	requireSession: (...args: unknown[]) => mockRequireSession(...args),
@@ -100,5 +115,28 @@ describe('contact detail page authorization', () => {
 		).rejects.toThrow('NEXT_NOT_FOUND');
 
 		expect(mockGetMessagesByContact).not.toHaveBeenCalled();
+	});
+
+	it('renders a stable Telegram contact label instead of the raw Telegram ID', async () => {
+		mockGetAccessibleContact.mockResolvedValue({
+			id: '550e8400-e29b-41d4-a716-446655440001',
+			firstName: 'Alice',
+			lastName: 'Investor',
+			telegramId: '100001',
+			phone: null,
+			email: null,
+			notes: null,
+		});
+		const { default: ContactDetailPage } = await import('@/app/(dashboard)/contacts/[id]/page');
+
+		const element = await ContactDetailPage({
+			params: Promise.resolve({ id: '550e8400-e29b-41d4-a716-446655440001' }),
+		});
+		const html = renderToStaticMarkup(element as React.ReactElement);
+
+		expect(html).toContain('Telegram contact');
+		expect(html).toContain('Linked Telegram contact');
+		expect(html).not.toContain('100001');
+		expect(html).not.toContain('Telegram ID');
 	});
 });
