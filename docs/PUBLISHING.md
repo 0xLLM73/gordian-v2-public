@@ -169,8 +169,11 @@ the project publicly, verify each item in the provider dashboards:
 - local/proxy AI endpoint bearer tokens are rotated if they were ever used;
 - GitHub Actions has no deployment secrets except intentional throwaway demo
   infrastructure;
-- old databases, Redis/Dragonfly snapshots, and backups are deleted or purged
-  with `pnpm purge:secrets`.
+- old databases, Redis/Dragonfly snapshots, and backups are deleted/reset or
+  explicitly accepted as local-only and out of public-release scope;
+- `pnpm purge:secrets` is run where credential/session/runtime-key residue
+  exists, with the understanding that it clears secrets and volatile runtime
+  keys but does not delete imported messages or other workspace data.
 
 Record the final human sign-off in [RELEASE_ATTESTATION.md](RELEASE_ATTESTATION.md).
 Do not paste secret values, raw session strings, database URLs, or customer data

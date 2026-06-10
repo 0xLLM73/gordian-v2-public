@@ -111,7 +111,9 @@ The original bot has been deleted; any future demo must create a new bot and new
 
 ## Purging Runtime Secrets
 
-The repository does not store runtime database rows or deployment-provider secrets, so use the purge script against any old runtime before making the project public:
+The repository does not store runtime database rows or deployment-provider
+secrets. Before making the project public, inspect any old runtime database,
+cache, or backup that may have held real user data.
 
 ```bash
 pnpm purge:secrets -- --dry-run
@@ -120,6 +122,15 @@ pnpm telegram:security-smoke --expect-purged
 ```
 
 The script nulls Telegram MTProto session ciphertext in `accounts`, clears account access/refresh/ID tokens, deletes Better Auth sessions and verification values, clears calendar OAuth tokens, and removes volatile Telegram auth/send/session-lock Redis keys plus local BullMQ/session residue. It refuses nonlocal database/cache targets unless `ALLOW_NONLOCAL_RUNTIME_PURGE=true` is set. It prints row/key counts only and never prints credential values.
+
+`pnpm purge:secrets` is not a full workspace or imported-message deletion
+tool. It does not delete contact, chat, message, memory, knowledge, deal,
+commitment, audit, or other workspace rows. If an old database or backup
+contains real imported Telegram messages or other user data, delete/reset that
+database, delete the workspace through the product's workspace deletion path,
+or explicitly record that the runtime is local-only and out of public-release
+scope. `pnpm telegram:security-smoke --expect-purged` is the stricter check: it
+fails while imported message rows or volatile queue keys remain.
 
 This does not revoke credentials at the provider. Revoke Telegram bot tokens in BotFather, revoke real Telegram user sessions from the Telegram app, rotate any Telegram API app hash that may have leaked, and delete old secrets from GitHub Actions or deployment-provider dashboards.
 

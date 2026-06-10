@@ -119,7 +119,16 @@ pnpm purge:secrets -- --dry-run
 pnpm purge:secrets -- --confirm
 ```
 
-The purge command loads `.env.local` by default and clears Telegram MTProto session ciphertext, account tokens, Better Auth sessions, verification values, calendar OAuth tokens, volatile Telegram Redis keys, and local BullMQ/session residue. It refuses nonlocal DB/cache targets unless `ALLOW_NONLOCAL_RUNTIME_PURGE=true` is set intentionally.
+The purge command loads `.env.local` by default and clears Telegram MTProto
+session ciphertext, account tokens, Better Auth sessions, verification values,
+calendar OAuth tokens, volatile Telegram Redis keys, and local BullMQ/session
+residue. It refuses nonlocal DB/cache targets unless
+`ALLOW_NONLOCAL_RUNTIME_PURGE=true` is set intentionally. It does not delete
+imported message rows, contacts, chats, knowledge, memories, deals,
+commitments, audit rows, or other workspace data. If old runtime databases or
+backups contain real imported data, delete/reset those stores, use the explicit
+workspace deletion path, or record that the local runtime is intentionally out
+of public-release scope.
 
 In-app export is currently a basic CRM JSON export. It includes contacts,
 active commitments, and deals only. It is labeled as such in the API response
@@ -131,7 +140,8 @@ data, embeddings, audit logs, Redis state, or BullMQ queue payloads.
 - Confirm the repository contains no real `.env` files.
 - Confirm GitHub Actions has no deployment secrets for old infrastructure.
 - Confirm old provider dashboards no longer hold `BOT_TOKEN`, `TELEGRAM_API_ID`, or `TELEGRAM_API_HASH`.
-- Confirm old DB/Redis snapshots are deleted or purged.
+- Confirm old DB/Redis snapshots are deleted, reset, fully workspace-deleted,
+  or explicitly accepted as local-only and out of public-release scope.
 - Confirm any example deployment config has new app names, volume names, endpoints, and secrets for the fork.
 - Keep Telegram flags disabled in `.env.example`.
 - Choose the publication target and confirm it is synced to the selected release commit.
