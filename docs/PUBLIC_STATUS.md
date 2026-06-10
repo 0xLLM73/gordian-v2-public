@@ -10,16 +10,17 @@ release owner intentionally makes the mirror public. Treat
 `0xLLM73/gordian-v2-public` only after it has been synced as a sanitized release
 tree and all release gates have been rerun against that checkout.
 
-As of the 2026-06-10 PT release evidence refresh, the mirror remains private and
-is still the selected publication target. The 2026-06-08 mirror evidence is now
-historical: PR #36 merged a sanitized snapshot from source commit
-`fe97ac196451` into mirror `main` at `be88d03dbcc1`, then PR #37 refreshed
-docs-only evidence and moved mirror `main` to `32662038aa69`. Mirror PR #38 now
-syncs the selected source release candidate
-`c110d801ad769040f788820c4c6bfd5dbf56bae0` into the mirror and merged at
-`44e3dd0a4df5de5e6a2a030a5952810f6ccc6555` after GitHub `validate`,
-`demo-smoke`, and `postgres-smoke` passed and required `@thegrovest` review
-landed.
+As of the 2026-06-10 PT post-PR #124 / mirror PR #45 release evidence refresh,
+the mirror remains private and is still the selected publication target. The
+production app-code release candidate remains
+`c110d801ad769040f788820c4c6bfd5dbf56bae0` after source PR #116. Source
+`main` is current through later release evidence, docs, and test-only PRs #117
+through #124 at `04913248`. Mirror PR #38 synced the production app-code
+release candidate into the mirror and merged at
+`44e3dd0a4df5de5e6a2a030a5952810f6ccc6555`; mirror PRs #39 through #45 then
+synced later release evidence, docs, and test-only changes through mirror
+`main` `596ef4b`. Historical mirror PRs #36 and #37 remain evidence for the
+earlier sanitized snapshot and docs-only refresh.
 
 Before publication, ensure the mirror also includes any later source
 evidence-only documentation changes, rerun full-history scanning and release
@@ -27,14 +28,19 @@ gates against the mirror, and keep the mirror private unless that evidence is
 clean. If full-history scanning finds real secrets, private user data, or
 private operational context in the mirror, publish from a fresh sanitized
 repository instead. Do not make the mirror public until provider-side
-rotation/cleanup and final sign-off are complete.
+rotation/cleanup and final sign-off are complete. Batch future attestation
+updates with final sign-off, provider/runtime decisions, publication-setting
+changes, or other meaningful release-gate changes instead of creating one PR
+per evidence checkpoint.
 
 The previous mirror default branch reported 4 moderate Hono advisories because
 it pinned `hono 4.12.18`. Merged mirror `main` now pins `hono 4.12.23`, which
 is above the patched `4.12.21` floor, and passes both `pnpm audit` and `pnpm
-audit --prod`. On 2026-06-10 PT, source and mirror GitHub Dependabot open-alert
-queries returned `[]`, vulnerability-alert endpoints returned 204, and automated
-security fixes were enabled and unpaused.
+audit --prod`. On 2026-06-10 PT, source and mirror GitHub
+vulnerability-alert endpoints returned 204 and automated security fixes were
+enabled and unpaused. Earlier open Dependabot alert queries returned `[]`;
+post-PR #45 alert-list API calls returned 404 while the repos remain private, so
+re-check alerts after the public flip.
 
 ## What Is Not Live
 

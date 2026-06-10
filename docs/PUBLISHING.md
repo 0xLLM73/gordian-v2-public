@@ -8,45 +8,47 @@ that cannot be proven by the repository alone.
 The selected publication target is the synced
 `0xLLM73/gordian-v2-public` mirror.
 
-As of the 2026-06-10 release evidence refresh:
+As of the 2026-06-10 post-PR #124 / mirror PR #45 release evidence refresh:
 
-- `0xLLM73/gordian-v2` is the private source of truth and includes the current
-  release-prep baseline. Source `main` is validated at
+- `0xLLM73/gordian-v2` is the private source of truth. The production app-code
+  release candidate remains
   `c110d801ad769040f788820c4c6bfd5dbf56bae0` after PRs #108 through #116
-  merged.
-- `0xLLM73/gordian-v2` `main` is intended to require pull requests, owner
+  merged; source `main` is now current through later release evidence, docs,
+  and test-only PRs #117 through #124 at `04913248`.
+- Source and mirror `main` branch protections require pull requests, owner
   review, strict `validate` and `demo-smoke` checks, linear history, admin
-  enforcement, conversation resolution, and blocked force pushes/deletions.
+  enforcement, conversation resolution, stale-review dismissal, and blocked
+  force pushes/deletions.
 - `.github/CODEOWNERS` assigns every path to the release-control accounts
   `@0xLLM73` and `@thegrovest`, so public contributors cannot merge changes
-  without owner review once the matching GitHub branch rule is enabled.
+  without owner review.
 - `0xLLM73/gordian-v2-public` remains the selected publication target. It is
-  also private. PR #36 merged a sanitized mirror snapshot from source commit
-  `fe97ac196451` into mirror `main` at `be88d03dbcc1`; PR #37 refreshed
-  docs-only evidence and moved mirror `main` to
-  `32662038aa698ddbf8e740d9c9ba6c6d85dd677e`.
-- Mirror PR #38 synced source commit
+  also private. PR #36 and PR #37 are historical mirror-evidence PRs. Mirror
+  PR #38 synced source commit
   `c110d801ad769040f788820c4c6bfd5dbf56bae0` into the mirror and merged at
   `44e3dd0a4df5de5e6a2a030a5952810f6ccc6555` after GitHub `validate`,
   `demo-smoke`, and `postgres-smoke` passed and required `@thegrovest` review
-  landed. If source changes again before publication, create a later sanitized
-  sync PR and treat PR #38 as historical evidence.
+  landed. Mirror PRs #39 through #45 then synced later release evidence, docs,
+  and test-only source changes through mirror `main` `596ef4b`.
 - The mirror must be synced from the final selected source release commit before
   publication. If a full-history mirror scan finds real secrets, private user
   data, or private operational context, abandon the existing mirror history and
   publish from a fresh sanitized repository instead.
-- Mirror PR #36 passed GitHub `validate`, `demo-smoke`, and `postgres-smoke`
-  before merge. Mirror PR #37 passed GitHub `validate` and `demo-smoke` before
-  merge.
+- Avoid one evidence-only PR per checkpoint. Batch future attestation changes
+  with final sign-off, provider/runtime decisions, publication-setting changes,
+  or other meaningful release-gate changes.
 - A GitHub push warning previously reported 4 moderate Dependabot alerts on the
   mirror default branch. Direct audits identified them as Hono advisories
   against stale mirror `main` lockfile version `hono 4.12.18`; merged mirror
   `main` now pins `hono 4.12.23` and passes `pnpm audit` plus `pnpm audit
-  --prod`. On 2026-06-10 PT, source and mirror open Dependabot alert queries
-  returned `[]`, vulnerability-alert endpoints returned 204, and automated
-  security fixes were enabled and unpaused.
-- The 2026-06-10 source and mirror validation passes completed the repository
-  gates listed in [RELEASE_ATTESTATION.md](RELEASE_ATTESTATION.md), including
+  --prod`. On 2026-06-10 PT, source and mirror vulnerability-alert endpoints
+  returned 204 and automated security fixes were enabled and unpaused. Earlier
+  open Dependabot alert queries returned `[]`; post-PR #45 alert-list API calls
+  returned 404 while the repos remain private, so re-check alerts after the
+  public flip.
+- The 2026-06-10 source and mirror validation passes through source PR #124 and
+  mirror PR #45 completed the repository gates listed in
+  [RELEASE_ATTESTATION.md](RELEASE_ATTESTATION.md), including
   `pnpm audit:open-source`, `pnpm audit`, `pnpm audit --prod`, `pnpm lint`,
   `pnpm typecheck`, `pnpm test`, `pnpm demo:smoke`,
   `pnpm demo:release-smoke`, `pnpm security:local-runtime-smoke`,
@@ -58,9 +60,9 @@ As of the 2026-06-10 release evidence refresh:
   local Postgres and Redis services on the standard ports, so the migrate and
   seed steps were run successfully against local services instead.
 - `pnpm check:publication --repo 0xLLM73/gordian-v2-public` still fails, as it
-  should, while the selected mirror is private. Current blockers are mirror
-  visibility, secret scanning, push protection, and private vulnerability
-  reporting.
+  should, after mirror PR #45 while the selected mirror is private. Current
+  blockers are mirror visibility, secret scanning, push protection, and private
+  vulnerability reporting.
 
 Before launch, verify the latest mirror sync includes any source evidence-only
 changes, verify absolute GitHub links point at `gordian-v2-public`, and run
