@@ -10,16 +10,16 @@ release owner intentionally makes the mirror public. Treat
 `0xLLM73/gordian-v2-public` only after it has been synced as a sanitized release
 tree and all release gates have been rerun against that checkout.
 
-As of the 2026-06-10 PT post-PR #124 / mirror PR #45 release evidence refresh,
+As of the 2026-06-10 PT post-PR #127 / mirror PR #48 release evidence refresh,
 the mirror remains private and is still the selected publication target. The
 production app-code release candidate remains
 `c110d801ad769040f788820c4c6bfd5dbf56bae0` after source PR #116. Source
 `main` is current through later release evidence, docs, and test-only PRs #117
-through #124 at `04913248`. Mirror PR #38 synced the production app-code
+through #127 at `2b09b271`. Mirror PR #38 synced the production app-code
 release candidate into the mirror and merged at
-`44e3dd0a4df5de5e6a2a030a5952810f6ccc6555`; mirror PRs #39 through #45 then
+`44e3dd0a4df5de5e6a2a030a5952810f6ccc6555`; mirror PRs #39 through #48 then
 synced later release evidence, docs, and test-only changes through mirror
-`main` `596ef4b`. Historical mirror PRs #36 and #37 remain evidence for the
+`main` `9deb322`. Historical mirror PRs #36 and #37 remain evidence for the
 earlier sanitized snapshot and docs-only refresh.
 
 Before publication, ensure the mirror also includes any later source

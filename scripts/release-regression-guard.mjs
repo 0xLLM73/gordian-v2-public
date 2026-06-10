@@ -37,10 +37,13 @@ assertIncludes('docs/RELEASE_REGRESSION_SYSTEM.md', regressionDoc, [
 	'pnpm security:derived-data-audit',
 	'pnpm kg:security:audit',
 	'pnpm telegram:security-smoke --allow-missing-credentials --skip-db --skip-redis --skip-worker',
+	'database dumps, ad hoc SQL exports outside Drizzle migrations',
+	'approved deterministic synthetic fixture allowlist',
 	'/settings/audit',
 	'/search',
 	'New AI prompt, embedding flow, model call, retrieval context, or derived-data',
 	'New Telegram send/import/session behavior',
+	'New fixture, dump, screenshot, log, generated report, or dataset artifact',
 ]);
 
 const prTemplate = readRequired('.github/pull_request_template.md');
@@ -48,10 +51,21 @@ assertIncludes('.github/pull_request_template.md', prTemplate, [
 	'## Regression Triggers',
 	'New data model field',
 	'New export path',
+	'New fixture, dump, screenshot/video, log, generated report, or dataset artifact',
 	'New logger, audit event, telemetry event, or error serialization path',
 	'New AI prompt, embedding flow, model call, retrieval context, or derived-data cache',
 	'New Telegram send/import/session behavior',
 	'New browser-visible sensitive data',
+]);
+
+const openSourceAudit = readRequired('scripts/open-source-audit.mjs');
+assertIncludes('scripts/open-source-audit.mjs', openSourceAudit, [
+	'allowedPublicFixtureFiles',
+	'highRiskPublicArtifactRules',
+	'highRiskJsonArtifactPath',
+	'SQL file outside the Drizzle migration allowlist',
+	'public PRs must not include dumps, exports, logs, screenshots, videos, or archives',
+	'fixture outside the approved synthetic fixture allowlist',
 ]);
 
 const publishing = readRequired('docs/PUBLISHING.md');

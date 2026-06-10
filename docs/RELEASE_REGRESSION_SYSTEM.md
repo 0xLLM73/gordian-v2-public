@@ -19,6 +19,12 @@ pnpm test
 pnpm demo:smoke
 ```
 
+`pnpm audit:open-source` also blocks high-risk public artifacts by default:
+database dumps, ad hoc SQL exports outside Drizzle migrations, CSV/TSV/JSONL
+datasets, spreadsheets, logs, HAR/trace files, screenshots, videos, compressed
+archives, generated JSON under export/dump/log/report directories, and fixture
+files outside the approved deterministic synthetic fixture allowlist.
+
 The PR description must name whether the change touches any regression trigger.
 If it does, the author must list the focused extra tests and browser routes used
 to prove the changed surface stayed safe.
@@ -109,6 +115,7 @@ normal CI gate:
 
 - New data model field.
 - New export path or generated file.
+- New fixture, dump, screenshot, log, generated report, or dataset artifact.
 - New logger, audit event, telemetry event, or error serialization path.
 - New external provider integration.
 - New AI prompt, embedding flow, model call, retrieval context, or derived-data

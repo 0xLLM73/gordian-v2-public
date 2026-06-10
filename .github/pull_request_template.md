@@ -4,7 +4,7 @@
 
 ## Public-Release Checklist
 
-- [ ] No real secrets, tokens, session strings, `.env` files, logs, screenshots, database dumps, or old provider URLs were added.
+- [ ] No real secrets, tokens, session strings, `.env` files, logs, screenshots/videos, database dumps, CSV/JSONL exports, non-demo fixtures, or old provider URLs were added.
 - [ ] New or changed logs, errors, console output, and audit events are redacted and do not include raw user text, provider credentials, session material, API keys, Telegram identifiers, DB URLs, Redis URLs, prompts, or embeddings.
 - [ ] New data fields, exports, AI provider calls, Telegram send/import behavior, and browser-visible sensitive data are documented or covered by tests where applicable.
 - [ ] Browser QA was run for any user-visible privacy, settings, Telegram, AI, export, audit, or error-state change.
@@ -21,6 +21,7 @@ Check any trigger this PR touches and list the extra verification in Validation.
 
 - [ ] New data model field.
 - [ ] New export path or generated file.
+- [ ] New fixture, dump, screenshot/video, log, generated report, or dataset artifact.
 - [ ] New logger, audit event, telemetry event, or error serialization path.
 - [ ] New external provider integration.
 - [ ] New AI prompt, embedding flow, model call, retrieval context, or derived-data cache.
