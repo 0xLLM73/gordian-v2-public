@@ -42,8 +42,9 @@ As of the 2026-06-10 release evidence refresh:
   mirror default branch. Direct audits identified them as Hono advisories
   against stale mirror `main` lockfile version `hono 4.12.18`; merged mirror
   `main` now pins `hono 4.12.23` and passes `pnpm audit` plus `pnpm audit
-  --prod`. The Dependabot alerts API still returns 404 while the mirror remains
-  private, so recheck GitHub before publication.
+  --prod`. On 2026-06-10 PT, source and mirror open Dependabot alert queries
+  returned `[]`, vulnerability-alert endpoints returned 204, and automated
+  security fixes were enabled and unpaused.
 - The 2026-06-10 source and mirror validation passes completed the repository
   gates listed in [RELEASE_ATTESTATION.md](RELEASE_ATTESTATION.md), including
   `pnpm audit:open-source`, `pnpm audit`, `pnpm audit --prod`, `pnpm lint`,

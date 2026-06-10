@@ -32,8 +32,9 @@ rotation/cleanup and final sign-off are complete.
 The previous mirror default branch reported 4 moderate Hono advisories because
 it pinned `hono 4.12.18`. Merged mirror `main` now pins `hono 4.12.23`, which
 is above the patched `4.12.21` floor, and passes both `pnpm audit` and `pnpm
-audit --prod`. The GitHub Dependabot alerts API still returns 404 while the
-mirror remains private, so recheck in GitHub before publication.
+audit --prod`. On 2026-06-10 PT, source and mirror GitHub Dependabot open-alert
+queries returned `[]`, vulnerability-alert endpoints returned 204, and automated
+security fixes were enabled and unpaused.
 
 ## What Is Not Live
 
