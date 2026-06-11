@@ -50,7 +50,7 @@
 		"@types/react-dom": "^19.0.0",
 		"@types/three": "^0.160.0",
 		"jsdom": "^29.1.1",
-		"postcss": "^8.5.10",
+		"postcss": "^8.5.15",
 		"shadcn": "^3.8.5",
 		"tailwindcss": "^4.0.0",
 		"typescript": "^5.7.0",
