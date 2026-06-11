@@ -34,6 +34,19 @@ const CONSENT_ITEMS = [
 ];
 const TELEGRAM_LINKING_ENABLED = process.env.NEXT_PUBLIC_TELEGRAM_LINKING_ENABLED === 'true';
 
+const KEY_CUSTODY_ITEMS = [
+	{
+		title: 'Telegram MTProto session key',
+		description:
+			'Protects the saved Telegram login session that lets the local worker reopen Telegram during an explicit import run. In macOS Keychain mode, the database stores the encrypted session plus a marker; the unwrap key stays in Keychain.',
+	},
+	{
+		title: 'Workspace data key',
+		description:
+			'Protects imported messages, contacts, commitments, and local AI-derived workspace data in the database. This is separate from the Telegram session key, so revoking Telegram access does not decrypt or erase already-imported workspace data.',
+	},
+];
+
 export default function ConnectPage() {
 	const router = useRouter();
 	const { phone, setPhone, setNormalizedPhone, consentAcknowledged, setConsentAcknowledged } =
@@ -55,6 +68,9 @@ export default function ConnectPage() {
 					<p className="mt-1 text-sm text-muted-foreground">
 						Run <code className="rounded bg-background px-1 py-0.5">pnpm demo:setup</code>, then
 						sign in as <code className="rounded bg-background px-1 py-0.5">alice@gordian.dev</code>.
+						For a clean local database without sample accounts, run{' '}
+						<code className="rounded bg-background px-1 py-0.5">pnpm bootstrap:local-owner</code>{' '}
+						after migrations, then sign in with the local owner it creates.
 					</p>
 					<Button asChild className="mt-4 w-full">
 						<Link href="/login">Go to sign in</Link>
@@ -126,6 +142,22 @@ export default function ConnectPage() {
 					to save your <code className="rounded bg-background px-1 py-0.5">api_id</code> and{' '}
 					<code className="rounded bg-background px-1 py-0.5">api_hash</code> locally.
 				</p>
+			</div>
+
+			<div className="mb-5 rounded-lg border border-border bg-card p-4">
+				<p className="text-sm font-medium text-foreground">Two local encryption keys</p>
+				<p className="mt-1 text-sm text-muted-foreground">
+					Telegram account access and encrypted workspace data are protected by different local keys
+					with different jobs.
+				</p>
+				<div className="mt-3 grid gap-3">
+					{KEY_CUSTODY_ITEMS.map((item) => (
+						<div key={item.title} className="rounded-md bg-muted/40 p-3">
+							<p className="text-sm font-medium text-foreground">{item.title}</p>
+							<p className="mt-0.5 text-xs leading-5 text-muted-foreground">{item.description}</p>
+						</div>
+					))}
+				</div>
 			</div>
 
 			{error && (

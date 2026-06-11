@@ -13,6 +13,7 @@ const SAFE_ERROR_MESSAGES = new Set([
 	'Invalid input',
 	'Invite not found or already used',
 	'Invite has expired',
+	'Invite email does not match',
 	'Email already has an account',
 	'No linked Telegram account',
 	'Select one Telegram account before starting a large import',

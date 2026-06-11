@@ -65,6 +65,9 @@ The public repository must therefore assume:
    - Public Better Auth email signup is disabled server-side.
    - New users must come through a workspace invite link.
    - Invite acceptance is single-use and rejects already-consumed tokens.
+   - Fresh local databases can create the first workspace owner with
+     `pnpm bootstrap:local-owner`; this is a local-only bootstrap command, not
+     public signup.
 
 6. Separate public CI from private deployment.
    - CI should install, lint, typecheck, and run the full test suite.

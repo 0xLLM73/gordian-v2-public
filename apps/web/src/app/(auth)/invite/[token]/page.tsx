@@ -69,9 +69,7 @@ export default async function InvitePage({ params }: { params: Promise<{ token: 
 		<Card className="shadow-stripe-lg">
 			<CardHeader>
 				<CardTitle className="text-2xl">You&apos;re Invited to Gordian</CardTitle>
-				<p className="text-sm text-muted-foreground">
-					Create an account to get started with your own workspace.
-				</p>
+				<p className="text-sm text-muted-foreground">Create an account to join this workspace.</p>
 			</CardHeader>
 			<CardContent>
 				<InviteSignupForm token={token} email={invite.email} />

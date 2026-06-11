@@ -14,11 +14,13 @@ import * as schema from './schema/index';
 // Without lazy init, the worker's postgres.js client falls back to localhost:5432.
 
 type Db = ReturnType<typeof drizzle<typeof schema>>;
+type PostgresClient = ReturnType<typeof postgres>;
 
 /** AsyncLocalStorage holds the active RLS-scoped transaction when inside withWorkspaceRLS. */
 const rlsTxStore = new AsyncLocalStorage<Db>();
 
 let _db: Db | undefined;
+let _client: PostgresClient | undefined;
 let tempFileLimitWarningEmitted = false;
 
 const DEFAULT_POSTGRES_TEMP_FILE_LIMIT = '256MB';
@@ -38,9 +40,17 @@ function getDb(): Db {
 			max: 10,
 			idle_timeout: 20,
 		});
+		_client = client;
 		_db = drizzle(client, { schema });
 	}
 	return _db;
+}
+
+export async function closeDb() {
+	if (!_client) return;
+	await _client.end({ timeout: 1 });
+	_client = undefined;
+	_db = undefined;
 }
 
 export function getConfiguredPostgresTempFileLimit(): string | null {

@@ -84,9 +84,19 @@ const SENSITIVE_AI_FLOW_JOB_OPTS = {
 	removeOnFail: { count: 50, age: 3600 },
 };
 
-function positiveIntegerEnv(name: string, fallback: number): number {
-	const parsed = Number(process.env[name]);
+function positiveIntegerEnv(
+	name: string,
+	fallback: number,
+	env: NodeJS.ProcessEnv = process.env,
+): number {
+	const parsed = Number(env[name]);
 	return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export function aiExtractionWorkerConcurrency(env: NodeJS.ProcessEnv = process.env): number {
+	const runtime = getCommitmentLlmRuntime(env);
+	const localDefault = runtime.mode === 'local' ? 1 : 3;
+	return positiveIntegerEnv('AI_EXTRACTION_WORKER_CONCURRENCY', localDefault, env);
 }
 
 const LONG_RUNNING_AI_WORKER_OPTS = {
@@ -603,7 +613,7 @@ export const extractionWorker = new Worker(
 
 		return { traceId, variant, stored };
 	}),
-	aiFlowWorkerOptions(3),
+	aiFlowWorkerOptions(aiExtractionWorkerConcurrency()),
 );
 
 /**

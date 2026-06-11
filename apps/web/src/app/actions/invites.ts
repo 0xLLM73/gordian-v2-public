@@ -2,6 +2,8 @@
 
 import { actionClient, authAction, workspaceAction } from '@/lib/safe-action';
 import { track } from '@/lib/track';
+import { getWorkspaceEnvelope } from '@/lib/workspace';
+import { computeBlindIndex, getCurrentKeys, withKeys } from '@repo/crypto';
 import {
 	acceptInvite as dalAccept,
 	createInvite as dalCreate,
@@ -104,6 +106,7 @@ export const inviteSignupAction = actionClient
 					workspaceId: workspaceInvites.workspaceId,
 					role: workspaceInvites.role,
 					expiresAt: workspaceInvites.expiresAt,
+					emailBlindIndex: workspaceInvites.emailBlindIndex,
 				})
 				.from(workspaceInvites)
 				.where(
@@ -116,6 +119,17 @@ export const inviteSignupAction = actionClient
 
 			if (!invite) throw new Error('Invite not found or already used');
 			if (new Date() > invite.expiresAt) throw new Error('Invite has expired');
+			if (invite.emailBlindIndex) {
+				const envelope = await getWorkspaceEnvelope(invite.workspaceId);
+				if (!envelope) throw new Error('Workspace encryption key not found');
+				const submittedEmailBlindIndex = await withKeys(envelope, async () => {
+					const keys = getCurrentKeys();
+					return computeBlindIndex(parsedInput.email, keys.bik);
+				});
+				if (submittedEmailBlindIndex !== invite.emailBlindIndex) {
+					throw new Error('Invite email does not match');
+				}
+			}
 
 			const [existingUser] = await tx
 				.select({ id: users.id })

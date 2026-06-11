@@ -136,6 +136,9 @@
 | `KNOWLEDGE_ANALYSIS_WORKER_LOCK_DURATION_MS` | CONFIG | No | `1800000` | BullMQ lock duration for long-running local KG analysis jobs. Increase if local Qwen/Nomic jobs renew too slowly under load. | local-ai |
 | `KNOWLEDGE_ANALYSIS_WORKER_STALLED_INTERVAL_MS` | CONFIG | No | `60000` | BullMQ stalled-job scan interval for the KG analysis worker. | local-ai |
 | `KNOWLEDGE_ANALYSIS_WORKER_MAX_STALLED_COUNT` | CONFIG | No | `2` | Number of stalled recoveries allowed before BullMQ fails a KG analysis job. | local-ai |
+| `AI_EXTRACTION_WORKER_CONCURRENCY` | CONFIG | No | `1` for local commitment LLMs, `3` otherwise | Caps concurrent commitment extraction jobs. Keep `1` for laptop-friendly local Ollama runs so multiple Qwen calls do not saturate GPU/RAM. | local-ai |
+| `LOCAL_AI_REQUEST_TIMEOUT_MS` | CONFIG | No | `120000` | Timeout for local model HTTP requests before the worker fails/retries the job instead of leaving a model request active indefinitely. | local-ai |
+| `LOCAL_AI_OLLAMA_KEEP_ALIVE` | CONFIG | No | `1m` | Native Ollama chat request `keep_alive` value for local chat/commitment/digest-style calls. Use `default` to omit the field and let Ollama use its own default. | local-ai |
 | `RELATIONSHIP_EXTRACTION_CONCURRENCY` | CONFIG | No | `1` | Local introduction/new-connection scan worker concurrency. Values are capped from 1 to 4; keep `1` for personal-account testing unless local model latency requires more throughput. | local-ai |
 | `RELATIONSHIP_EXTRACTION_WORKER_LOCK_DURATION_MS` | CONFIG | No | `600000` | BullMQ lock duration for local introduction/new-connection relationship extraction jobs. | local-ai |
 | `RELATIONSHIP_EXTRACTION_WORKER_STALLED_INTERVAL_MS` | CONFIG | No | `60000` | BullMQ stalled-job scan interval for relationship extraction jobs. | local-ai |

@@ -1,5 +1,13 @@
 import { getUserWorkspaceId, requireSession } from '@/lib/workspace';
-import { contacts, db, eq, sql } from '@repo/db';
+import {
+	contacts,
+	db,
+	eq,
+	getUserTelegramAccountIds,
+	hasCurrentTelegramConsent,
+	sql,
+} from '@repo/db';
+import { TELEGRAM_CONSENT_VERSION } from '@repo/shared';
 import { redirect } from 'next/navigation';
 
 export default async function OnboardingRedirectPage() {
@@ -9,6 +17,20 @@ export default async function OnboardingRedirectPage() {
 	if (!workspaceId) {
 		// No workspace yet — start from Connect
 		redirect('/onboarding/connect');
+	}
+
+	const telegramAccountIds = await getUserTelegramAccountIds(session.user.id);
+	if (telegramAccountIds.length === 0) {
+		redirect('/onboarding/connect');
+	}
+
+	const hasConsent = await hasCurrentTelegramConsent(
+		session.user.id,
+		workspaceId,
+		TELEGRAM_CONSENT_VERSION,
+	);
+	if (!hasConsent) {
+		redirect('/onboarding/permissions');
 	}
 
 	// Check if contacts exist to determine sync progress

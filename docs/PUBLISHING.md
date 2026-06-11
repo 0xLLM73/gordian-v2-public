@@ -8,13 +8,15 @@ that cannot be proven by the repository alone.
 The selected publication target is the synced
 `0xLLM73/gordian-v2-public` mirror.
 
-As of the 2026-06-10 post-PR #127 / mirror PR #48 release evidence refresh:
+As of the 2026-06-11 PR #131 release-safety refresh:
 
 - `0xLLM73/gordian-v2` is the private source of truth. The production app-code
   release candidate remains
   `c110d801ad769040f788820c4c6bfd5dbf56bae0` after PRs #108 through #116
   merged; source `main` is now current through later release evidence, docs,
-  and test-only PRs #117 through #127 at `2b09b271`.
+  tests, guardrails, onboarding, and local runtime hardening PRs #117 through
+  #130 at `8dfc5725`. PR #131 is the current batched release-safety/onboarding
+  update under review.
 - Source and mirror `main` branch protections require pull requests, owner
   review, strict `validate` and `demo-smoke` checks, linear history, admin
   enforcement, conversation resolution, stale-review dismissal, and blocked
@@ -29,9 +31,10 @@ As of the 2026-06-10 post-PR #127 / mirror PR #48 release evidence refresh:
   `44e3dd0a4df5de5e6a2a030a5952810f6ccc6555` after GitHub `validate`,
   `demo-smoke`, and `postgres-smoke` passed and required `@thegrovest` review
   landed. Mirror PRs #39 through #48 then synced later release evidence, docs,
-  and test-only source changes through mirror `main` `9deb322`.
+  and test-only source changes, and mirror PR #50 batched source PR #128 docs
+  plus source PR #129 artifact guardrails through mirror `main` `7eaae458`.
 - The mirror must be synced from the final selected source release commit before
-  publication. If a full-history mirror scan finds real secrets, private user
+  publication, including source PR #130 and PR #131. If a full-history mirror scan finds real secrets, private user
   data, or private operational context, abandon the existing mirror history and
   publish from a fresh sanitized repository instead.
 - Avoid one evidence-only PR per checkpoint. Batch future attestation changes
@@ -41,13 +44,13 @@ As of the 2026-06-10 post-PR #127 / mirror PR #48 release evidence refresh:
   mirror default branch. Direct audits identified them as Hono advisories
   against stale mirror `main` lockfile version `hono 4.12.18`; merged mirror
   `main` now pins `hono 4.12.23` and passes `pnpm audit` plus `pnpm audit
-  --prod`. On 2026-06-10 PT, source and mirror vulnerability-alert endpoints
+  --prod`. On 2026-06-11 PT, source and mirror vulnerability-alert endpoints
   returned 204 and automated security fixes were enabled and unpaused. Earlier
   open Dependabot alert queries returned `[]`; post-PR #45 alert-list API calls
-  returned 404 while the repos remain private, so re-check alerts after the
+  returned 404 while the repos remain private, so re-check alert lists after the
   public flip.
-- The 2026-06-10 source and mirror validation passes through source PR #127 and
-  mirror PR #48 completed the repository gates listed in
+- The 2026-06-11 source and mirror validation passes through source PR #130,
+  mirror PR #50, and the PR #131 branch completed or refreshed the repository gates listed in
   [RELEASE_ATTESTATION.md](RELEASE_ATTESTATION.md), including
   `pnpm audit:open-source`, `pnpm audit`, `pnpm audit --prod`, `pnpm lint`,
   `pnpm typecheck`, `pnpm test`, `pnpm demo:smoke`,
@@ -60,9 +63,9 @@ As of the 2026-06-10 post-PR #127 / mirror PR #48 release evidence refresh:
   local Postgres and Redis services on the standard ports, so the migrate and
   seed steps were run successfully against local services instead.
 - `pnpm check:publication --repo 0xLLM73/gordian-v2-public` still fails, as it
-  should, after mirror PR #48 while the selected mirror is private. Current
-  blockers are mirror visibility, secret scanning, push protection, and private
-  vulnerability reporting.
+  should, while the selected mirror is private. Current blockers are mirror
+  visibility, secret scanning, push protection, and private vulnerability
+  reporting.
 
 Before launch, verify the latest mirror sync includes any source evidence-only
 changes, verify absolute GitHub links point at `gordian-v2-public`, and run
@@ -95,6 +98,12 @@ pnpm demo:setup
 pnpm demo:smoke
 pnpm security:local-runtime-smoke
 ```
+
+For a non-demo first-user path on a fresh local database, run
+`pnpm bootstrap:local-owner -- --email you@example.local --name "Your Name"` after
+`pnpm db:migrate`, then sign in with that local owner and create additional users
+through workspace invites. This command must remain local-only; it is not a
+replacement for invite-only application signup.
 
 If the public demo is intended to run without hosted AI provider accounts, use
 the documented Nomic path, or Qwen when you only need to prove local KG vectors:

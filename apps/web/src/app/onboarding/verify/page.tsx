@@ -5,11 +5,16 @@ import { useOnboarding } from '@/components/onboarding/onboarding-provider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 type Step = 'code' | '2fa' | 'success';
 const TELEGRAM_LINKING_ENABLED = process.env.NEXT_PUBLIC_TELEGRAM_LINKING_ENABLED === 'true';
+
+function isAlreadyLinkedError(error: string | null) {
+	return Boolean(error?.toLowerCase().includes('already linked'));
+}
 
 export default function VerifyPage() {
 	const router = useRouter();
@@ -102,7 +107,7 @@ export default function VerifyPage() {
 
 				// Auto-advance after success animation
 				setTimeout(() => {
-					window.location.href = '/onboarding/sync';
+					window.location.href = '/onboarding/permissions';
 				}, 1500);
 			} catch (err) {
 				setError(err instanceof Error ? err.message : 'Something went wrong');
@@ -171,6 +176,7 @@ export default function VerifyPage() {
 	}
 
 	if (!hydrated || !normalizedPhone) return null;
+	const alreadyLinked = isAlreadyLinkedError(error);
 
 	return (
 		<OnboardingCard>
@@ -181,10 +187,39 @@ export default function VerifyPage() {
 						We sent a code to your Telegram app for{' '}
 						<span className="font-medium text-foreground">{normalizedPhone}</span>
 					</p>
+					<div className="mt-4 rounded-lg border border-border bg-muted/40 p-4">
+						<p className="text-sm font-medium text-foreground">What this code does</p>
+						<p className="mt-1 text-sm text-muted-foreground">
+							Telegram creates an MTProto login first. Gordian stores that login only after it
+							confirms this Telegram account is allowed to attach to the current Gordian user.
+						</p>
+					</div>
 
 					{error && (
 						<div className="mt-4 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">
-							{error}
+							{alreadyLinked ? (
+								<div className="space-y-2">
+									<p className="font-medium">Telegram login was not attached</p>
+									<p>
+										Telegram accepted the verification code, but Gordian refused to attach this
+										Telegram account because it is already linked to another Gordian user.
+									</p>
+									<p>
+										The temporary local session key was discarded. Because Telegram may still show a
+										new login notification, revoke the new session from Telegram Settings &gt;
+										Devices if you did not intend to create it.
+									</p>
+									<p>
+										Sign in as the Gordian user that already owns this Telegram account, or
+										disconnect that user before linking here.
+									</p>
+									<Button asChild variant="outline" size="sm" className="mt-2">
+										<Link href="/onboarding/connect">Back to phone number</Link>
+									</Button>
+								</div>
+							) : (
+								error
+							)}
 						</div>
 					)}
 

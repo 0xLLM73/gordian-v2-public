@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button';
 import { useAbandonTracking } from '@/hooks/use-abandon-tracking';
 import { useOnboardingSync } from '@/hooks/use-onboarding-sync';
 import { useStepTracking } from '@/hooks/use-step-tracking';
-import { TELEGRAM_CONSENT_VERSION, type TelegramSyncScope } from '@repo/shared';
+import { TELEGRAM_CONSENT_VERSION } from '@repo/shared';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, useTransition } from 'react';
 import {
@@ -29,13 +29,20 @@ type TelegramAccountOption = { key: string; label: string };
 
 export default function SyncPage() {
 	const router = useRouter();
-	const { workspaceId, hydrated, consentAcknowledged, setWorkspaceId, setConsentAcknowledged } =
-		useOnboarding();
+	const {
+		enableAiProcessing,
+		hydrated,
+		consentAcknowledged,
+		setConsentAcknowledged,
+		setEnableAiProcessing,
+		setSyncScope,
+		setWorkspaceId,
+		syncScope,
+		workspaceId,
+	} = useOnboarding();
 	const consentRedirected = useRef(false);
 	const [recoveryChecked, setRecoveryChecked] = useState(false);
 	const [syncStarted, setSyncStarted] = useState(false);
-	const [syncScope, setSyncScope] = useState<TelegramSyncScope>('contacts_only');
-	const [enableAiProcessing, setEnableAiProcessing] = useState(false);
 	const [telegramAccounts, setTelegramAccounts] = useState<TelegramAccountOption[]>([]);
 	const [telegramAccountKey, setTelegramAccountKey] = useState('0');
 	const [telegramImportOnlyMode, setTelegramImportOnlyMode] = useState(false);
@@ -117,18 +124,18 @@ export default function SyncPage() {
 		if (!TELEGRAM_LINKING_ENABLED) return;
 		if (!hydrated || !recoveryChecked || consentAcknowledged || consentRedirected.current) return;
 		consentRedirected.current = true;
-		router.replace('/onboarding/connect');
+		router.replace('/onboarding/permissions');
 	}, [hydrated, recoveryChecked, consentAcknowledged, router]);
 
 	useEffect(() => {
 		if (!AI_SYNC_ENABLED || syncScope === 'contacts_only') {
 			setEnableAiProcessing(false);
 		}
-	}, [syncScope]);
+	}, [setEnableAiProcessing, syncScope]);
 
 	async function startSync() {
 		if (!consentAcknowledged) {
-			router.replace('/onboarding/connect');
+			router.replace('/onboarding/permissions');
 			return;
 		}
 		if (telegramImportOnlyMode) {

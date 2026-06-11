@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { deleteSessionKek, generateWorkspaceWrk } from '@repo/crypto';
 import { accounts, and, createWorkspace, db, eq, sql } from '@repo/db';
 import { TELEGRAM_CONSENT_VERSION } from '@repo/shared';
-import type { BetterAuthPlugin } from 'better-auth';
+import { APIError, type BetterAuthPlugin } from 'better-auth';
 import { createAuthEndpoint } from 'better-auth/api';
 import { z } from 'zod';
 
@@ -23,7 +23,9 @@ async function ensureWorkspace(userId: string): Promise<void> {
 
 		const wsId = crypto.randomUUID();
 		const { encryptedWrk, kmsContext } = await generateWorkspaceWrk(wsId);
-		await createWorkspace(userId, 'My Workspace', encryptedWrk.toString('base64'), kmsContext);
+		await createWorkspace(userId, 'My Workspace', encryptedWrk.toString('base64'), kmsContext, {
+			id: wsId,
+		});
 	} catch (err) {
 		console.error('[auth-telegram] Failed to auto-create workspace for user', err);
 	}
@@ -170,10 +172,9 @@ export const telegramAuthPlugin = {
 			},
 			async (ctx) => {
 				if (!isTelegramLinkingEnabled()) {
-					return ctx.json(
-						{ error: 'Telegram linking is disabled on this deployment.' },
-						{ status: 503 },
-					);
+					throw APIError.fromStatus('SERVICE_UNAVAILABLE', {
+						message: 'Telegram linking is disabled on this deployment.',
+					});
 				}
 
 				const workerUrl = process.env.WORKER_URL;
@@ -200,10 +201,9 @@ export const telegramAuthPlugin = {
 				}
 
 				if (!hasSession) {
-					return ctx.json(
-						{ error: 'Authentication required. Please log in and try again.' },
-						{ status: 401 },
-					);
+					throw APIError.fromStatus('UNAUTHORIZED', {
+						message: 'Authentication required. Please log in and try again.',
+					});
 				}
 
 				let response: Response;
@@ -217,7 +217,7 @@ export const telegramAuthPlugin = {
 						body: JSON.stringify({ phone: ctx.body.phone }),
 					});
 				} catch {
-					return ctx.json({ error: 'Worker unreachable' }, { status: 502 });
+					throw APIError.fromStatus('BAD_GATEWAY', { message: 'Worker unreachable' });
 				}
 
 				if (!response.ok) {
@@ -235,7 +235,9 @@ export const telegramAuthPlugin = {
 					} catch {
 						// Non-JSON response
 					}
-					return ctx.json({ error: errorMsg }, { status: response.status });
+					throw APIError.fromStatus(response.status === 429 ? 'TOO_MANY_REQUESTS' : 'BAD_GATEWAY', {
+						message: errorMsg,
+					});
 				}
 
 				// ASA-003: phoneCodeHash is stored server-side in Redis — not returned to client
@@ -256,10 +258,9 @@ export const telegramAuthPlugin = {
 			},
 			async (ctx) => {
 				if (!isTelegramLinkingEnabled()) {
-					return ctx.json(
-						{ error: 'Telegram linking is disabled on this deployment.' },
-						{ status: 503 },
-					);
+					throw APIError.fromStatus('SERVICE_UNAVAILABLE', {
+						message: 'Telegram linking is disabled on this deployment.',
+					});
 				}
 
 				const workerUrl = process.env.WORKER_URL;
@@ -295,10 +296,9 @@ export const telegramAuthPlugin = {
 				// Without this, an attacker with a valid TG code but no Gordian session
 				// could create or hijack accounts via the phone-number fallthrough path.
 				if (!userId) {
-					return ctx.json(
-						{ error: 'Authentication required. Please log in and try again.' },
-						{ status: 401 },
-					);
+					throw APIError.fromStatus('UNAUTHORIZED', {
+						message: 'Authentication required. Please log in and try again.',
+					});
 				}
 
 				// 2. Verify code via worker — pass userId so KEK is encrypted with correct context
@@ -359,10 +359,9 @@ export const telegramAuthPlugin = {
 					const existing = existingAccounts[0];
 					if (!isTelegramRelinkAllowed(existing.userId, userId)) {
 						await deleteSessionKekBestEffort(userId, sessionKekEncrypted);
-						return ctx.json(
-							{ error: 'Telegram account is already linked to another user.' },
-							{ status: 409 },
-						);
+						throw APIError.fromStatus('CONFLICT', {
+							message: 'Telegram account is already linked to another user.',
+						});
 					}
 
 					try {

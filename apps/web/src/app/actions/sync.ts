@@ -169,6 +169,11 @@ export const getTelegramImportStatusAction = workspaceAction
 	.schema(z.object({}))
 	.action(async ({ ctx }) => {
 		const accountIds = await getUserTelegramAccountIds(ctx.session.user.id);
+		const hasCurrentConsent = await hasCurrentTelegramConsent(
+			ctx.session.user.id,
+			ctx.workspaceId,
+			TELEGRAM_CONSENT_VERSION,
+		);
 		const progress = await getLatestTelegramImportProgressWithHistory(
 			ctx.workspaceId,
 			ctx.session.user.id,
@@ -176,6 +181,7 @@ export const getTelegramImportStatusAction = workspaceAction
 		return {
 			import: serializeImportProgress(progress.latest),
 			lastDataImport: serializeImportProgress(progress.lastDataImport),
+			hasCurrentTelegramConsent: hasCurrentConsent,
 			telegramAccounts: telegramAccountOptions(accountIds),
 		};
 	});

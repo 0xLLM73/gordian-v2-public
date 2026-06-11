@@ -141,6 +141,7 @@ describe('local Qwen commitment extraction', () => {
 		);
 
 		const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as {
+			keep_alive?: string;
 			model: string;
 			messages: Array<{ role: string; content: string }>;
 			format: { type: string; properties: Record<string, unknown> };
@@ -152,6 +153,7 @@ describe('local Qwen commitment extraction', () => {
 		expect(body.format.properties).toHaveProperty('commitments');
 		expect(body.stream).toBe(false);
 		expect(body.think).toBe(false);
+		expect(body.keep_alive).toBe('1m');
 		expect(body.options.num_predict).toBeGreaterThan(0);
 		expect(body.messages[1].content).not.toContain('alice@example.com');
 		expect(body.messages[1].content).not.toContain('+1-555-123-4567');

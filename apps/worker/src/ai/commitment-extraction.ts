@@ -9,6 +9,7 @@ import {
 } from '@repo/shared';
 import { seedBanditPriors, selectPromptVariant } from './bandit';
 import { getHeliconeHeaders, inferWithCache } from './cached-inference';
+import { fetchLocalModel, withOllamaKeepAlive } from './local-model-request';
 import { prefilterEntities } from './prefilter';
 
 /**
@@ -939,32 +940,42 @@ async function runPass1NetLocal(
 
 	const response =
 		runtime.api === 'ollama'
-			? await fetch(runtime.ollamaChatUrl ?? '', {
-					method: 'POST',
-					headers,
-					body: JSON.stringify({
-						model: runtime.model,
-						messages,
-						stream: false,
-						think: false,
-						format: localCommitmentResponseFormat(),
-						options: {
+			? await fetchLocalModel(
+					runtime.ollamaChatUrl ?? '',
+					{
+						method: 'POST',
+						headers,
+						body: JSON.stringify(
+							withOllamaKeepAlive({
+								model: runtime.model,
+								messages,
+								stream: false,
+								think: false,
+								format: localCommitmentResponseFormat(),
+								options: {
+									temperature: 0.1,
+									num_predict: LOCAL_COMMITMENT_MAX_TOKENS,
+								},
+							}),
+						),
+					},
+					{ label: 'Local commitment LLM' },
+				)
+			: await fetchLocalModel(
+					runtime.chatCompletionsUrl ?? '',
+					{
+						method: 'POST',
+						headers,
+						body: JSON.stringify({
+							model: runtime.model,
+							messages,
 							temperature: 0.1,
-							num_predict: LOCAL_COMMITMENT_MAX_TOKENS,
-						},
-					}),
-				})
-			: await fetch(runtime.chatCompletionsUrl ?? '', {
-					method: 'POST',
-					headers,
-					body: JSON.stringify({
-						model: runtime.model,
-						messages,
-						temperature: 0.1,
-						max_tokens: LOCAL_COMMITMENT_MAX_TOKENS,
-						response_format: { type: 'json_object' },
-					}),
-				});
+							max_tokens: LOCAL_COMMITMENT_MAX_TOKENS,
+							response_format: { type: 'json_object' },
+						}),
+					},
+					{ label: 'Local commitment LLM' },
+				);
 
 	if (!response.ok) {
 		const error = await response.text();
