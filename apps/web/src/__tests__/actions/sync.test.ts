@@ -371,6 +371,7 @@ describe('telegram history import actions', () => {
 			messagesInserted: 4108,
 			pagesFetched: 46,
 		});
+		expect(result?.data?.hasCurrentTelegramConsent).toBe(true);
 		expect(result?.data?.telegramAccounts).toEqual([{ key: '0', label: 'Telegram account 1' }]);
 	});
 });

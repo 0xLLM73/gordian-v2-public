@@ -99,7 +99,7 @@ export function InviteManager() {
 							onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEmail(e.target.value)}
 						/>
 						<p className="text-xs text-muted-foreground">
-							Pre-fills the email on the signup form. Leave blank for an open invite.
+							Restricts signup to this email. Leave blank for an open invite link.
 						</p>
 					</div>
 

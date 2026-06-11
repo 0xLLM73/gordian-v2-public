@@ -1,23 +1,31 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TelegramImportManagerCard } from './telegram-import-manager-card';
 
 const mockGetTelegramImportStatusAction = vi.hoisted(() => vi.fn());
+const mockStartTelegramImportAction = vi.hoisted(() => vi.fn());
+const mockSaveConsentAction = vi.hoisted(() => vi.fn());
 
 vi.stubGlobal('React', React);
+
+vi.mock('@/app/actions/calibration', () => ({
+	saveConsentAction: mockSaveConsentAction,
+}));
 
 vi.mock('@/app/actions/sync', () => ({
 	cancelTelegramImportAction: vi.fn(),
 	getTelegramImportStatusAction: mockGetTelegramImportStatusAction,
 	pauseTelegramImportAction: vi.fn(),
 	resumeTelegramImportAction: vi.fn(),
-	startTelegramImportAction: vi.fn(),
+	startTelegramImportAction: mockStartTelegramImportAction,
 }));
 
 describe('TelegramImportManagerCard', () => {
 	beforeEach(() => {
 		mockGetTelegramImportStatusAction.mockReset();
+		mockStartTelegramImportAction.mockReset();
+		mockSaveConsentAction.mockReset();
 	});
 
 	it('shows large import safety status before any import starts', async () => {
@@ -39,6 +47,53 @@ describe('TelegramImportManagerCard', () => {
 		expect(screen.getByText('Required')).toBeTruthy();
 		expect(screen.getByText(/backfill older history/i)).toBeTruthy();
 		expect(screen.getByText(/run ai while importing/i)).toBeTruthy();
+	});
+
+	it('points users to the permissions review when import consent is missing', async () => {
+		mockGetTelegramImportStatusAction.mockResolvedValue({
+			data: { hasCurrentTelegramConsent: false },
+		});
+
+		render(React.createElement(TelegramImportManagerCard));
+
+		await waitFor(() => {
+			expect(screen.getByText(/permissions have not been saved/i)).toBeTruthy();
+		});
+		expect(screen.getByRole('link', { name: 'review permissions' }).getAttribute('href')).toBe(
+			'/onboarding/permissions',
+		);
+	});
+
+	it('saves Telegram import consent before starting a large import', async () => {
+		mockGetTelegramImportStatusAction.mockResolvedValue({ data: {} });
+		mockSaveConsentAction.mockResolvedValue({ data: { saved: true } });
+		mockStartTelegramImportAction.mockResolvedValue({
+			data: { importRunId: 'import-1', status: 'queued' },
+		});
+
+		render(React.createElement(TelegramImportManagerCard));
+
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: /start large import/i })).toBeTruthy();
+		});
+		fireEvent.click(screen.getByLabelText(/start a local large import/i));
+		fireEvent.click(screen.getByLabelText(/run ai while importing/i));
+		fireEvent.click(screen.getByRole('button', { name: /start large import/i }));
+
+		await waitFor(() => {
+			expect(mockSaveConsentAction).toHaveBeenCalledWith({
+				consentDataProcessing: true,
+				consentAiAnalysis: true,
+				consentTelegramAccess: true,
+				consentVersion: 2,
+			});
+		});
+		expect(mockStartTelegramImportAction).toHaveBeenCalledWith({
+			confirmLargeImport: true,
+			telegramAccountKey: '0',
+			runAiDuringImport: true,
+			backfillOlderHistory: false,
+		});
 	});
 
 	it('explains when the latest completed import is a no-op after a real data import', async () => {

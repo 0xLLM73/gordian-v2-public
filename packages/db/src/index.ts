@@ -1,4 +1,5 @@
 export {
+	closeDb,
 	db,
 	getConfiguredPostgresTempFileLimit,
 	withPostgresTempFileLimit,

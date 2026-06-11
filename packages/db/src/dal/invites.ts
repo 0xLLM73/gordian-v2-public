@@ -119,11 +119,13 @@ export async function createWorkspace(
 	name: string,
 	encryptedWrk: string,
 	kmsContext: Record<string, string>,
+	opts?: { id?: string },
 ) {
 	return db.transaction(async (tx) => {
 		const [workspace] = await tx
 			.insert(workspaces)
 			.values({
+				...(opts?.id ? { id: opts.id } : {}),
 				name,
 				ownerId: userId,
 				encryptedWrk,

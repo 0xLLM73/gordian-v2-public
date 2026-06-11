@@ -5,7 +5,8 @@ import { cn } from '@/lib/utils';
 const STEPS = [
 	{ key: 'connect', label: 'Connect' },
 	{ key: 'verify', label: 'Verify' },
-	{ key: 'sync', label: 'Sync' },
+	{ key: 'permissions', label: 'Permissions' },
+	{ key: 'sync', label: 'Import' },
 	{ key: 'what-matters', label: 'Priorities' },
 	{ key: 'calibrate', label: 'Voice' },
 	{ key: 'first-look', label: 'Explore' },
@@ -16,17 +17,18 @@ type StepKey = (typeof STEPS)[number]['key'];
 const STEP_ORDER: Record<StepKey, number> = {
 	connect: 0,
 	verify: 1,
-	sync: 2,
-	'what-matters': 3,
-	calibrate: 4,
-	'first-look': 5,
+	permissions: 2,
+	sync: 3,
+	'what-matters': 4,
+	calibrate: 5,
+	'first-look': 6,
 };
 
 export function StepIndicator({ activeStep }: { activeStep: StepKey }) {
 	const activeIndex = STEP_ORDER[activeStep] ?? 0;
 
 	return (
-		<div className="flex items-center justify-center gap-2">
+		<div className="flex max-w-full items-center justify-center gap-1 overflow-x-auto sm:gap-2">
 			{STEPS.map((step, i) => {
 				const isCompleted = i < activeIndex;
 				const isActive = i === activeIndex;
@@ -36,7 +38,7 @@ export function StepIndicator({ activeStep }: { activeStep: StepKey }) {
 						{i > 0 && (
 							<div
 								className={cn(
-									'h-px w-8 transition-colors duration-300',
+									'h-px w-4 transition-colors duration-300 sm:w-8',
 									isCompleted ? 'bg-success' : 'bg-border',
 								)}
 							/>
@@ -52,7 +54,7 @@ export function StepIndicator({ activeStep }: { activeStep: StepKey }) {
 							/>
 							<span
 								className={cn(
-									'text-[10px] font-medium transition-colors duration-300',
+									'hidden text-[10px] font-medium transition-colors duration-300 sm:block',
 									isActive ? 'text-foreground' : 'text-muted-foreground',
 								)}
 							>

@@ -10,6 +10,28 @@ vi.mock('better-auth/crypto', () => ({
 	hashPassword: mockHashPassword,
 }));
 
+const mockGetWorkspaceEnvelope = vi.hoisted(() =>
+	vi.fn(() =>
+		Promise.resolve({
+			encryptedWrk: Buffer.from('mock'),
+			kmsContext: { WorkspaceID: '550e8400-e29b-41d4-a716-446655440000' },
+			wrkVersion: 1,
+		}),
+	),
+);
+vi.mock('@/lib/workspace', () => ({
+	getWorkspaceEnvelope: mockGetWorkspaceEnvelope,
+}));
+
+const mockComputeBlindIndex = vi.hoisted(() =>
+	vi.fn((value: string) => `bidx:${value.toLowerCase().trim()}`),
+);
+vi.mock('@repo/crypto', () => ({
+	computeBlindIndex: mockComputeBlindIndex,
+	getCurrentKeys: vi.fn(() => ({ bik: Buffer.from('mock-bik') })),
+	withKeys: vi.fn((_envelope: unknown, fn: () => unknown) => fn()),
+}));
+
 const mockSafeAction = vi.hoisted(() => {
 	const makeActionClient = () => ({
 		schema: () => ({
@@ -74,6 +96,7 @@ vi.mock('@repo/db', () => ({
 	},
 	workspaceInvites: {
 		acceptedAt: 'accepted_at',
+		emailBlindIndex: 'email_blind_index',
 		expiresAt: 'expires_at',
 		id: 'id',
 		role: 'role',
@@ -104,6 +127,7 @@ describe('inviteSignupAction', () => {
 				workspaceId: WORKSPACE_ID,
 				role: 'member',
 				expiresAt: new Date(Date.now() + 60_000),
+				emailBlindIndex: null,
 			},
 		];
 		existingUserRows = [];
@@ -146,6 +170,55 @@ describe('inviteSignupAction', () => {
 		expect(result?.serverError).toBe('Invite not found or already used');
 		expect(mockHashPassword).not.toHaveBeenCalled();
 		expect(mockInsert).not.toHaveBeenCalled();
+	});
+
+	it('rejects email-scoped invites when the submitted email does not match', async () => {
+		const { inviteSignupAction } = await import('@/app/actions/invites');
+		inviteRows = [
+			{
+				id: INVITE_ID,
+				workspaceId: WORKSPACE_ID,
+				role: 'member',
+				expiresAt: new Date(Date.now() + 60_000),
+				emailBlindIndex: 'bidx:invited@example.com',
+			},
+		];
+
+		const result = await inviteSignupAction({
+			token: INVITE_UUID,
+			name: 'Invited User',
+			email: 'different@example.com',
+			password: 'long-enough',
+		});
+
+		expect(result?.serverError).toBe('Invite email does not match');
+		expect(mockGetWorkspaceEnvelope).toHaveBeenCalledWith(WORKSPACE_ID);
+		expect(mockHashPassword).not.toHaveBeenCalled();
+		expect(mockInsert).not.toHaveBeenCalled();
+	});
+
+	it('accepts email-scoped invites when the submitted email matches the blind index', async () => {
+		const { inviteSignupAction } = await import('@/app/actions/invites');
+		inviteRows = [
+			{
+				id: INVITE_ID,
+				workspaceId: WORKSPACE_ID,
+				role: 'member',
+				expiresAt: new Date(Date.now() + 60_000),
+				emailBlindIndex: 'bidx:invited@example.com',
+			},
+		];
+
+		const result = await inviteSignupAction({
+			token: INVITE_UUID,
+			name: 'Invited User',
+			email: ' Invited@Example.com ',
+			password: 'long-enough',
+		});
+
+		expect(result?.data).toEqual({ workspaceId: WORKSPACE_ID, userId: USER_ID });
+		expect(mockComputeBlindIndex).toHaveBeenCalledWith(' Invited@Example.com ', expect.any(Buffer));
+		expect(mockHashPassword).toHaveBeenCalledWith('long-enough');
 	});
 
 	it('enforces invite-only signup by refusing existing account emails', async () => {

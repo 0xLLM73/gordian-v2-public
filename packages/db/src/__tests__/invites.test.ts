@@ -67,6 +67,38 @@ describe('invites DAL', () => {
 		mockReturning.mockResolvedValue([{ id: SAFE_INVITE.id }]);
 	});
 
+	describe('createWorkspace', () => {
+		it('persists an explicit workspace id so key context matches the stored workspace', async () => {
+			mockReturning.mockResolvedValueOnce([{ id: 'ws-explicit', name: 'Secure Workspace' }]);
+
+			const { createWorkspace } = await import('../dal/invites');
+			const result = await createWorkspace(
+				'user-1',
+				'Secure Workspace',
+				'encrypted-wrk',
+				{ WorkspaceID: 'ws-explicit' },
+				{ id: 'ws-explicit' },
+			);
+
+			expect(result).toEqual(expect.objectContaining({ id: 'ws-explicit' }));
+			expect(mockInsertValues).toHaveBeenNthCalledWith(
+				1,
+				expect.objectContaining({
+					id: 'ws-explicit',
+					name: 'Secure Workspace',
+					ownerId: 'user-1',
+					encryptedWrk: 'encrypted-wrk',
+					kmsContext: { WorkspaceID: 'ws-explicit' },
+				}),
+			);
+			expect(mockInsertValues).toHaveBeenNthCalledWith(2, {
+				workspaceId: 'ws-explicit',
+				userId: 'user-1',
+				role: 'admin',
+			});
+		});
+	});
+
 	describe('acceptInvite', () => {
 		it('returns invite without encrypted fields (SEC-ENC-509)', async () => {
 			mockLimit.mockResolvedValueOnce([SAFE_INVITE]);

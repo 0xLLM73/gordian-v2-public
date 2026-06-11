@@ -15,6 +15,7 @@ import {
 	formatKnowledgeEmbeddingInput,
 	getKnowledgeEmbeddingRuntime,
 } from '@repo/shared';
+import { fetchLocalModel } from './local-model-request';
 
 export interface EmbeddingResult {
 	embedding: number[];
@@ -114,7 +115,7 @@ async function requestEmbeddings(
 	};
 	if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
-	const response = await fetch(runtime.embeddingsUrl, {
+	const requestInit: RequestInit = {
 		method: 'POST',
 		headers,
 		body: JSON.stringify({
@@ -122,7 +123,10 @@ async function requestEmbeddings(
 			input,
 			dimensions: runtime.dimensions,
 		}),
-	});
+	};
+	const response = runtime.isLocal
+		? await fetchLocalModel(runtime.embeddingsUrl, requestInit, { label: 'Local embedding model' })
+		: await fetch(runtime.embeddingsUrl, requestInit);
 
 	if (!response.ok) {
 		const error = await response.text();

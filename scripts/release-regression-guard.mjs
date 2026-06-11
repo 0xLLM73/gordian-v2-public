@@ -72,6 +72,13 @@ const publishing = readRequired('docs/PUBLISHING.md');
 assertIncludes('docs/PUBLISHING.md', publishing, [
 	'docs/RELEASE_REGRESSION_SYSTEM.md',
 	'release regression system',
+	'pnpm bootstrap:local-owner',
+]);
+
+const publicStatus = readRequired('docs/PUBLIC_STATUS.md');
+assertIncludes('docs/PUBLIC_STATUS.md', publicStatus, [
+	'pnpm bootstrap:local-owner',
+	'Public email signup is disabled',
 ]);
 
 const attestation = readRequired('docs/RELEASE_ATTESTATION.md');
@@ -92,6 +99,18 @@ assertIncludes('.github/workflows/ci.yml', ci, [
 	'pnpm typecheck',
 	'pnpm test',
 	'demo-smoke.spec.ts',
+]);
+
+const packageJson = readRequired('package.json');
+assertIncludes('package.json', packageJson, [
+	'"bootstrap:local-owner": "tsx scripts/bootstrap-local-owner.ts"',
+]);
+
+const localOwnerBootstrap = readRequired('scripts/bootstrap-local-owner.ts');
+assertIncludes('scripts/bootstrap-local-owner.ts', localOwnerBootstrap, [
+	'Local owner bootstrap refuses nonlocal DATABASE_URL',
+	'shouldRefuseForExistingUsers',
+	'createWorkspace(',
 ]);
 
 const telegramSecuritySmoke = readRequired('scripts/telegram-security-smoke.mjs');

@@ -8,6 +8,7 @@
 		"ai:egress:audit": "node scripts/ai-egress-inventory-audit.mjs",
 		"build": "turbo build",
 		"check:publication": "node scripts/check-publication-readiness.mjs",
+		"bootstrap:local-owner": "tsx scripts/bootstrap-local-owner.ts",
 		"db:migrate": "pnpm --filter @repo/db migrate",
 		"dev": "turbo dev",
 		"demo:guard": "node scripts/local-runtime-guard.mjs",

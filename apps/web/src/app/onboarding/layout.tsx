@@ -7,11 +7,12 @@ import type { ReactNode } from 'react';
 
 const STEP_MAP: Record<
 	string,
-	'connect' | 'verify' | 'sync' | 'what-matters' | 'calibrate' | 'first-look'
+	'connect' | 'verify' | 'permissions' | 'sync' | 'what-matters' | 'calibrate' | 'first-look'
 > = {
 	'/onboarding': 'connect',
 	'/onboarding/connect': 'connect',
 	'/onboarding/verify': 'verify',
+	'/onboarding/permissions': 'permissions',
 	'/onboarding/sync': 'sync',
 	'/onboarding/what-matters': 'what-matters',
 	'/onboarding/calibrate': 'calibrate',

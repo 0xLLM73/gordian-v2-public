@@ -1,5 +1,10 @@
 'use client';
 
+import {
+	DEFAULT_TELEGRAM_SYNC_SCOPE,
+	TELEGRAM_SYNC_SCOPES,
+	type TelegramSyncScope,
+} from '@repo/shared';
 import { type ReactNode, createContext, useCallback, useContext, useEffect, useState } from 'react';
 
 interface OnboardingState {
@@ -7,6 +12,8 @@ interface OnboardingState {
 	normalizedPhone: string;
 	consentAcknowledged: boolean;
 	workspaceId: string | null;
+	syncScope: TelegramSyncScope;
+	enableAiProcessing: boolean;
 }
 
 interface OnboardingContextValue extends OnboardingState {
@@ -15,6 +22,8 @@ interface OnboardingContextValue extends OnboardingState {
 	setNormalizedPhone: (phone: string) => void;
 	setConsentAcknowledged: (acknowledged: boolean) => void;
 	setWorkspaceId: (id: string) => void;
+	setSyncScope: (scope: TelegramSyncScope) => void;
+	setEnableAiProcessing: (enabled: boolean) => void;
 	clearOnboarding: () => void;
 }
 
@@ -27,7 +36,14 @@ function loadState(): Partial<OnboardingState> {
 	try {
 		const raw = sessionStorage.getItem(STORAGE_KEY);
 		if (!raw) return {};
-		return JSON.parse(raw) as Partial<OnboardingState>;
+		const parsed = JSON.parse(raw) as Partial<OnboardingState>;
+		if (parsed.syncScope && !TELEGRAM_SYNC_SCOPES.includes(parsed.syncScope as TelegramSyncScope)) {
+			parsed.syncScope = DEFAULT_TELEGRAM_SYNC_SCOPE;
+		}
+		if (typeof parsed.enableAiProcessing !== 'boolean') {
+			parsed.enableAiProcessing = false;
+		}
+		return parsed;
 	} catch {
 		return {};
 	}
@@ -48,6 +64,8 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
 		normalizedPhone: '',
 		consentAcknowledged: false,
 		workspaceId: null,
+		syncScope: DEFAULT_TELEGRAM_SYNC_SCOPE,
+		enableAiProcessing: false,
 	});
 	const [hydrated, setHydrated] = useState(false);
 
@@ -77,6 +95,14 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
 		(workspaceId: string) => setState((prev) => ({ ...prev, workspaceId })),
 		[],
 	);
+	const setSyncScope = useCallback(
+		(syncScope: TelegramSyncScope) => setState((prev) => ({ ...prev, syncScope })),
+		[],
+	);
+	const setEnableAiProcessing = useCallback(
+		(enableAiProcessing: boolean) => setState((prev) => ({ ...prev, enableAiProcessing })),
+		[],
+	);
 	const clearOnboarding = useCallback(() => {
 		if (typeof window !== 'undefined') {
 			sessionStorage.removeItem(STORAGE_KEY);
@@ -86,6 +112,8 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
 			normalizedPhone: '',
 			consentAcknowledged: false,
 			workspaceId: null,
+			syncScope: DEFAULT_TELEGRAM_SYNC_SCOPE,
+			enableAiProcessing: false,
 		});
 	}, []);
 
@@ -98,6 +126,8 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
 				setNormalizedPhone,
 				setConsentAcknowledged,
 				setWorkspaceId,
+				setSyncScope,
+				setEnableAiProcessing,
 				clearOnboarding,
 			}}
 		>

@@ -103,6 +103,20 @@ pnpm dev
 
 `pnpm demo:smoke` installs the Chromium test browser if needed and runs the seeded demo Playwright smoke test with the same local-safe environment used by CI.
 
+For a fresh local database without sample accounts, create the first invite-capable
+workspace owner explicitly:
+
+```bash
+pnpm db:migrate
+pnpm bootstrap:local-owner -- --email you@example.local --name "Your Name"
+pnpm --dir apps/web dev
+```
+
+`pnpm bootstrap:local-owner` refuses nonlocal database targets and refuses to run
+after users already exist unless `--allow-existing-users` is passed for an
+intentional local repair. Public signup remains disabled; additional users still
+come through workspace invite links.
+
 To test a personal Telegram account locally on macOS, create a dedicated
 Telegram API app at [my.telegram.org/apps](https://my.telegram.org/apps), then
 run:

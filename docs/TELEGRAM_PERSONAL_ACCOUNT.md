@@ -122,11 +122,18 @@ switches providers and configures AWS credentials.
 1. Enable Telegram Two-Step Verification in Telegram.
 2. Start Gordian locally with local Postgres and local Redis only.
 3. Connect Telegram from the onboarding flow.
-4. Choose the smallest useful import scope. Start with `Contacts only`.
-5. Leave AI analysis off unless you understand which configured providers may receive derived message content. For OpenAI embeddings, prefer `pnpm openai:setup` so the API key lives in macOS Keychain.
+4. Review the onboarding permissions screen. Save Telegram read access and local
+   data processing consent, then opt into AI analysis only if you understand
+   which configured providers may receive derived message content. For OpenAI
+   embeddings, prefer `pnpm openai:setup` so the API key lives in macOS Keychain.
+5. Choose the smallest useful import scope when contact sync is allowed. In
+   import-only personal mode, continue to the dashboard history import instead.
 6. Confirm the settings page shows `Read-only`.
 
-The onboarding flow does not start contact or message sync automatically after verification. The user must choose an import scope and click `Start selected import`.
+The onboarding flow does not start contact or message sync automatically after
+verification. The user must save permissions and then choose an import path.
+See [Onboarding Permissions](./ONBOARDING_PERMISSIONS.md) for the consent,
+Touch ID, and macOS local database explanations shown during onboarding.
 
 ## What The Default Personal Mode Prevents
 

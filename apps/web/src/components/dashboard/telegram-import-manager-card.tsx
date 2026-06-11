@@ -1,5 +1,6 @@
 'use client';
 
+import { saveConsentAction } from '@/app/actions/calibration';
 import {
 	cancelTelegramImportAction,
 	getTelegramImportStatusAction,
@@ -9,6 +10,7 @@ import {
 } from '@/app/actions/sync';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { TELEGRAM_CONSENT_VERSION } from '@repo/shared';
 import {
 	AlertTriangle,
 	CheckCircle2,
@@ -19,6 +21,7 @@ import {
 	ShieldCheck,
 	Square,
 } from 'lucide-react';
+import Link from 'next/link';
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 
 type ImportStatus =
@@ -135,6 +138,7 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 	const [largeImportConfirmed, setLargeImportConfirmed] = useState(false);
 	const [runAiDuringImport, setRunAiDuringImport] = useState(false);
 	const [backfillOlderHistory, setBackfillOlderHistory] = useState(false);
+	const [hasCurrentTelegramConsent, setHasCurrentTelegramConsent] = useState(true);
 	const [telegramAccounts, setTelegramAccounts] = useState<TelegramAccountOption[]>([]);
 	const [telegramAccountKey, setTelegramAccountKey] = useState('0');
 
@@ -156,6 +160,9 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 			setLastDataImport(result.data.lastDataImport as ImportProgress);
 		} else {
 			setLastDataImport(null);
+		}
+		if (typeof result?.data?.hasCurrentTelegramConsent === 'boolean') {
+			setHasCurrentTelegramConsent(result.data.hasCurrentTelegramConsent);
 		}
 		setLoading(false);
 	}, []);
@@ -214,6 +221,25 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 		}
 	}
 
+	async function startLargeImport() {
+		const consentResult = await saveConsentAction({
+			consentDataProcessing: true,
+			consentAiAnalysis: runAiDuringImport,
+			consentTelegramAccess: true,
+			consentVersion: TELEGRAM_CONSENT_VERSION,
+		});
+		if (!consentResult?.data?.saved) {
+			throw new Error(consentResult?.serverError ?? 'Consent could not be saved');
+		}
+
+		return startTelegramImportAction({
+			confirmLargeImport: true,
+			telegramAccountKey,
+			runAiDuringImport,
+			backfillOlderHistory,
+		});
+	}
+
 	const status = progress?.status ?? 'idle';
 	const busy = loading || mutating;
 
@@ -246,6 +272,19 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 				{error ? (
 					<div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
 						{error}
+					</div>
+				) : null}
+				{!hasCurrentTelegramConsent ? (
+					<div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+						Permissions have not been saved for this workspace yet. Starting an import saves them
+						first, or you can{' '}
+						<Link
+							href="/onboarding/permissions"
+							className="font-medium underline underline-offset-2"
+						>
+							review permissions
+						</Link>
+						.
 					</div>
 				) : null}
 				{visibleImportError ? (
@@ -371,16 +410,7 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 					<Button
 						type="button"
 						size="sm"
-						onClick={() =>
-							mutate(() =>
-								startTelegramImportAction({
-									confirmLargeImport: true,
-									telegramAccountKey,
-									runAiDuringImport,
-									backfillOlderHistory,
-								}),
-							)
-						}
+						onClick={() => mutate(startLargeImport)}
 						disabled={!canStart || busy}
 					>
 						{busy && canStart ? (
