@@ -13,7 +13,7 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@aws-sdk/client-kms": "^3.700",
+		"@aws-sdk/client-kms": "^3.1066",
 		"jose": "^5.9.0"
 	},
 	"devDependencies": {
