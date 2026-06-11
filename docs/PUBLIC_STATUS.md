@@ -1,50 +1,45 @@
 # Public Status
 
-Gordian v2 is being prepared to be shared as an experimental, unhosted codebase.
+Gordian v2 is shared as an experimental, unhosted codebase.
 
 ## Repository Visibility
 
-The source repository and selected publication mirror are private until a
-release owner intentionally makes the mirror public. Treat
-`0xLLM73/gordian-v2` as the current source of truth. Publish
-`0xLLM73/gordian-v2-public` only after it has been synced as a sanitized release
-tree and all release gates have been rerun against that checkout.
+The source repository is private. The selected publication mirror is public
+after a release owner intentionally made it public on 2026-06-11 PT. Treat
+`0xLLM73/gordian-v2` as the private source of truth and
+`0xLLM73/gordian-v2-public` as the sanitized public release tree.
 
-As of the 2026-06-11 PT PR #131 release-safety refresh,
-the mirror remains private and is still the selected publication target. The
+As of the 2026-06-11 PT public mirror flip,
+the mirror is public and is still the selected publication target. The
 production app-code release candidate remains
-`c110d801ad769040f788820c4c6bfd5dbf56bae0` after source PR #116. Source
-`main` is current through later release evidence, docs, tests, guardrails,
-onboarding, and local runtime hardening PRs #117 through #130 at `8dfc5725`.
-PR #131 is the current batched release-safety/onboarding update under review.
+`c110d801ad769040f788820c4c6bfd5dbf56bae0` after source PR #116. The
+public-flip source baseline included later release evidence, docs, tests,
+guardrails, onboarding, and local runtime hardening PRs #117 through #131 at
+`102646b4`.
 Mirror PR #38 synced the production app-code release candidate into the mirror and merged at
 `44e3dd0a4df5de5e6a2a030a5952810f6ccc6555`; mirror PRs #39 through #48 then
 synced later release evidence, docs, and test-only changes, and mirror PR #50
 batched source PR #128 docs plus source PR #129 artifact guardrails through
-mirror `main` `7eaae458`. Historical mirror PRs #36 and #37 remain evidence for the
-earlier sanitized snapshot and docs-only refresh.
+mirror `main` `7eaae458`; mirror PR #51 synced source PR #130 and source PR
+#131 through mirror `main` `0d217f4`. Historical mirror PRs #36 and #37 remain
+evidence for the earlier sanitized snapshot and docs-only refresh.
 
-Before publication, ensure the mirror also includes source PR #130 and PR #131,
-rerun full-history scanning and release
-gates against the mirror, and keep the mirror private unless that evidence is
-clean. If full-history scanning finds real secrets, private user data, or
-private operational context in the mirror, publish from a fresh sanitized
-repository instead. Do not make the mirror public until provider-side
-rotation/cleanup and final sign-off are complete. Batch future attestation
-updates with final sign-off, provider/runtime decisions, publication-setting
-changes, or other meaningful release-gate changes instead of creating one PR
-per evidence checkpoint.
+Before public visibility, the full-depth mirror checkout matched source `main`,
+`pnpm audit:open-source` passed with full-history and working-tree `gitleaks`,
+and `pnpm release:regression-guard` passed. After public visibility, secret
+scanning and push protection were enabled, private vulnerability reporting was
+enabled, open secret-scanning alerts returned `[]`, open Dependabot alerts
+returned `[]`, and `pnpm check:publication --repo 0xLLM73/gordian-v2-public`
+passed. If future full-history scanning finds real secrets, private user data,
+or private operational context in a mirror, publish from a fresh sanitized
+repository instead.
 
 The previous mirror default branch reported 4 moderate Hono advisories because
 it pinned `hono 4.12.18`. Merged mirror `main` now pins `hono 4.12.23`, which
-is above the patched `4.12.21` floor, and passes both `pnpm audit` and `pnpm
-audit --prod`. On 2026-06-10 PT, source and mirror GitHub
-vulnerability-alert endpoints returned 204 and automated security fixes were
-enabled and unpaused. Earlier open Dependabot alert queries returned `[]`;
-post-PR #45 alert-list API calls returned 404 while the repos remain private.
-On 2026-06-11 PT, source and mirror vulnerability-alert endpoints still returned
-204 and automated security fixes were still enabled and unpaused. Re-check alert
-lists after the public flip.
+is above the patched `4.12.21` floor, and passes both `pnpm audit` and
+`pnpm audit --prod`. On 2026-06-11 PT after the public flip, the mirror
+vulnerability-alert endpoint returned 204, automated security fixes were
+enabled and unpaused, and open Dependabot alerts returned `[]`.
 
 ## What Is Not Live
 
