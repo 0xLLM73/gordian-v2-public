@@ -32,6 +32,7 @@ vi.mock('@/lib/workspace', () => ({
 }));
 
 const mockGetUserTelegramAccountIds = vi.fn(() => Promise.resolve(['123456789']));
+const mockGetCalibration = vi.fn<() => Promise<unknown>>(() => Promise.resolve(null));
 const mockGetLatestTelegramImportProgress = vi.fn<() => Promise<unknown>>(() =>
 	Promise.resolve(null),
 );
@@ -47,6 +48,7 @@ const mockHasCurrentTelegramConsent = vi.fn(() => Promise.resolve(true));
 
 vi.mock('@repo/db', () => ({
 	withWorkspaceRLS: vi.fn((_wsId: string, fn: (tx: unknown) => unknown) => fn({})),
+	getCalibration: mockGetCalibration,
 	getUserTelegramAccountIds: mockGetUserTelegramAccountIds,
 	getLatestTelegramImportProgress: mockGetLatestTelegramImportProgress,
 	getLatestTelegramImportProgressWithHistory: mockGetLatestTelegramImportProgressWithHistory,
@@ -66,6 +68,7 @@ describe('triggerSyncAction', () => {
 		vi.stubEnv('WORKER_URL', 'http://localhost:3001');
 		vi.stubEnv('WORKER_INTERNAL_SECRET', 'test-secret');
 		mockGetUserTelegramAccountIds.mockResolvedValue(['123456789']);
+		mockGetCalibration.mockResolvedValue(null);
 		mockHasCurrentTelegramConsent.mockResolvedValue(true);
 		mockGetLatestTelegramImportProgress.mockResolvedValue(null);
 		mockGetLatestTelegramImportProgressWithHistory.mockResolvedValue({
@@ -216,11 +219,14 @@ describe('triggerSyncAction', () => {
 describe('telegram history import actions', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.unstubAllEnvs();
 		resetRateLimit();
 		vi.stubEnv('TELEGRAM_MTPROTO_ENABLED', 'true');
+		vi.stubEnv('AI_PROCESSING_ENABLED', 'false');
 		vi.stubEnv('WORKER_URL', 'http://localhost:3001');
 		vi.stubEnv('WORKER_INTERNAL_SECRET', 'test-secret');
 		mockGetUserTelegramAccountIds.mockResolvedValue(['123456789']);
+		mockGetCalibration.mockResolvedValue(null);
 		mockHasCurrentTelegramConsent.mockResolvedValue(true);
 		mockFetch.mockResolvedValue({
 			ok: true,
@@ -334,6 +340,44 @@ describe('telegram history import actions', () => {
 		expect(requestBody.importMode).toBe('backfill');
 	});
 
+	it('uses backfill mode when a bounded history window is selected', async () => {
+		const { startTelegramImportAction } = await import('@/app/actions/sync');
+
+		const result = await startTelegramImportAction({
+			confirmLargeImport: true,
+			historyWindowDays: 90,
+		});
+
+		expect(result?.data).toMatchObject({ importRunId: 'run-1', status: 'queued' });
+		const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+		expect(requestBody).toMatchObject({
+			importMode: 'backfill',
+			historyWindowDays: 90,
+		});
+	});
+
+	it('resumes a bounded history import with the selected window', async () => {
+		const { resumeTelegramImportAction } = await import('@/app/actions/sync');
+		const runId = '22222222-2222-4222-8222-222222222222';
+
+		const result = await resumeTelegramImportAction({
+			runId,
+			historyWindowDays: 180,
+		});
+
+		expect(result?.data).toMatchObject({ importRunId: 'run-1', status: 'queued' });
+		expect(mockFetch).toHaveBeenCalledWith(
+			`http://localhost:3001/telegram/history-import/${runId}/resume`,
+			expect.objectContaining({ method: 'POST' }),
+		);
+		const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+		expect(requestBody).toMatchObject({
+			importMode: 'backfill',
+			historyWindowDays: 180,
+			localAnalysisMode: 'deferred',
+		});
+	});
+
 	it('returns latest import progress and last data import progress separately', async () => {
 		const latest = {
 			runId: 'latest-noop',
@@ -372,6 +416,19 @@ describe('telegram history import actions', () => {
 			pagesFetched: 46,
 		});
 		expect(result?.data?.hasCurrentTelegramConsent).toBe(true);
+		expect(result?.data?.aiAnalysisConsent).toBe(false);
+		expect(result?.data?.aiAnalysisAvailable).toBe(false);
 		expect(result?.data?.telegramAccounts).toEqual([{ key: '0', label: 'Telegram account 1' }]);
+	});
+
+	it('returns durable AI consent and runtime availability for the import manager', async () => {
+		vi.stubEnv('AI_PROCESSING_ENABLED', 'true');
+		mockGetCalibration.mockResolvedValueOnce({ consentAiAnalysis: true });
+		const { getTelegramImportStatusAction } = await import('@/app/actions/sync');
+
+		const result = await getTelegramImportStatusAction({});
+
+		expect(result?.data?.aiAnalysisConsent).toBe(true);
+		expect(result?.data?.aiAnalysisAvailable).toBe(true);
 	});
 });

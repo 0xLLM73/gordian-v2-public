@@ -58,6 +58,54 @@ type TelegramAccountOption = {
 	label: string;
 };
 
+type HistoryWindowValue = 'recent' | '30' | '90' | '180' | '365' | 'all';
+
+type HistoryWindowOption = {
+	value: HistoryWindowValue;
+	label: string;
+	detail: string;
+	days?: number;
+};
+
+const HISTORY_WINDOW_OPTIONS: HistoryWindowOption[] = [
+	{
+		value: 'recent',
+		label: 'Recent only',
+		detail: 'Fastest option; imports the newest page from each eligible chat.',
+	},
+	{
+		value: '30',
+		label: 'Last 30 days',
+		detail: 'Keeps the run tight for a recent inbox refresh.',
+		days: 30,
+	},
+	{
+		value: '90',
+		label: 'Last 3 months',
+		detail: 'Recommended default for release testing and first-time imports.',
+		days: 90,
+	},
+	{
+		value: '180',
+		label: 'Last 6 months',
+		detail: 'Broader context without reading years of history.',
+		days: 180,
+	},
+	{
+		value: '365',
+		label: 'Last 12 months',
+		detail: 'Large run; useful when annual relationship history matters.',
+		days: 365,
+	},
+	{
+		value: 'all',
+		label: 'All available history',
+		detail: 'Slowest option; reads backward until Telegram runs out of history.',
+	},
+];
+
+const DEFAULT_HISTORY_WINDOW: HistoryWindowValue = '90';
+
 const activeStatuses = new Set<ImportStatus>([
 	'queued',
 	'discovering',
@@ -86,8 +134,14 @@ function formatNumber(value: number) {
 	return new Intl.NumberFormat().format(value);
 }
 
-function importProgressDescription(progress: ImportProgress | null) {
+function importProgressDescription(
+	progress: ImportProgress | null,
+	hasLinkedTelegramAccount: boolean,
+) {
 	if (!progress) {
+		if (!hasLinkedTelegramAccount) {
+			return 'Connect Telegram in onboarding before starting a local history import.';
+		}
 		return 'Run the small onboarding sync first, then use this slower local import when you want more private-chat and group history.';
 	}
 
@@ -117,12 +171,21 @@ function importErrorMessage(progress: ImportProgress): string | null {
 	return progress.errorMessage;
 }
 
-function importSafetyItems(runAiDuringImport: boolean, backfillOlderHistory: boolean) {
+function importSafetyItems(
+	runAiDuringImport: boolean,
+	historyWindowLabel: string,
+	aiAfterImportAllowed: boolean,
+) {
+	const aiProcessing = runAiDuringImport
+		? 'During import'
+		: aiAfterImportAllowed
+			? 'After import'
+			: 'Off';
 	return [
 		{ label: 'Message sending', value: 'Off' },
-		{ label: 'History scope', value: backfillOlderHistory ? 'Backfill' : 'New only' },
-		{ label: 'AI during import', value: runAiDuringImport ? 'On' : 'Off' },
-		{ label: 'AI after import', value: 'Deferred' },
+		{ label: 'History window', value: historyWindowLabel },
+		{ label: 'AI processing', value: aiProcessing },
+		{ label: 'AI consent', value: aiAfterImportAllowed ? 'Allowed' : 'Off until enabled' },
 		{ label: 'Unlocks', value: 'Per import' },
 		{ label: 'Local worker', value: 'Required' },
 	] as const;
@@ -137,7 +200,9 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 	const [error, setError] = useState<string | null>(null);
 	const [largeImportConfirmed, setLargeImportConfirmed] = useState(false);
 	const [runAiDuringImport, setRunAiDuringImport] = useState(false);
-	const [backfillOlderHistory, setBackfillOlderHistory] = useState(false);
+	const [historyWindow, setHistoryWindow] = useState<HistoryWindowValue>(DEFAULT_HISTORY_WINDOW);
+	const [aiAnalysisConsent, setAiAnalysisConsent] = useState(false);
+	const [aiAnalysisAvailable, setAiAnalysisAvailable] = useState(false);
 	const [hasCurrentTelegramConsent, setHasCurrentTelegramConsent] = useState(true);
 	const [telegramAccounts, setTelegramAccounts] = useState<TelegramAccountOption[]>([]);
 	const [telegramAccountKey, setTelegramAccountKey] = useState('0');
@@ -164,6 +229,12 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 		if (typeof result?.data?.hasCurrentTelegramConsent === 'boolean') {
 			setHasCurrentTelegramConsent(result.data.hasCurrentTelegramConsent);
 		}
+		if (typeof result?.data?.aiAnalysisConsent === 'boolean') {
+			setAiAnalysisConsent(result.data.aiAnalysisConsent);
+		}
+		if (typeof result?.data?.aiAnalysisAvailable === 'boolean') {
+			setAiAnalysisAvailable(result.data.aiAnalysisAvailable);
+		}
 		setLoading(false);
 	}, []);
 
@@ -183,8 +254,6 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 	}, [loadStatus, progress]);
 
 	const active = progress ? activeStatuses.has(progress.status) : false;
-	const canStart =
-		!disabledReason && largeImportConfirmed && !active && progress?.status !== 'paused';
 	const canPause =
 		progress?.runId && ['queued', 'discovering', 'importing'].includes(progress.status);
 	const canResume = !disabledReason && progress?.runId && progress.status === 'paused';
@@ -205,7 +274,22 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 		progress.messagesInserted === 0 &&
 		(lastDataImport.messagesInserted > 0 || lastDataImport.pagesFetched > 0);
 	const visibleImportError = progress ? importErrorMessage(progress) : null;
-	const safetyItems = importSafetyItems(runAiDuringImport, backfillOlderHistory);
+	const aiAfterImportAllowed = aiAnalysisConsent || runAiDuringImport;
+	const selectedHistoryWindow =
+		HISTORY_WINDOW_OPTIONS.find((option) => option.value === historyWindow) ??
+		HISTORY_WINDOW_OPTIONS[2];
+	const historyWindowDays = selectedHistoryWindow.days;
+	const backfillOlderHistory = selectedHistoryWindow.value !== 'recent';
+	const safetyItems = importSafetyItems(
+		runAiDuringImport,
+		selectedHistoryWindow.label,
+		aiAfterImportAllowed,
+	);
+	const hasLinkedTelegramAccount = telegramAccounts.length > 0;
+	const status = progress?.status ?? 'idle';
+	const busy = loading || mutating;
+	const importControlsDisabled =
+		Boolean(disabledReason) || !hasLinkedTelegramAccount || active || busy;
 
 	async function mutate(action: () => Promise<unknown>) {
 		setMutating(true);
@@ -224,7 +308,7 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 	async function startLargeImport() {
 		const consentResult = await saveConsentAction({
 			consentDataProcessing: true,
-			consentAiAnalysis: runAiDuringImport,
+			consentAiAnalysis: aiAfterImportAllowed,
 			consentTelegramAccess: true,
 			consentVersion: TELEGRAM_CONSENT_VERSION,
 		});
@@ -237,11 +321,16 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 			telegramAccountKey,
 			runAiDuringImport,
 			backfillOlderHistory,
+			...(historyWindowDays ? { historyWindowDays } : {}),
 		});
 	}
 
-	const status = progress?.status ?? 'idle';
-	const busy = loading || mutating;
+	const canStart =
+		hasLinkedTelegramAccount &&
+		!disabledReason &&
+		largeImportConfirmed &&
+		!active &&
+		progress?.status !== 'paused';
 
 	return (
 		<Card className="mt-6 rounded-lg">
@@ -253,7 +342,7 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 					</CardTitle>
 					<CardDescription>
 						Local import for eligible private chats and groups. Channels, bots, exports, and message
-						sending stay off; AI analysis is deferred until the import finishes by default.
+						sending stay off; saved AI consent applies after import, while inline AI is optional.
 					</CardDescription>
 				</div>
 				<div className="flex shrink-0 items-center gap-2 text-sm text-muted-foreground">
@@ -269,12 +358,22 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 						{disabledReason}
 					</div>
 				) : null}
+				{!disabledReason && !loading && !hasLinkedTelegramAccount ? (
+					<div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+						Connect Telegram before starting a local history import. Gordian will ask for session
+						consent first, then import permissions after Telegram verifies the account.{' '}
+						<Link href="/onboarding/connect" className="font-medium underline underline-offset-2">
+							Connect Telegram
+						</Link>
+						.
+					</div>
+				) : null}
 				{error ? (
 					<div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
 						{error}
 					</div>
 				) : null}
-				{!hasCurrentTelegramConsent ? (
+				{hasLinkedTelegramAccount && !hasCurrentTelegramConsent ? (
 					<div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
 						Permissions have not been saved for this workspace yet. Starting an import saves them
 						first, or you can{' '}
@@ -368,7 +467,7 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 						type="checkbox"
 						className="mt-1 h-4 w-4 shrink-0"
 						checked={largeImportConfirmed}
-						disabled={Boolean(disabledReason) || active || progress?.status === 'paused' || busy}
+						disabled={importControlsDisabled || progress?.status === 'paused'}
 						onChange={(event) => setLargeImportConfirmed(event.currentTarget.checked)}
 					/>
 					<span>
@@ -378,17 +477,27 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 					</span>
 				</label>
 
-				<label className="flex items-start gap-3 rounded-md border bg-background px-3 py-2 text-sm">
-					<input
-						type="checkbox"
-						className="mt-1 h-4 w-4 shrink-0"
-						checked={backfillOlderHistory}
-						disabled={Boolean(disabledReason) || active || busy}
-						onChange={(event) => setBackfillOlderHistory(event.currentTarget.checked)}
-					/>
-					<span>
-						Backfill older history. Leave this off for a faster recent sync that skips old
-						duplicate-heavy pages.
+				<label className="block rounded-md border border-border bg-background px-3 py-2 text-sm">
+					<span className="block font-medium text-foreground">History window</span>
+					<span className="mt-1 block text-muted-foreground">
+						Choose how far back this import may read. Three months is the safer default; all history
+						can take much longer.
+					</span>
+					<select
+						data-testid="telegram-import-history-window"
+						value={historyWindow}
+						disabled={importControlsDisabled}
+						onChange={(event) => setHistoryWindow(event.currentTarget.value as HistoryWindowValue)}
+						className="mt-3 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
+					>
+						{HISTORY_WINDOW_OPTIONS.map((option) => (
+							<option key={option.value} value={option.value}>
+								{option.label}
+							</option>
+						))}
+					</select>
+					<span className="mt-2 block text-xs text-muted-foreground">
+						{selectedHistoryWindow.detail}
 					</span>
 				</label>
 
@@ -397,12 +506,15 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 						type="checkbox"
 						className="mt-1 h-4 w-4 shrink-0"
 						checked={runAiDuringImport}
-						disabled={Boolean(disabledReason) || active || progress?.status === 'paused' || busy}
+						disabled={
+							importControlsDisabled || progress?.status === 'paused' || !aiAnalysisAvailable
+						}
 						onChange={(event) => setRunAiDuringImport(event.currentTarget.checked)}
 					/>
 					<span>
-						Run AI while importing. Leave this off to keep Telegram sync faster and analyze after
-						the import finishes.
+						{aiAnalysisAvailable
+							? 'Run inline AI during import. Leave this off to keep Telegram sync faster; saved AI consent still covers analysis after import.'
+							: 'AI analysis is not configured, so import can only save messages for later.'}
 					</span>
 				</label>
 
@@ -447,6 +559,7 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 													runId: progress.runId,
 													runAiDuringImport,
 													backfillOlderHistory,
+													...(historyWindowDays ? { historyWindowDays } : {}),
 												}),
 											)
 										: undefined
@@ -474,7 +587,9 @@ export function TelegramImportManagerCard({ disabledReason }: { disabledReason?:
 					) : null}
 				</div>
 
-				<div className="text-xs text-muted-foreground">{importProgressDescription(progress)}</div>
+				<div className="text-xs text-muted-foreground">
+					{importProgressDescription(progress, hasLinkedTelegramAccount)}
+				</div>
 				{lastDataImport && (!progress || progress.runId !== lastDataImport.runId) ? (
 					<div className="text-xs text-muted-foreground">
 						Last data import: {formatNumber(lastDataImport.messagesInserted)} messages,{' '}

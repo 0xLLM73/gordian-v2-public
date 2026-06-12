@@ -15,6 +15,7 @@ import {
 	sql,
 	updateKnowledgeBackfillProgress,
 	upsertExtractionLog,
+	withWorkspaceRLS,
 } from '@repo/db';
 import {
 	getKnowledgeEmbeddingRuntime,
@@ -28,7 +29,6 @@ import { Queue, Worker } from 'bullmq';
 
 import { BatchRelationshipExtractor } from '../ai/batch-relationship';
 import { extractKnowledgeForContact, keywordPreFilter } from '../ai/knowledge-extraction';
-import { withRLS } from '../middleware/rls';
 import { connection } from '../redis';
 
 /** Max LLM calls per nightly run across all workspaces (controls batch spend). */
@@ -522,7 +522,9 @@ async function processWorkspace(
 	backfillRemainingContacts: number;
 	skippedReason?: string;
 }> {
-	const enabled = await isKnowledgeExtractionEnabled(workspaceId);
+	const enabled = await withWorkspaceRLS(workspaceId, () =>
+		isKnowledgeExtractionEnabled(workspaceId),
+	);
 	const llmEnabled = isKnowledgeLlmEnabled(process.env);
 	if (!enabled) {
 		return {
@@ -536,7 +538,9 @@ async function processWorkspace(
 		};
 	}
 
-	const hasConsent = await hasWorkspaceAiAnalysisConsent(workspaceId);
+	const hasConsent = await withWorkspaceRLS(workspaceId, () =>
+		hasWorkspaceAiAnalysisConsent(workspaceId),
+	);
 	if (!hasConsent) {
 		return {
 			contactsProcessed: 0,
@@ -549,7 +553,7 @@ async function processWorkspace(
 		};
 	}
 
-	const envelope = await getWorkspaceEnvelope(workspaceId);
+	const envelope = await withWorkspaceRLS(workspaceId, () => getWorkspaceEnvelope(workspaceId));
 	if (!envelope) {
 		console.warn(`[knowledge-cron] No envelope for workspace=${workspaceId.slice(0, 8)}`);
 		return {
@@ -570,21 +574,27 @@ async function processWorkspace(
 	const mode = options.mode ?? 'incremental';
 	const contactLimit = options.limit ?? Math.max(llmBudget, DEFAULT_CONTACT_LIMIT);
 	const messageLimit = messagesPerContactLimitForMode(mode);
-	const contactCandidates: KnowledgeAnalysisContactCandidate[] =
-		mode === 'full' || mode === 'evidence'
-			? (
-					await getKnowledgeAnalysisContactCandidates(workspaceId, {
-						includeFresh: true,
-						limit: contactLimit,
-					})
-				).filter((contact) =>
-					mode === 'full' ? contact.stale || !contact.backfillCompletedAt : true,
-				)
-			: (await getContactsNeedingExtraction(workspaceId, contactLimit)).map((id) => ({
-					id,
-					messageCount: 0,
-					stale: true,
-				}));
+	let contactCandidates: KnowledgeAnalysisContactCandidate[];
+	if (mode === 'full' || mode === 'evidence') {
+		contactCandidates = await withWorkspaceRLS(workspaceId, async () => {
+			const candidates = await getKnowledgeAnalysisContactCandidates(workspaceId, {
+				includeFresh: true,
+				limit: contactLimit,
+			});
+			return candidates.filter((contact) =>
+				mode === 'full' ? contact.stale || !contact.backfillCompletedAt : true,
+			);
+		});
+	} else {
+		const contactIds = await withWorkspaceRLS(workspaceId, () =>
+			getContactsNeedingExtraction(workspaceId, contactLimit),
+		);
+		contactCandidates = contactIds.map((id) => ({
+			id,
+			messageCount: 0,
+			stale: true,
+		}));
+	}
 	if (contactCandidates.length === 0) {
 		console.log(`[knowledge-cron] No stale contacts for workspace=${workspaceId.slice(0, 8)}`);
 		return {
@@ -623,16 +633,20 @@ async function processWorkspace(
 					: undefined;
 			const fetchedOlderPage = Boolean(fetchBefore);
 			// Fetch decrypted messages for this contact
-			const msgs = await getMessagesByContact(workspaceId, contactId, envelope, {
-				limit: messageLimit,
-				beforeSentAt: fetchBefore,
-				beforeMessageId: fetchBeforeMessageId,
-			});
+			const msgs = await withWorkspaceRLS(workspaceId, () =>
+				getMessagesByContact(workspaceId, contactId, envelope, {
+					limit: messageLimit,
+					beforeSentAt: fetchBefore,
+					beforeMessageId: fetchBeforeMessageId,
+				}),
+			);
 			if (msgs.length === 0) {
 				if (isBackfillIncomplete) {
-					await updateKnowledgeBackfillProgress(workspaceId, contactId, {
-						completedAt: new Date(),
-					});
+					await withWorkspaceRLS(workspaceId, () =>
+						updateKnowledgeBackfillProgress(workspaceId, contactId, {
+							completedAt: new Date(),
+						}),
+					);
 					backfillContactsCompleted++;
 				}
 				continue;
@@ -658,12 +672,14 @@ async function processWorkspace(
 					? new Date()
 					: undefined;
 			if (isBackfillIncomplete) {
-				await updateKnowledgeBackfillProgress(workspaceId, contactId, {
-					oldestMessageAt: pageOldestSentAt,
-					oldestMessageId: pageOldestCursor?.id,
-					messagesScanned: msgs.length,
-					completedAt,
-				});
+				await withWorkspaceRLS(workspaceId, () =>
+					updateKnowledgeBackfillProgress(workspaceId, contactId, {
+						oldestMessageAt: pageOldestSentAt,
+						oldestMessageId: pageOldestCursor?.id,
+						messagesScanned: msgs.length,
+						completedAt,
+					}),
+				);
 				if (completedAt) {
 					backfillContactsCompleted++;
 				} else if (!contact.backfillCompletedAt) {
@@ -672,21 +688,25 @@ async function processWorkspace(
 			}
 
 			if (messageInputs.length === 0) {
-				await upsertExtractionLog(workspaceId, contactId, {
-					messageHorizon: pageNewestSentAt,
-					entitiesExtracted: 0,
-					llmCalled: false,
-				});
+				await withWorkspaceRLS(workspaceId, () =>
+					upsertExtractionLog(workspaceId, contactId, {
+						messageHorizon: pageNewestSentAt,
+						entitiesExtracted: 0,
+						llmCalled: false,
+					}),
+				);
 				continue;
 			}
 			const texts = messageInputs.map((m) => m.text);
 
 			// Embedding-first match runs inline (cheap, always on)
-			const result = await extractKnowledgeForContact(messageInputs, contactId, workspaceId, {
-				skipLLM: true, // Always skip inline LLM — batch handles it
-				workspaceSalt,
-				envelope,
-			});
+			const result = await withWorkspaceRLS(workspaceId, () =>
+				extractKnowledgeForContact(messageInputs, contactId, workspaceId, {
+					skipLLM: true, // Always skip inline LLM — batch handles it
+					workspaceSalt,
+					envelope,
+				}),
+			);
 			totalEmbeddingMatches += result.embeddingMatches;
 
 			// Queue LLM extraction into batch (if budget allows and keyword filter passes)
@@ -1130,7 +1150,7 @@ export async function runKnowledgeAnalysis(
 
 export const knowledgeAnalysisWorker = new Worker<KnowledgeAnalysisQueueJobData>(
 	'knowledge-analysis',
-	withRLS(async (job) => {
+	async (job) => {
 		const data = job.data;
 		console.log(
 			`[knowledge-analysis] Processing ${data.mode} analysis reason=${data.reason} workspace=${data.workspaceId.slice(0, 8)}`,
@@ -1170,7 +1190,7 @@ export const knowledgeAnalysisWorker = new Worker<KnowledgeAnalysisQueueJobData>
 			}
 		}
 		return result;
-	}),
+	},
 	{ connection, prefix: '{ai-flow}', concurrency: 1, ...KNOWLEDGE_ANALYSIS_WORKER_OPTS },
 );
 

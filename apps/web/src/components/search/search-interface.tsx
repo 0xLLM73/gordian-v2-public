@@ -225,7 +225,7 @@ export function SearchInterface() {
 											<p className="font-medium text-foreground">{d.title as string}</p>
 											<div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
 												<span className="rounded bg-green-100 px-2 py-0.5 text-green-700">
-													{d.status as string}
+													{(d.stage as string) || (d.status as string)}
 												</span>
 												{d.value ? (
 													<span>${((d.value as number) / 100).toLocaleString()}</span>

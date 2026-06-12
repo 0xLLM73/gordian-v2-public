@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
 		| ((job: { data: Record<string, unknown> }) => Promise<unknown>),
 	queueGetJobs: vi.fn(),
 	searchContactByName: vi.fn(),
+	withWorkspaceRLS: vi.fn(),
 }));
 
 vi.mock('@repo/crypto', () => ({
@@ -45,6 +46,7 @@ vi.mock('@repo/db', () => ({
 	getWorkspaceIntroKeywords: mocks.getWorkspaceIntroKeywords,
 	hasUserAiAnalysisConsent: mocks.hasUserAiAnalysisConsent,
 	searchContactByName: mocks.searchContactByName,
+	withWorkspaceRLS: mocks.withWorkspaceRLS,
 }));
 
 vi.mock('bullmq', () => ({
@@ -71,10 +73,6 @@ vi.mock('../../ai/introduction-detection', () => ({
 
 vi.mock('../../ai/relationship-extraction', () => ({
 	extractRelationships: mocks.extractRelationships,
-}));
-
-vi.mock('../../middleware/rls', () => ({
-	withRLS: vi.fn((fn) => fn),
 }));
 
 vi.mock('../../redis', () => ({
@@ -165,6 +163,9 @@ describe('relationship extraction intro provenance', () => {
 		mocks.getWorkspaceConnectionKeywords.mockResolvedValue([]);
 		mocks.hasUserAiAnalysisConsent.mockResolvedValue(true);
 		mocks.extractRelationships.mockResolvedValue([]);
+		mocks.withWorkspaceRLS.mockImplementation(
+			async (_workspaceId: string, fn: () => Promise<unknown>) => fn(),
+		);
 		mocks.hasConnectionKeywords.mockReturnValue(false);
 		mocks.hasIntroKeywords.mockReturnValue(true);
 		mocks.queueGetJobs.mockResolvedValue([]);
@@ -176,6 +177,56 @@ describe('relationship extraction intro provenance', () => {
 			};
 			return Promise.resolve(contacts[name] ?? []);
 		});
+	});
+
+	it('does not hold workspace RLS while running local relationship model calls', async () => {
+		let rlsDepth = 0;
+		mocks.withWorkspaceRLS.mockImplementation(
+			async (_workspaceId: string, fn: () => Promise<unknown>) => {
+				rlsDepth++;
+				try {
+					return await fn();
+				} finally {
+					rlsDepth--;
+				}
+			},
+		);
+		mocks.extractRelationships.mockImplementation(async () => {
+			expect(rlsDepth).toBe(0);
+			return [];
+		});
+		mocks.detectIntroductions.mockImplementation(async () => {
+			expect(rlsDepth).toBe(0);
+			return [];
+		});
+
+		const processor = mocks.processor;
+		expect(processor).toBeDefined();
+		if (!processor) throw new Error('relationship extraction processor was not registered');
+		await processor({
+			data: {
+				workspaceId: WS,
+				userId: USER,
+				sourceAccountId: 'tg-account-1',
+				contactId: CONTACT_A,
+				keyEnvelope: fakeKeyEnvelope,
+				workspaceSalt: Buffer.from('salt').toString('hex'),
+				messages: [
+					{
+						role: 'assistant',
+						content: 'enc:Alice, meet Bob.',
+						timestamp: '2026-05-14T10:00:00Z',
+						sourceMessageId: MSG_1,
+						chatId: 'chat-1',
+						contactId: CONTACT_A,
+					},
+				],
+			},
+		});
+
+		expect(mocks.extractRelationships).toHaveBeenCalled();
+		expect(mocks.detectIntroductions).toHaveBeenCalled();
+		expect(mocks.withWorkspaceRLS).toHaveBeenCalledWith(WS, expect.any(Function));
 	});
 
 	it('detects intros from the fresh batch and stores validated source message IDs', async () => {

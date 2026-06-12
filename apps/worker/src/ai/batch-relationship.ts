@@ -23,6 +23,7 @@ import {
 	linkContactToKnowledge,
 	searchKnowledgeNodes,
 	upsertExtractionLog,
+	withWorkspaceRLS,
 } from '@repo/db';
 import {
 	assertAiProcessingEnabled,
@@ -300,11 +301,13 @@ export class BatchRelationshipExtractor {
 		const llmRuntime = getKnowledgeLlmRuntime(process.env);
 		if (llmRuntime.mode === 'disabled') {
 			for (const req of requests) {
-				await upsertExtractionLog(req.workspaceId, req.contactId, {
-					messageHorizon: latestMessageHorizon(req.sourceMessages),
-					entitiesExtracted: 0,
-					llmCalled: false,
-				});
+				await withWorkspaceRLS(req.workspaceId, () =>
+					upsertExtractionLog(req.workspaceId, req.contactId, {
+						messageHorizon: latestMessageHorizon(req.sourceMessages),
+						entitiesExtracted: 0,
+						llmCalled: false,
+					}),
+				);
 			}
 			return { totalLinked: 0, batchUsed: false };
 		}
@@ -423,7 +426,7 @@ export class BatchRelationshipExtractor {
 
 			const message = result.result.message;
 			const toolUse = message.content.find((b: { type: string }) => b.type === 'tool_use');
-			if (!toolUse || toolUse.type !== 'tool_use') continue;
+			if (toolUse?.type !== 'tool_use') continue;
 
 			const input = toolUse.input as { entities?: unknown };
 			const entities = normalizeKnowledgeEntities(input.entities);
@@ -437,6 +440,10 @@ export class BatchRelationshipExtractor {
 	// ─── Private: Entity processing (shared by batch & fallback) ──────────
 
 	private async processEntities(result: BatchResultEntry): Promise<number> {
+		return withWorkspaceRLS(result.request.workspaceId, () => this.processEntitiesWithRls(result));
+	}
+
+	private async processEntitiesWithRls(result: BatchResultEntry): Promise<number> {
 		const { request, entities } = result;
 		let linked = 0;
 
@@ -631,7 +638,7 @@ export class BatchRelationshipExtractor {
 				);
 
 				const toolUse = response.content.find((b) => b.type === 'tool_use');
-				if (!toolUse || toolUse.type !== 'tool_use') continue;
+				if (toolUse?.type !== 'tool_use') continue;
 
 				const input = toolUse.input as { entities?: unknown };
 				const entities = normalizeKnowledgeEntities(input.entities);
@@ -648,11 +655,13 @@ export class BatchRelationshipExtractor {
 					(err as Error).message,
 				);
 				// Record failed extraction
-				await upsertExtractionLog(req.workspaceId, req.contactId, {
-					messageHorizon: latestMessageHorizon(req.sourceMessages),
-					entitiesExtracted: 0,
-					llmCalled: true,
-				});
+				await withWorkspaceRLS(req.workspaceId, () =>
+					upsertExtractionLog(req.workspaceId, req.contactId, {
+						messageHorizon: latestMessageHorizon(req.sourceMessages),
+						entitiesExtracted: 0,
+						llmCalled: true,
+					}),
+				);
 			}
 		}
 

@@ -320,7 +320,9 @@ async function loadModule() {
 
 function job(
 	attemptsMade = 0,
-	overrides: Partial<typeof DATA & { importMode: 'recent' | 'backfill' }> = {},
+	overrides: Partial<
+		typeof DATA & { historyWindowDays: number; importMode: 'recent' | 'backfill' }
+	> = {},
 ) {
 	return {
 		attemptsMade,
@@ -336,6 +338,7 @@ function pageJob(
 			runChatId: string;
 			localAnalysisMode: 'deferred' | 'inline';
 			importMode: 'recent' | 'backfill';
+			historyWindowDays: number;
 			newerThanMessageId: number;
 			pageNumber: number;
 			preserveBackfillOffset: boolean;
@@ -727,6 +730,71 @@ describe('telegram history import queue', () => {
 				pageNumber: 1,
 			}),
 			expect.objectContaining({ delay: expect.any(Number) }),
+		);
+	});
+
+	it('stops bounded history windows at the selected cutoff without importing older messages', async () => {
+		state.runChatNextOffsetMessageId = 0;
+		const nowSeconds = Math.floor(Date.now() / 1000);
+		state.messagesResult = {
+			type: 'messages-result',
+			messages: [
+				{
+					id: 201,
+					text: 'inside the selected history window',
+					date: nowSeconds - 10 * 24 * 60 * 60,
+					isOutgoing: false,
+				},
+				...Array.from({ length: 99 }, (_, index) => ({
+					id: 200 - index,
+					text: `older message ${index}`,
+					date: nowSeconds - 100 * 24 * 60 * 60 - index,
+					isOutgoing: false,
+				})),
+			],
+			users: [],
+		};
+		mockUpsertMessages.mockResolvedValueOnce(1);
+		await loadModule();
+
+		await state.workerProcessor?.(
+			pageJob(0, {
+				importMode: 'backfill',
+				historyWindowDays: 90,
+			}),
+		);
+
+		expect(mockUpsertMessages).toHaveBeenCalledWith(
+			WORKSPACE_ID,
+			'44444444-4444-4444-8444-444444444444',
+			[
+				expect.objectContaining({
+					telegramMessageId: '201',
+					text: 'inside the selected history window',
+				}),
+			],
+			expect.any(Object),
+		);
+		expect(
+			mockUpsertMessages.mock.calls[0]?.[2]?.some(
+				(message: { telegramMessageId: string }) => message.telegramMessageId === '200',
+			),
+		).toBe(false);
+		expect(mockRecordTelegramImportPage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				nextOffsetMessageId: 201,
+				messagesSeen: 1,
+				messagesInserted: 1,
+				duplicateMessages: 0,
+				historyComplete: false,
+				chatComplete: true,
+				updateBackfillOffset: true,
+			}),
+		);
+		expect(mockQueueAdd).not.toHaveBeenCalledWith(
+			'import-page',
+			expect.anything(),
+			expect.anything(),
 		);
 	});
 

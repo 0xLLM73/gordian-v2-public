@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { Tool } from '@anthropic-ai/sdk/resources/messages';
 import { maskEntities } from '@repo/crypto';
-import { getGoldenLibrary, getTopPatterns } from '@repo/db';
+import { getGoldenLibrary, getTopPatterns, withWorkspaceRLS } from '@repo/db';
 import {
 	assertAiProcessingEnabled,
 	getCommitmentLlmRuntime,
@@ -512,7 +512,7 @@ const goldenLibraryCache = new Map<string, { text: string; expiresAt: number }>(
 const GOLDEN_CACHE_TTL = 5 * 60 * 1000;
 
 /** Local cache for semantic pattern rules text (5-min TTL) */
-let patternRulesCache: { text: string; expiresAt: number } | null = null;
+const patternRulesCache = new Map<string, { text: string; expiresAt: number }>();
 const PATTERN_CACHE_TTL = 5 * 60 * 1000;
 
 function redactLearnedText(value: unknown, maxLength = 240): string {
@@ -590,15 +590,26 @@ function buildStructuralExample(output: unknown): unknown | null {
 	return buildStructuralCommitment(source);
 }
 
-async function buildPatternRulesText(): Promise<string> {
+async function withOptionalWorkspaceRLS<T>(
+	workspaceId: string | undefined,
+	fn: () => Promise<T>,
+): Promise<T> {
+	return workspaceId ? withWorkspaceRLS(workspaceId, fn) : fn();
+}
+
+async function buildPatternRulesText(workspaceId?: string): Promise<string> {
 	const now = Date.now();
-	if (patternRulesCache && patternRulesCache.expiresAt > now) {
-		return patternRulesCache.text;
+	const cacheKey = workspaceId ?? 'global';
+	const cached = patternRulesCache.get(cacheKey);
+	if (cached && cached.expiresAt > now) {
+		return cached.text;
 	}
 
-	const patterns = await getTopPatterns('commitment_extraction', 10);
+	const patterns = await withOptionalWorkspaceRLS(workspaceId, () =>
+		getTopPatterns('commitment_extraction', 10),
+	);
 	if (patterns.length === 0) {
-		patternRulesCache = { text: '', expiresAt: now + PATTERN_CACHE_TTL };
+		patternRulesCache.set(cacheKey, { text: '', expiresAt: now + PATTERN_CACHE_TTL });
 		return '';
 	}
 
@@ -616,7 +627,7 @@ async function buildPatternRulesText(): Promise<string> {
 		.join('\n');
 	const text = rules ? `Learned pattern rules:\n${rules}` : '';
 
-	patternRulesCache = { text, expiresAt: now + PATTERN_CACHE_TTL };
+	patternRulesCache.set(cacheKey, { text, expiresAt: now + PATTERN_CACHE_TTL });
 	return text;
 }
 
@@ -628,7 +639,9 @@ async function buildGoldenLibraryText(workspaceId?: string): Promise<string> {
 		return cached.text;
 	}
 
-	const examples = await getGoldenLibrary('commitment_extraction', 50, workspaceId);
+	const examples = await withOptionalWorkspaceRLS(workspaceId, () =>
+		getGoldenLibrary('commitment_extraction', 50, workspaceId),
+	);
 	if (examples.length === 0) {
 		goldenLibraryCache.set(cacheKey, { text: '', expiresAt: now + GOLDEN_CACHE_TTL });
 		return '';
@@ -652,7 +665,7 @@ async function buildLearnedPromptText(workspaceId?: string): Promise<string> {
 	try {
 		const [goldenLibrary, patternRules] = await Promise.all([
 			buildGoldenLibraryText(workspaceId),
-			buildPatternRulesText(),
+			buildPatternRulesText(workspaceId),
 		]);
 		const parts = [goldenLibrary, patternRules].filter(Boolean);
 		if (parts.length === 0) return '';
@@ -1036,15 +1049,16 @@ export async function extractCommitmentsWithBandit(
 	},
 ): Promise<BanditExtractionResult> {
 	// 0. Seed bandit priors on first extraction if user has a Coffee Test answer (Feature 4)
-	if (options?.commitmentSensitivity) {
-		await seedBanditPriors(options.commitmentSensitivity, userId);
+	const commitmentSensitivity = options?.commitmentSensitivity;
+	if (commitmentSensitivity) {
+		await withOptionalWorkspaceRLS(workspaceId, () =>
+			seedBanditPriors(commitmentSensitivity, userId),
+		);
 	}
 
 	// 1. Select variant via Thompson Sampling
-	const { variant, traceId } = await selectPromptVariant(
-		'commitment_extraction',
-		EXTRACTION_VARIANTS,
-		userId,
+	const { variant, traceId } = await withOptionalWorkspaceRLS(workspaceId, () =>
+		selectPromptVariant('commitment_extraction', EXTRACTION_VARIANTS, userId),
 	);
 
 	// 2. Build a compact episode before any model call.

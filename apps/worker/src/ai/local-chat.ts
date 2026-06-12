@@ -72,8 +72,13 @@ Request tools when you need application data:
 
 Rules:
 - Use only the listed tools and their JSON input schemas.
+- For broad overview, theme, "what do you see?", "what should I know?", or "all local information" questions, request get_workspace_context first.
+- For knowledge graph themes or topics, request list_knowledge_topics before asking the user to name a topic.
+- For specific imported-message questions, request search_imported_messages with a concrete query. Do not request all messages.
+- Do not claim you lack access to local CRM, generated knowledge, or imported-message context until a relevant tool result says no data was found.
 - Do not invent contacts, deals, commitments, or knowledge graph facts.
 - If a tool returns no results, say that plainly in the final answer.
+- Never quote raw private message text. Imported message tool results are already masked; summarize them.
 - Never expose raw internal IDs in the final answer unless the user explicitly asks for identifiers.
 - For write-like tools, present the returned proposal for user confirmation. Do not say the action is complete.`;
 
@@ -142,6 +147,16 @@ function parseLocalChatJson(text: string): Record<string, unknown> {
 		throw new Error('Local chat returned non-JSON content');
 	}
 	return JSON.parse(stripped.slice(firstBrace, lastBrace + 1)) as Record<string, unknown>;
+}
+
+function normalizePlainTextAnswer(text: string): string {
+	const stripped = stripJsonFence(text)
+		.replace(/<think>[\s\S]*?<\/think>/gi, '')
+		.trim();
+	if (!stripped) return '';
+	if (/^\s*[{[]/.test(stripped)) return '';
+	if (/"type"\s*:|"tools"\s*:|"tool_use"/i.test(stripped)) return '';
+	return stripped;
 }
 
 function normalizeToolInput(input: unknown): Record<string, unknown> {
@@ -348,6 +363,13 @@ export async function runLocalChat(options: LocalChatOptions): Promise<LocalChat
 		try {
 			parsed = parseLocalChatJson(modelText);
 		} catch (err) {
+			const fallbackAnswer = normalizePlainTextAnswer(modelText);
+			if (fallbackAnswer) {
+				return {
+					response: fallbackAnswer,
+					toolsUsed,
+				};
+			}
 			console.error('[local-chat] Failed to parse local chat response:', redactSensitive(err));
 			return {
 				response:

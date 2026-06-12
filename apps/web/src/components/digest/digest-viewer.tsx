@@ -75,6 +75,9 @@ const PERIOD_LABELS: Record<Period, string> = {
 	week: 'Last Week',
 };
 
+const DIGEST_POLL_INTERVAL_MS = 5000;
+const DIGEST_POLL_MAX_ATTEMPTS = 36;
+
 export function DigestViewer({
 	pastDigests: initialDigests,
 	contactMap = {},
@@ -89,6 +92,47 @@ export function DigestViewer({
 	const [isPending, startTransition] = React.useTransition();
 	const [generating, setGenerating] = React.useState(false);
 	const [generateError, setGenerateError] = React.useState<string | null>(null);
+	const pollTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	React.useEffect(() => {
+		return () => {
+			if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
+		};
+	}, []);
+
+	function clearDigestPoll() {
+		if (!pollTimeoutRef.current) return;
+		clearTimeout(pollTimeoutRef.current);
+		pollTimeoutRef.current = null;
+	}
+
+	function pollForDigest(previousLatestId: string | null, attempt = 0) {
+		pollTimeoutRef.current = setTimeout(() => {
+			pollTimeoutRef.current = null;
+			startTransition(async () => {
+				const updated = await listDigestsAction({ limit: 10 });
+				if (updated?.data) {
+					setDigests(updated.data);
+					const latest = updated.data[0] ?? null;
+					if (latest && latest.id !== previousLatestId) {
+						setSelectedDigest(latest);
+						setGenerating(false);
+						return;
+					}
+				}
+
+				if (attempt + 1 >= DIGEST_POLL_MAX_ATTEMPTS) {
+					setGenerateError(
+						'Digest generation is still running. Refresh this page or try again in a minute.',
+					);
+					setGenerating(false);
+					return;
+				}
+
+				pollForDigest(previousLatestId, attempt + 1);
+			});
+		}, DIGEST_POLL_INTERVAL_MS);
+	}
 
 	function handleGenerate() {
 		if (!canGenerate) {
@@ -98,22 +142,12 @@ export function DigestViewer({
 
 		setGenerateError(null);
 		setGenerating(true);
+		clearDigestPoll();
+		const previousLatestId = digests[0]?.id ?? null;
 		startTransition(async () => {
 			const result = await generateDigestAction({ period });
 			if (result?.data?.queued) {
-				// Poll for new digest after a short delay
-				setTimeout(() => {
-					startTransition(async () => {
-						const updated = await listDigestsAction({ limit: 10 });
-						if (updated?.data) {
-							setDigests(updated.data);
-							if (updated.data[0]) {
-								setSelectedDigest(updated.data[0]);
-							}
-						}
-						setGenerating(false);
-					});
-				}, 5000);
+				pollForDigest(previousLatestId);
 			} else {
 				setGenerateError(result?.serverError ?? 'Digest generation could not be started.');
 				setGenerating(false);

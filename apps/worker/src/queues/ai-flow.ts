@@ -7,6 +7,7 @@ import {
 	hasUserAiAnalysisConsent,
 	isDuplicateGoal,
 	upsertSummary,
+	withWorkspaceRLS,
 } from '@repo/db';
 import {
 	canRunCloudCommitmentIntelligence,
@@ -144,7 +145,13 @@ function envelopeFromJob(data: JobData): SealedEnvelope | null {
 }
 
 async function requirePersistedAiConsent(data: JobData, stage: string): Promise<boolean> {
-	if (await hasUserAiAnalysisConsent(data.userId, data.workspaceId)) return true;
+	if (
+		await withWorkspaceRLS(data.workspaceId, () =>
+			hasUserAiAnalysisConsent(data.userId, data.workspaceId),
+		)
+	) {
+		return true;
+	}
 	console.log(
 		`[${stage}] AI consent no longer persisted for workspace=${data.workspaceId.slice(0, 8)} user=${data.userId.slice(0, 8)}, skipping`,
 	);
@@ -169,7 +176,7 @@ export async function scheduleAIPipeline(
 		skipWorkspaceRelationshipDerivation?: boolean;
 	},
 ) {
-	if (!(await hasUserAiAnalysisConsent(userId, workspaceId))) {
+	if (!(await withWorkspaceRLS(workspaceId, () => hasUserAiAnalysisConsent(userId, workspaceId)))) {
 		throw new Error('AI analysis consent is required before scheduling the AI pipeline');
 	}
 
@@ -373,7 +380,7 @@ export const orchestratorWorker = new Worker(
  */
 export const extractionWorker = new Worker(
 	'extraction',
-	withRLS(async (job) => {
+	async (job) => {
 		const data = job.data as JobData;
 		const { userId, contactId, workspaceId } = data;
 
@@ -531,11 +538,8 @@ export const extractionWorker = new Worker(
 			const embedding = await generateEmbedding(maskedTitle);
 
 			// 3-stage dedup check
-			const dedupResult = await deduplicateCommitment(
-				workspaceId,
-				contactId,
-				commitment.title,
-				embedding,
+			const dedupResult = await withWorkspaceRLS(workspaceId, () =>
+				deduplicateCommitment(workspaceId, contactId, commitment.title, embedding),
 			);
 
 			trackAnalyticsEvent(workspaceId, userId, 'commitment.dedup_result', {
@@ -554,24 +558,26 @@ export const extractionWorker = new Worker(
 				: undefined;
 
 			// Store commitment with banditTraceId for feedback loop
-			await createCommitment(
-				workspaceId,
-				{
-					contactId,
-					title: commitment.title,
-					commitmentType: commitment.commitment_type,
-					assignee: commitment.assignee,
-					confidence: commitment.confidence,
-					dueDate: commitment.due_date ? new Date(commitment.due_date) : undefined,
-					quote: commitment.quote,
-					sourceMessageIds: commitment.source_message_ids?.filter(isValidUuid),
-					extractionContext,
-					embedding,
-					sourceMessageAgeDays,
-					banditTraceId: traceId,
-					status: localCommitmentMode ? 'draft' : undefined,
-				},
-				envelope,
+			await withWorkspaceRLS(workspaceId, () =>
+				createCommitment(
+					workspaceId,
+					{
+						contactId,
+						title: commitment.title,
+						commitmentType: commitment.commitment_type,
+						assignee: commitment.assignee,
+						confidence: commitment.confidence,
+						dueDate: commitment.due_date ? new Date(commitment.due_date) : undefined,
+						quote: commitment.quote,
+						sourceMessageIds: commitment.source_message_ids?.filter(isValidUuid),
+						extractionContext,
+						embedding,
+						sourceMessageAgeDays,
+						banditTraceId: traceId,
+						status: localCommitmentMode ? 'draft' : undefined,
+					},
+					envelope,
+				),
 			);
 
 			stored++;
@@ -596,14 +602,16 @@ export const extractionWorker = new Worker(
 				).maskedText
 			: '[masked — no salt available]';
 		try {
-			await recordExtractionFeedback({
-				candidates: pass1Candidates,
-				verified: extractedForStorage,
-				transcript: maskedTranscript,
-				traceId,
-				variant,
-				workspaceId,
-			});
+			await withWorkspaceRLS(workspaceId, () =>
+				recordExtractionFeedback({
+					candidates: pass1Candidates,
+					verified: extractedForStorage,
+					transcript: maskedTranscript,
+					traceId,
+					variant,
+					workspaceId,
+				}),
+			);
 		} catch (err) {
 			console.error(
 				'[ai-extraction] Feedback signal recording failed (non-fatal):',
@@ -612,7 +620,7 @@ export const extractionWorker = new Worker(
 		}
 
 		return { traceId, variant, stored };
-	}),
+	},
 	aiFlowWorkerOptions(aiExtractionWorkerConcurrency()),
 );
 

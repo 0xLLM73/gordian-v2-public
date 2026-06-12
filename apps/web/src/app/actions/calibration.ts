@@ -6,6 +6,7 @@ import {
 	getMostActiveContacts,
 	getMostNeglectedContacts,
 	getPreferences,
+	getUserTelegramAccountIds,
 	saveConsent as saveConsentDAL,
 	saveWhatMatters as saveWhatMattersDAL,
 	upsertCalibration,
@@ -13,10 +14,59 @@ import {
 import {
 	calibrationInputSchema,
 	isAiAnalysisAvailable,
+	redactSensitive,
 	TELEGRAM_CONSENT_VERSION,
 } from '@repo/shared';
 import { z } from 'zod';
-import { workspaceAction } from '@/lib/safe-action';
+import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
+
+const AI_CONSENT_CATCHUP_TIMEOUT_MS = 8000;
+
+async function queueTelegramAiConsentCatchup(input: {
+	userId: string;
+	workspaceId: string;
+}): Promise<void> {
+	const workerUrl = process.env.WORKER_URL;
+	if (!workerUrl) return;
+
+	const accountIds = await getUserTelegramAccountIds(input.userId);
+	if (accountIds.length === 0) return;
+
+	await Promise.allSettled(
+		accountIds.map(async (sourceAccountId) => {
+			const controller = new AbortController();
+			const timeout = setTimeout(() => controller.abort(), AI_CONSENT_CATCHUP_TIMEOUT_MS);
+			try {
+				const response = await fetch(`${workerUrl}/telegram/ai-consent-catchup`, {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'X-Internal-Secret': getInternalSecret(),
+					},
+					body: JSON.stringify({
+						userId: input.userId,
+						workspaceId: input.workspaceId,
+						sourceAccountId,
+					}),
+					signal: controller.signal,
+				});
+				if (!response.ok) {
+					throw new Error(`AI consent catch-up failed with status ${response.status}`);
+				}
+			} finally {
+				clearTimeout(timeout);
+			}
+		}),
+	).then((results) => {
+		const failed = results.filter((result) => result.status === 'rejected');
+		if (failed.length > 0) {
+			console.warn(
+				'[calibration] AI consent was saved, but Telegram AI catch-up could not be queued:',
+				redactSensitive(failed.map((result) => result.reason)),
+			);
+		}
+	});
+}
 
 export const getCalibrationAction = workspaceAction.schema(z.object({})).action(async ({ ctx }) => {
 	const calibration = await getCalibration(ctx.session.user.id, ctx.workspaceId, ctx.envelope);
@@ -111,9 +161,22 @@ export const saveConsentAction = workspaceAction
 		}),
 	)
 	.action(async ({ parsedInput, ctx }) => {
+		const previousCalibration = await getCalibration(
+			ctx.session.user.id,
+			ctx.workspaceId,
+			ctx.envelope,
+		);
+		const resolvedAiConsent = parsedInput.consentAiAnalysis && isAiAnalysisAvailable(process.env);
+
 		await saveConsentDAL(ctx.session.user.id, ctx.workspaceId, {
 			...parsedInput,
-			consentAiAnalysis: parsedInput.consentAiAnalysis && isAiAnalysisAvailable(process.env),
+			consentAiAnalysis: resolvedAiConsent,
 		});
+		if (resolvedAiConsent && previousCalibration?.consentAiAnalysis !== true) {
+			await queueTelegramAiConsentCatchup({
+				userId: ctx.session.user.id,
+				workspaceId: ctx.workspaceId,
+			});
+		}
 		return { saved: true };
 	});

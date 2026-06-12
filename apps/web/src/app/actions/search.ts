@@ -166,7 +166,7 @@ export const searchAction = workspaceAction
 					commitments: embedding
 						? 'Semantic vector + encrypted-text fallback'
 						: 'Encrypted-text fallback',
-					deals: 'Encrypted exact title search',
+					deals: 'Encrypted exact/title text search',
 					knowledge: 'Evidence-backed knowledge search runs separately',
 					goals: 'Title search runs separately',
 				},

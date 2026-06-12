@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mockAnthropicBatchCreate = vi.hoisted(() => vi.fn());
 const mockInferKnowledgeEntitiesJson = vi.hoisted(() => vi.fn());
 const mockUpsertExtractionLog = vi.hoisted(() => vi.fn());
+const mockWithWorkspaceRLS = vi.hoisted(() => vi.fn());
 
 vi.mock('@anthropic-ai/sdk', () => ({
 	default: class MockAnthropic {
@@ -26,6 +27,7 @@ vi.mock('@repo/db', () => ({
 	linkContactToKnowledge: vi.fn(),
 	searchKnowledgeNodes: vi.fn(),
 	upsertExtractionLog: mockUpsertExtractionLog,
+	withWorkspaceRLS: mockWithWorkspaceRLS,
 }));
 
 vi.mock('../embeddings', () => ({
@@ -56,6 +58,9 @@ describe('BatchRelationshipExtractor local mode', () => {
 			source: 'local:test-model',
 		});
 		mockUpsertExtractionLog.mockResolvedValue(undefined);
+		mockWithWorkspaceRLS.mockImplementation(
+			async (_workspaceId: string, fn: () => Promise<unknown>) => fn(),
+		);
 	});
 
 	it('bypasses Anthropic Batch and uses the configured KG LLM adapter in local mode', async () => {
@@ -92,6 +97,43 @@ describe('BatchRelationshipExtractor local mode', () => {
 				llmCalled: true,
 			}),
 		);
+		expect(mockWithWorkspaceRLS).toHaveBeenCalledWith('ws-1', expect.any(Function));
+	});
+
+	it('does not hold workspace RLS while waiting for local KG LLM output', async () => {
+		vi.stubEnv('KNOWLEDGE_LLM_PROVIDER', 'local');
+		let rlsOpened = false;
+		mockInferKnowledgeEntitiesJson.mockImplementation(async () => {
+			expect(rlsOpened).toBe(false);
+			return {
+				entities: [],
+				source: 'local:test-model',
+			};
+		});
+		mockWithWorkspaceRLS.mockImplementation(
+			async (_workspaceId: string, fn: () => Promise<unknown>) => {
+				rlsOpened = true;
+				return fn();
+			},
+		);
+		const extractor = new BatchRelationshipExtractor();
+
+		extractor.addRequest(
+			'ws-1',
+			'contact-1',
+			[{ id: 'msg-1', text: 'Solana infrastructure', timestamp: '2026-05-01T00:00:00Z' }],
+			Buffer.from('salt'),
+			{
+				encryptedWrk: Buffer.from('wrk'),
+				kmsContext: { workspaceId: 'ws-1' },
+				wrkVersion: 1,
+			},
+		);
+
+		await extractor.submitAndProcess();
+
+		expect(mockInferKnowledgeEntitiesJson).toHaveBeenCalled();
+		expect(mockWithWorkspaceRLS).toHaveBeenCalledWith('ws-1', expect.any(Function));
 	});
 
 	it('does not persist plaintext entity names in evidence metadata', async () => {

@@ -26,6 +26,7 @@ const mockCreateCommitment = vi.hoisted(() => vi.fn());
 const mockCreateMemory = vi.hoisted(() => vi.fn());
 const mockUpsertSummary = vi.hoisted(() => vi.fn());
 const mockHasUserAiAnalysisConsent = vi.hoisted(() => vi.fn());
+const mockWithWorkspaceRLS = vi.hoisted(() => vi.fn());
 const mockTrackAnalyticsEvent = vi.hoisted(() => vi.fn());
 
 vi.mock('@repo/crypto', () => ({
@@ -42,6 +43,7 @@ vi.mock('@repo/db', () => ({
 	hasUserAiAnalysisConsent: mockHasUserAiAnalysisConsent,
 	isDuplicateGoal: mockIsDuplicateGoal,
 	createGoalProposal: mockCreateGoalProposal,
+	withWorkspaceRLS: mockWithWorkspaceRLS,
 }));
 
 vi.mock('../../ai/goal-extraction', () => ({
@@ -141,6 +143,9 @@ describe('GI4 — Goal Extraction Worker', () => {
 		mockIsDuplicateGoal.mockResolvedValue(false);
 		mockCreateGoalProposal.mockResolvedValue({ id: 'goal-001' });
 		mockHasUserAiAnalysisConsent.mockResolvedValue(true);
+		mockWithWorkspaceRLS.mockImplementation(
+			async (_workspaceId: string, fn: () => Promise<unknown>) => fn(),
+		);
 
 		// Import to trigger Worker registration
 		await import('../ai-flow');
