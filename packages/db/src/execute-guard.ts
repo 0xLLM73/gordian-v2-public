@@ -9,8 +9,8 @@
  * column's mapToDriverValue — encrypted columns throw "No encryption context".
  */
 
-import { getTableConfig } from 'drizzle-orm/pg-core';
 import type { PgTable } from 'drizzle-orm/pg-core';
+import { getTableConfig } from 'drizzle-orm/pg-core';
 import * as schema from './schema/index';
 
 // ── Encrypted column discovery ──────────────────────────────────────────────

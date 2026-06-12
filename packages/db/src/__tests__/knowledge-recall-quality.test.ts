@@ -8,8 +8,8 @@ import {
 } from './fixtures/knowledge-recall-harness';
 import {
 	DEFAULT_RECALL_QUALITY_CASES,
-	type KnowledgeRecallQualityCase,
 	formatKnowledgeRecallQualitySummary,
+	type KnowledgeRecallQualityCase,
 	runKnowledgeRecallQualityGate,
 	toStableQualitySnapshot,
 } from './fixtures/knowledge-recall-quality';

@@ -1,12 +1,13 @@
 'use client';
+
 // Needs interactivity: toggle statuses, adjust threshold, save
 
+import { useState, useTransition } from 'react';
+import { toast } from 'sonner';
 import { updatePreferencesAction } from '@/app/actions/preferences';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import { useState, useTransition } from 'react';
-import { toast } from 'sonner';
 
 type GhostingStatus = 'cooling' | 'dormant';
 

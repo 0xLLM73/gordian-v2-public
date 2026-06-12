@@ -1,10 +1,10 @@
 'use client';
 
-import { triggerSyncAction } from '@/app/actions/sync';
-import { Button } from '@/components/ui/button';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { useAction } from 'next-safe-action/hooks';
 import * as React from 'react';
+import { triggerSyncAction } from '@/app/actions/sync';
+import { Button } from '@/components/ui/button';
 
 export function SyncButton({ disabledReason }: { disabledReason?: string }) {
 	const [lastSynced, setLastSynced] = React.useState<string | null>(null);

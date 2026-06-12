@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
 import type { ReactNode } from 'react';
+import { useState } from 'react';
 import { ContactTabs } from './contact-tabs';
 import { MessageHistory } from './message-history';
 

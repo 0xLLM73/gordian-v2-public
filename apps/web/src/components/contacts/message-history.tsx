@@ -1,7 +1,7 @@
 'use client';
 
-import { getMessagesByContactAction } from '@/app/actions/messages';
 import { useEffect, useState, useTransition } from 'react';
+import { getMessagesByContactAction } from '@/app/actions/messages';
 
 interface Message {
 	id: string;

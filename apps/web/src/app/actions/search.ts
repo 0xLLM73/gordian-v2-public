@@ -1,12 +1,12 @@
 'use server';
 
-import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
-import { track } from '@/lib/track';
-import { deriveKeys, maskEntities, prefilterEntities, unwrapWrk } from '@repo/crypto';
 import type { SealedEnvelope } from '@repo/crypto';
+import { deriveKeys, maskEntities, prefilterEntities, unwrapWrk } from '@repo/crypto';
 import { unifiedSearch } from '@repo/db';
 import { getKnowledgeEmbeddingRuntime, isAiProcessingEnabled } from '@repo/shared';
 import { z } from 'zod';
+import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
+import { track } from '@/lib/track';
 
 type SearchEmbeddingProviderMode = 'disabled' | 'local' | 'cloud';
 

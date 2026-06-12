@@ -1,33 +1,46 @@
-export { encrypt, decrypt } from './aes';
+export { decrypt, encrypt } from './aes';
 export { computeBlindIndex } from './blind-index';
-export { deriveKeys } from './hkdf';
 export {
-	keyStore,
-	getCurrentKeys,
-	unwrapWrk,
-	withKeys,
+	generatePersonPseudonym,
+	maskContactAliases,
+	maskEntities,
+	prefilterEntities,
+} from './entity-masking';
+export { deriveKeys } from './hkdf';
+export type { TelegramSessionKeyProvider, WorkspaceKeyProvider } from './kms';
+export {
+	assertSafeTelegramSessionKeyProviderForMtProto,
 	clearKeyCache,
-	generateSessionKek,
 	decryptSessionKek,
 	deleteSessionKek,
-	rehardenSessionKek,
-	getTelegramSessionKeyProvider,
-	assertSafeTelegramSessionKeyProviderForMtProto,
+	deleteWorkspaceWrk,
+	generateSessionKek,
 	generateWorkspaceWrk,
+	getCurrentKeys,
+	getTelegramSessionKeyProvider,
 	getWorkspaceKeyProvider,
 	isWorkspaceKeychainMarker,
+	keyStore,
+	rehardenSessionKek,
 	storeWorkspaceWrkInKeychain,
-	deleteWorkspaceWrk,
+	unwrapWrk,
+	withKeys,
 } from './kms';
-export type { TelegramSessionKeyProvider, WorkspaceKeyProvider } from './kms';
+export {
+	computeNextVirtualVersion,
+	deriveRotationKeys,
+	reEncryptField,
+	reEncryptFieldWithNewWrk,
+	withKeysForVersion,
+} from './rotation';
 export type {
-	DerivedKeys,
 	ContactAliasInput,
 	ContactAliasKind,
 	ContactAliasMapEntry,
 	ContactAliasMaskOptions,
 	ContactMaskEntity,
 	ContactMaskResult,
+	DerivedKeys,
 	DetectedEntity,
 	EncryptedField,
 	EntityMap,
@@ -36,16 +49,3 @@ export type {
 	MaskResult,
 	SealedEnvelope,
 } from './types';
-export {
-	generatePersonPseudonym,
-	maskContactAliases,
-	maskEntities,
-	prefilterEntities,
-} from './entity-masking';
-export {
-	computeNextVirtualVersion,
-	deriveRotationKeys,
-	reEncryptField,
-	reEncryptFieldWithNewWrk,
-	withKeysForVersion,
-} from './rotation';

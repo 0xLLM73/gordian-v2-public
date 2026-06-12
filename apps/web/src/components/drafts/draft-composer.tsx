@@ -1,9 +1,9 @@
 'use client';
 
+import { useEffect, useRef, useState } from 'react';
 import { discardDraftAction, generateDraftAction, sendDraftAction } from '@/app/actions/drafts';
 import { getCalibrationSamplesAction } from '@/app/actions/style-calibration';
 import { StyleCalibration } from '@/components/onboarding/style-calibration';
-import { useEffect, useRef, useState } from 'react';
 
 const ARM_LABELS: Record<string, string> = {
 	casual_nudge: 'Casual',

@@ -1,9 +1,9 @@
+import { headers } from 'next/headers';
+import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { buildOAuthState } from '@/lib/oauth-state';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { getUserWorkspaceId } from '@/lib/workspace';
-import { headers } from 'next/headers';
-import { NextResponse } from 'next/server';
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_REDIRECT_URI = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/calendar/callback`;

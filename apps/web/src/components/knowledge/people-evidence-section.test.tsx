@@ -2,10 +2,10 @@ import { render, screen, within } from '@testing-library/react';
 import React from 'react';
 import { describe, expect, it } from 'vitest';
 import {
-	PeopleEvidenceSection,
-	type TopicEvidenceContact,
 	claimLabelForEvidenceKind,
 	evidenceSupportsTopic,
+	PeopleEvidenceSection,
+	type TopicEvidenceContact,
 } from './people-evidence-section';
 
 describe('PeopleEvidenceSection', () => {

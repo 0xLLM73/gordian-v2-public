@@ -1,9 +1,4 @@
-import { MergeDialog } from '@/components/knowledge/merge-dialog';
-import { PeopleEvidenceSection } from '@/components/knowledge/people-evidence-section';
-import { KNOWLEDGE_LINK_TYPE_COLORS, KNOWLEDGE_TYPE_COLORS } from '@/lib/colors';
-import { formatRelativeDate } from '@/lib/format';
-import { computeDecayedRelevance } from '@/lib/knowledge-utils';
-import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
+import type { KnowledgeNeighbor, KnowledgeNode } from '@repo/db';
 import {
 	getKnowledgeNeighbors,
 	getKnowledgeNode,
@@ -11,9 +6,14 @@ import {
 	listContactsWithEvidenceForKnowledgeNode,
 	searchKnowledgeNodes,
 } from '@repo/db';
-import type { KnowledgeNeighbor, KnowledgeNode } from '@repo/db';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { MergeDialog } from '@/components/knowledge/merge-dialog';
+import { PeopleEvidenceSection } from '@/components/knowledge/people-evidence-section';
+import { KNOWLEDGE_LINK_TYPE_COLORS, KNOWLEDGE_TYPE_COLORS } from '@/lib/colors';
+import { formatRelativeDate } from '@/lib/format';
+import { computeDecayedRelevance } from '@/lib/knowledge-utils';
+import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
 
 function LinkTypeBadge({ type }: { type: string }) {
 	const colorClass = KNOWLEDGE_LINK_TYPE_COLORS[type] ?? 'bg-gray-100 text-gray-600';

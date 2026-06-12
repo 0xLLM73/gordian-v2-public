@@ -1,8 +1,8 @@
 'use client';
 
+import { createContext, useCallback, useContext, useState } from 'react';
 // Needs client boundary: React context + state for chat page awareness
 import type { ActionProposal } from '@/components/chat/action-card';
-import { createContext, useCallback, useContext, useState } from 'react';
 
 export interface ChatMessage {
 	id: string;

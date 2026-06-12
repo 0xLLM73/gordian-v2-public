@@ -1,5 +1,5 @@
-import { getContactInitial } from '@/lib/contact-initial';
 import { describe, expect, it } from 'vitest';
+import { getContactInitial } from '@/lib/contact-initial';
 
 describe('getContactInitial', () => {
 	it('uses the first valid contact name character with deterministic casing', () => {

@@ -1,9 +1,9 @@
 'use server';
 
-import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
-import { track } from '@/lib/track';
 import { getLatestBrief, updateBriefFeedback } from '@repo/db';
 import { z } from 'zod';
+import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
+import { track } from '@/lib/track';
 
 export const getLatestBriefAction = workspaceAction.schema(z.object({})).action(async ({ ctx }) => {
 	return getLatestBrief(ctx.workspaceId, ctx.session.user.id, ctx.envelope);

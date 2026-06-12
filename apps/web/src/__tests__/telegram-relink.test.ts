@@ -1,5 +1,5 @@
-import { isTelegramRelinkAllowed } from '@/lib/telegram-relink';
 import { describe, expect, it } from 'vitest';
+import { isTelegramRelinkAllowed } from '@/lib/telegram-relink';
 
 describe('Telegram relink authorization', () => {
 	it('allows a user to refresh their own Telegram session', () => {

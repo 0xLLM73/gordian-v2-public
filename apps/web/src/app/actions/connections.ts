@@ -1,12 +1,12 @@
 'use server';
 
-import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
 import {
 	listConnections as dalList,
 	updateConnection as dalUpdate,
 	updateConnectionStatus as dalUpdateStatus,
 } from '@repo/db';
 import { z } from 'zod';
+import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
 
 const connectionPeriodUnitSchema = z.enum(['days', 'weeks', 'months']);
 

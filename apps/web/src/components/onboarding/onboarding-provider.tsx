@@ -5,7 +5,7 @@ import {
 	TELEGRAM_SYNC_SCOPES,
 	type TelegramSyncScope,
 } from '@repo/shared';
-import { type ReactNode, createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useState } from 'react';
 
 interface OnboardingState {
 	phone: string;

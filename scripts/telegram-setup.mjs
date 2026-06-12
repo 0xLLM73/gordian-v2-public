@@ -8,12 +8,12 @@ import { writePrivateEnvFile } from './lib/env-file.mjs';
 import { materializeLocalRuntimeSecrets } from './lib/local-runtime-safety.mjs';
 import {
 	DEFAULT_ENV_PATH,
-	TELEGRAM_LOCAL_MODE_VALUES,
 	envValue,
 	getTelegramApiCredentialProvider,
 	parseArgs,
 	parseEnvText,
 	readEnvText,
+	TELEGRAM_LOCAL_MODE_VALUES,
 	updateEnvText,
 	validateTelegramApiHash,
 	validateTelegramApiId,

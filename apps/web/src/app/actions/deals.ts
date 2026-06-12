@@ -1,7 +1,5 @@
 'use server';
 
-import { workspaceAction } from '@/lib/safe-action';
-import { track } from '@/lib/track';
 import {
 	addDealArtifact,
 	addDealParticipant,
@@ -30,6 +28,8 @@ import {
 } from '@repo/shared';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
+import { workspaceAction } from '@/lib/safe-action';
+import { track } from '@/lib/track';
 
 const dealSortSchema = z.enum([
 	'last_activity',

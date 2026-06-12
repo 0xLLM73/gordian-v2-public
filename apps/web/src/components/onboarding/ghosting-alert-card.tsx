@@ -1,10 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import { trackEventAction } from '@/app/actions/analytics';
 import { ghostingDismissAction, ghostingRemindAction } from '@/app/actions/ghosting';
 import type { StaleContact } from '@/hooks/use-onboarding-sync';
 import { cn } from '@/lib/utils';
-import { useState } from 'react';
 
 interface GhostingAlertCardProps {
 	staleContacts: StaleContact[];

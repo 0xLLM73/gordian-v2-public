@@ -1,6 +1,10 @@
 'use client';
+
 // 'use client' — needs useState for edit mode + useAction for server action mutations + useRouter for refresh
 
+import { useRouter } from 'next/navigation';
+import { useAction } from 'next-safe-action/hooks';
+import { useState } from 'react';
 import {
 	approveFollowUpPlanStepAction,
 	editAndApproveFollowUpPlanStepAction,
@@ -10,9 +14,6 @@ import {
 	rejectFollowUpPlanStepAction,
 } from '@/app/actions/follow-up-plans';
 import { StepRescheduleAction } from '@/components/follow-up-plans/step-reschedule-action';
-import { useAction } from 'next-safe-action/hooks';
-import { useRouter } from 'next/navigation';
-import { useState } from 'react';
 
 export function StepReviewActions({
 	stepId,

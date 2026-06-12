@@ -1,15 +1,16 @@
 'use client';
+
 // Needs 'use client': event handlers for Act/Dismiss buttons, useTransition for loading state.
 
+import type { Recommendation, RecommendationType } from '@repo/db';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useTransition } from 'react';
 import {
 	actOnRecommendationAction,
 	dismissRecommendationAction,
 } from '@/app/actions/recommendations';
 import { RECOMMENDATION_TYPE_COLORS } from '@/lib/colors';
-import type { Recommendation, RecommendationType } from '@repo/db';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useTransition } from 'react';
 
 const TYPE_LABELS: Record<RecommendationType, string> = {
 	re_engage: 'Re-engage',

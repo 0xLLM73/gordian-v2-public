@@ -1,7 +1,5 @@
 'use server';
 
-import { workspaceAction } from '@/lib/safe-action';
-import { track } from '@/lib/track';
 import {
 	canAccessContact,
 	createContact as dalCreateContact,
@@ -13,6 +11,8 @@ import {
 	updateContact as dalUpdateContact,
 } from '@repo/db';
 import { z } from 'zod';
+import { workspaceAction } from '@/lib/safe-action';
+import { track } from '@/lib/track';
 
 const emailSchema = z.string().email().max(320);
 const optionalTrimmedString = (max: number) => z.string().trim().max(max).optional();

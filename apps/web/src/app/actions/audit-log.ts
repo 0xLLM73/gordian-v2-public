@@ -1,8 +1,8 @@
 'use server';
 
-import { workspaceAction } from '@/lib/safe-action';
 import { getAuditTrail, queryAuditLogs } from '@repo/db';
 import { z } from 'zod';
+import { workspaceAction } from '@/lib/safe-action';
 
 const auditLogQuerySchema = z.object({
 	actorType: z.enum(['user', 'system', 'ai']).optional(),

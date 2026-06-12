@@ -1,7 +1,7 @@
 'use client';
 
-import { updateNotificationsAction } from '@/app/actions/settings';
 import { useEffect, useRef, useState, useTransition } from 'react';
+import { updateNotificationsAction } from '@/app/actions/settings';
 
 interface Props {
 	briefEnabled: boolean;

@@ -1,6 +1,5 @@
 'use server';
 
-import { workspaceAction } from '@/lib/safe-action';
 import {
 	deleteContactTag as dalDeleteContactTag,
 	getContactTag as dalGetContactTag,
@@ -13,6 +12,7 @@ import {
 	contactStatusSchema,
 } from '@repo/shared';
 import { z } from 'zod';
+import { workspaceAction } from '@/lib/safe-action';
 
 export const getContactTagAction = workspaceAction
 	.schema(

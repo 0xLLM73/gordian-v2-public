@@ -12,8 +12,8 @@
  * has the plaintext fallback), this script can run after deploy to clean up.
  */
 
-import { encrypt, getCurrentKeys, withKeys } from '@repo/crypto';
 import type { SealedEnvelope } from '@repo/crypto';
+import { encrypt, getCurrentKeys, withKeys } from '@repo/crypto';
 import { db, eq, sql, workspaceMembers, workspaces } from '@repo/db';
 
 /**

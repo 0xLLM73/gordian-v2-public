@@ -1,14 +1,14 @@
 #!/usr/bin/env tsx
 import { pathToFileURL } from 'node:url';
 import {
+	getMessageContactCoverageReport,
+	getMessageNullContactReasonReport,
 	type MessageContactCoverageReport,
 	type MessageNullContactReasonReport,
 	type PrivatePeerContactRepairResult,
-	type SenderMetadataContactRepairResult,
-	getMessageContactCoverageReport,
-	getMessageNullContactReasonReport,
 	repairMessagesToSenderContacts,
 	repairPrivateMessagesToPeerContacts,
+	type SenderMetadataContactRepairResult,
 } from '@repo/db';
 import { loadRootEnv } from './lib/load-root-env.mjs';
 

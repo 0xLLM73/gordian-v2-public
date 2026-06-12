@@ -1,9 +1,9 @@
 'use client';
 
-// Client component — needs interactive state for disconnect confirmation + feedback
-import { disconnectTelegramAction } from '@/app/actions/settings';
 import { RefreshCw, Unlink } from 'lucide-react';
 import * as React from 'react';
+// Client component — needs interactive state for disconnect confirmation + feedback
+import { disconnectTelegramAction } from '@/app/actions/settings';
 
 interface Props {
 	isConnected: boolean;

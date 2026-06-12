@@ -1,9 +1,10 @@
 'use client';
+
 // Client boundary: fetches progress events on demand, manages collapse state
 
+import { useCallback, useState, useTransition } from 'react';
 import { listGoalProgressAction } from '@/app/actions/goals';
 import { GOAL_PROGRESS_SOURCE_COLORS } from '@/lib/colors';
-import { useCallback, useState, useTransition } from 'react';
 
 interface ProgressEvent {
 	id: string;

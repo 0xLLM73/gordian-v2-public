@@ -14,10 +14,10 @@ import {
 	updateTelegramImportRunStatus,
 } from '@repo/db';
 import {
-	TELEGRAM_CONSENT_VERSION,
 	isAiAnalysisAvailable,
 	redactSensitive,
 	resolveTelegramSyncScope,
+	TELEGRAM_CONSENT_VERSION,
 } from '@repo/shared';
 import { verifyHandoffToken } from '@repo/shared/handoff-token';
 import { Hono } from 'hono';

@@ -1,5 +1,9 @@
 'use client';
 
+import type { ContactSuggestion } from '@repo/db';
+import { Loader2 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { useEffect, useRef, useState } from 'react';
 import { trackEventAction } from '@/app/actions/analytics';
 import {
 	getPriorityContactSuggestionsAction,
@@ -11,10 +15,6 @@ import { Button } from '@/components/ui/button';
 import { useAbandonTracking } from '@/hooks/use-abandon-tracking';
 import { useStepTracking } from '@/hooks/use-step-tracking';
 import { cn } from '@/lib/utils';
-import type { ContactSuggestion } from '@repo/db';
-import { Loader2 } from 'lucide-react';
-import { useRouter } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
 
 type Sensitivity = 'everything' | 'specific' | 'tasks_only';
 type UserRole = 'vc_investor' | 'founder' | 'bd' | 'community' | 'developer' | 'other';

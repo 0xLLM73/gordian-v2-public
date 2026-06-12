@@ -27,12 +27,13 @@ vi.mock('../cached-inference', () => ({
 vi.mock('../prefilter', () => ({
 	prefilterEntities: vi.fn(() => []),
 }));
+
 import {
 	getActiveCommitments,
 	getChatsByIds,
 	getContactsByIds,
-	getMessageTimeRangeStats,
 	getMessagesByTimeRange,
+	getMessageTimeRangeStats,
 	listDeals,
 } from '@repo/db';
 

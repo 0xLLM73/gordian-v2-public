@@ -1,7 +1,7 @@
-import { GhostingAlertCard } from '@/components/ghosting-alert-card';
-import type { GhostingContact } from '@/components/ghosting-alert-card';
-import { getWorkspaceEnvelope } from '@/lib/workspace';
 import { getHealthScoresByContactIds, getPreferences, getStaleContacts } from '@repo/db';
+import type { GhostingContact } from '@/components/ghosting-alert-card';
+import { GhostingAlertCard } from '@/components/ghosting-alert-card';
+import { getWorkspaceEnvelope } from '@/lib/workspace';
 
 interface GhostingAlertSectionProps {
 	workspaceId: string;

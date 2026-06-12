@@ -1,8 +1,8 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { GuidedActionCard } from '@/components/onboarding/guided-action-card';
 import { getContactInitial } from '@/lib/contact-initial';
-import { useEffect, useState } from 'react';
 
 interface GhostedContact {
 	id: string;

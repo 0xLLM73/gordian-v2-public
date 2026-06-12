@@ -1,8 +1,8 @@
 'use server';
 
-import { workspaceAction } from '@/lib/safe-action';
 import { getContactsByIds, getHealthScore, getLastMessageDate, listGoalActions } from '@repo/db';
 import { z } from 'zod';
+import { workspaceAction } from '@/lib/safe-action';
 
 export const getOutreachSuggestionsAction = workspaceAction
 	.schema(z.object({ goalId: z.string().uuid() }))

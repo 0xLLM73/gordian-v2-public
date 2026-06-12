@@ -1,4 +1,4 @@
-import { type EnvLike, assertTrustedLocalAiBaseUrl, openAICompatibleUrl } from './knowledge-ai';
+import { assertTrustedLocalAiBaseUrl, type EnvLike, openAICompatibleUrl } from './knowledge-ai';
 
 export type CommitmentLlmProvider = 'cloud' | 'local' | 'disabled';
 export type CommitmentLlmMode = 'cloud' | 'local' | 'disabled';

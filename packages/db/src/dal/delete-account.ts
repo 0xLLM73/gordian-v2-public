@@ -33,8 +33,8 @@ import {
 	followUpPlanDraftRevisions,
 	followUpPlanSendRecords,
 	followUpPlanSteps,
-	followUpPlanUserTemplateVersions,
 	followUpPlans,
+	followUpPlanUserTemplateVersions,
 } from '../schema/follow-up-plans';
 import { goalActions } from '../schema/goal-actions';
 import { goalProgressEvents, goals } from '../schema/goals';

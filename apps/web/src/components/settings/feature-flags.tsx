@@ -1,11 +1,11 @@
 'use client';
 
+import { useEffect, useState, useTransition } from 'react';
 import {
 	deleteFeatureFlagAction,
 	listFeatureFlagsAction,
 	toggleFeatureFlagAction,
 } from '@/app/actions/feature-flags';
-import { useEffect, useState, useTransition } from 'react';
 
 interface Flag {
 	id: string;

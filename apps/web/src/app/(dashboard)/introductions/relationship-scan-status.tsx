@@ -1,13 +1,13 @@
 'use client';
 
+import { Activity, AlertTriangle, CheckCircle2, Loader2, RefreshCw, Trash2 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { useAction } from 'next-safe-action/hooks';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
 	cleanupRelationshipScanFailuresAction,
 	getRelationshipScanStatusAction,
 } from '@/app/actions/introductions';
-import { Activity, AlertTriangle, CheckCircle2, Loader2, RefreshCw, Trash2 } from 'lucide-react';
-import { useAction } from 'next-safe-action/hooks';
-import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useRef, useState } from 'react';
 
 type RelationshipScanStatus = {
 	active: number;

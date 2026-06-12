@@ -1,6 +1,8 @@
 // 'use client' — needs useState, useEffect, event handlers for interactive calibration flow
 'use client';
 
+import { Loader2, Pencil, ThumbsDown, ThumbsUp } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import {
 	getCalibrationSamplesAction,
 	submitCalibrationFeedbackAction,
@@ -15,8 +17,6 @@ import {
 	DialogTitle,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { Loader2, Pencil, ThumbsDown, ThumbsUp } from 'lucide-react';
-import { useEffect, useState } from 'react';
 
 const ARM_LABELS: Record<string, string> = {
 	casual_nudge: 'Casual',

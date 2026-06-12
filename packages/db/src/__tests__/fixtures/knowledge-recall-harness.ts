@@ -57,8 +57,14 @@ vi.mock('@repo/crypto', () => ({
 
 import { searchKnowledgeNodesWithEvidence } from '../../dal/knowledge';
 
-export { mockExecute, mockSelect, mockSetLocal, mockTransaction, mockWithKeys };
-export { knowledgeRecallFixture };
+export {
+	knowledgeRecallFixture,
+	mockExecute,
+	mockSelect,
+	mockSetLocal,
+	mockTransaction,
+	mockWithKeys,
+};
 
 export const recallHarnessEnvelope = {
 	encryptedWrk: Buffer.from('fixture'),
@@ -74,11 +80,7 @@ export interface FixtureSearchInput {
 	limit?: number;
 }
 
-function normalizedMemoryScore(hit: {
-	semanticScore: number;
-	ftsRank: number;
-	rrfScore: number;
-}) {
+function normalizedMemoryScore(hit: { semanticScore: number; ftsRank: number; rrfScore: number }) {
 	const ftsScore = hit.ftsRank > 0 ? Math.min(0.95, 0.72 + Math.min(hit.ftsRank, 1) * 0.2) : 0;
 	const rrfScore = Math.min(0.88, hit.rrfScore * 10);
 	return Math.max(hit.semanticScore, ftsScore, rrfScore);

@@ -1,8 +1,8 @@
-import { auth } from '@/lib/auth';
-import { checkRateLimit } from '@/lib/rate-limit';
 import { hasAnalyticsConsent, trackBehavior } from '@repo/db';
 import { headers } from 'next/headers';
 import { NextResponse } from 'next/server';
+import { auth } from '@/lib/auth';
+import { checkRateLimit } from '@/lib/rate-limit';
 
 /**
  * POST /api/analytics/beacon — receives sendBeacon payloads for abandon tracking.

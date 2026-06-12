@@ -1,9 +1,9 @@
 'use client';
 
-import { updatePreferencesAction } from '@/app/actions/preferences';
 import { BUILT_IN_CONNECTION_KEYWORDS, BUILT_IN_INTRO_KEYWORDS } from '@repo/shared';
 import type { KeyboardEvent } from 'react';
 import { useEffect, useId, useRef, useState, useTransition } from 'react';
+import { updatePreferencesAction } from '@/app/actions/preferences';
 
 export const MAX_CUSTOM_INTRO_KEYWORDS = 20;
 export const MAX_INTRO_KEYWORD_LENGTH = 50;

@@ -13,8 +13,9 @@
  * Requires: DATABASE_URL (direct, not pooler), AWS KMS access
  *   (or DEV_KMS_BYPASS=true + NODE_ENV=development)
  */
-import { computeBlindIndex, decrypt, deriveKeys, encrypt, unwrapWrk } from '@repo/crypto';
+
 import type { SealedEnvelope } from '@repo/crypto';
+import { computeBlindIndex, decrypt, deriveKeys, encrypt, unwrapWrk } from '@repo/crypto';
 import { sql } from 'drizzle-orm';
 import { db } from '../client';
 import { workspaces } from '../schema/workspaces';

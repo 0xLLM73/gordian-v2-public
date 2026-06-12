@@ -1,3 +1,19 @@
+import type { InvestorProfile, KnowledgeNode, Outcome, OutcomeResult, OutcomeType } from '@repo/db';
+import {
+	getAccessibleContact,
+	getCommitmentsByContact,
+	getContactTag,
+	getHealthScore,
+	getInvestorProfile,
+	getLatestSummary,
+	getMemoriesByContact,
+	getMessageCount,
+	listKnowledgeByContact,
+	listOutcomes,
+} from '@repo/db';
+import Link from 'next/link';
+import { notFound } from 'next/navigation';
+import { Suspense } from 'react';
 import { ChatContextSetter } from '@/components/chat/chat-context-setter';
 import { ContactHealthFeedbackActions } from '@/components/contact-health-feedback-actions';
 import { ContactTagEditor } from '@/components/contact-tag-editor';
@@ -17,22 +33,6 @@ import {
 import { getContactInitial } from '@/lib/contact-initial';
 import { formatCurrency, formatRelativeDate } from '@/lib/format';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
-import {
-	getAccessibleContact,
-	getCommitmentsByContact,
-	getContactTag,
-	getHealthScore,
-	getInvestorProfile,
-	getLatestSummary,
-	getMemoriesByContact,
-	getMessageCount,
-	listKnowledgeByContact,
-	listOutcomes,
-} from '@repo/db';
-import type { InvestorProfile, KnowledgeNode, Outcome, OutcomeResult, OutcomeType } from '@repo/db';
-import Link from 'next/link';
-import { notFound } from 'next/navigation';
-import { Suspense } from 'react';
 
 export default async function ContactDetailPage({ params }: { params: Promise<{ id: string }> }) {
 	const session = await requireSession();
@@ -243,7 +243,10 @@ function telegramLinkLabel(contact: Record<string, unknown>) {
 function ContactHeader({
 	contact,
 	healthScore,
-}: { contact: Record<string, unknown>; healthScore: Record<string, unknown> | null }) {
+}: {
+	contact: Record<string, unknown>;
+	healthScore: Record<string, unknown> | null;
+}) {
 	const firstName = (contact.firstName as string) || '';
 	const lastName = (contact.lastName as string) || '';
 	const displayName = [firstName, lastName].filter(Boolean).join(' ') || 'Unknown';
@@ -293,7 +296,10 @@ function ContactHeader({
 function ContactHealthExplanation({
 	contactId,
 	healthScore,
-}: { contactId: string; healthScore: Record<string, unknown> | null }) {
+}: {
+	contactId: string;
+	healthScore: Record<string, unknown> | null;
+}) {
 	if (!healthScore) return null;
 
 	const data = getContactHealthComputationData(healthScore);
@@ -441,7 +447,10 @@ async function CommitmentsList({ commitments }: { commitments: Record<string, un
 async function MemoriesList({
 	workspaceId,
 	contactId,
-}: { workspaceId: string; contactId: string }) {
+}: {
+	workspaceId: string;
+	contactId: string;
+}) {
 	const envelope = await getWorkspaceEnvelope(workspaceId);
 	if (!envelope) {
 		return (

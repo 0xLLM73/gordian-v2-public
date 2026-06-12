@@ -7,12 +7,11 @@ import {
 } from '@repo/db';
 import { redactSensitive } from '@repo/shared';
 import { Queue, Worker } from 'bullmq';
-import { withRLS } from '../middleware/rls';
-import { connection } from '../redis';
-
 // density-clustering is pure JS with no TS types
 // @ts-expect-error — no type declarations available
 import DBSCAN from 'density-clustering/lib/DBSCAN';
+import { withRLS } from '../middleware/rls';
+import { connection } from '../redis';
 
 // ─── Queue ───────────────────────────────────────────────────────────────────
 

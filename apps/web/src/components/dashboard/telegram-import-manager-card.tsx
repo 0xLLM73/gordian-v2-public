@@ -1,15 +1,5 @@
 'use client';
 
-import { saveConsentAction } from '@/app/actions/calibration';
-import {
-	cancelTelegramImportAction,
-	getTelegramImportStatusAction,
-	pauseTelegramImportAction,
-	resumeTelegramImportAction,
-	startTelegramImportAction,
-} from '@/app/actions/sync';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { TELEGRAM_CONSENT_VERSION } from '@repo/shared';
 import {
 	AlertTriangle,
@@ -23,6 +13,16 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { saveConsentAction } from '@/app/actions/calibration';
+import {
+	cancelTelegramImportAction,
+	getTelegramImportStatusAction,
+	pauseTelegramImportAction,
+	resumeTelegramImportAction,
+	startTelegramImportAction,
+} from '@/app/actions/sync';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
 type ImportStatus =
 	| 'queued'

@@ -1,9 +1,9 @@
+import { headers } from 'next/headers';
+import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { getInternalSecret } from '@/lib/safe-action';
 import { getUserWorkspaceId, getWorkspaceEnvelope } from '@/lib/workspace';
-import { headers } from 'next/headers';
-import { NextResponse } from 'next/server';
 
 async function safeWorkerChatError(response: Response): Promise<string> {
 	try {

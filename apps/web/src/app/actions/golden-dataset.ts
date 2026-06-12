@@ -1,7 +1,6 @@
 'use server';
 
-import { workspaceAction } from '@/lib/safe-action';
-import { assertWorkspaceOwner } from '@/lib/workspace-authz';
+import type { CreateCorrectionDiffInput } from '@repo/db';
 import {
 	createCorrectionDiff,
 	getReviewQueueStats,
@@ -9,8 +8,9 @@ import {
 	promoteToGold,
 	rejectExample,
 } from '@repo/db';
-import type { CreateCorrectionDiffInput } from '@repo/db';
 import { z } from 'zod';
+import { workspaceAction } from '@/lib/safe-action';
+import { assertWorkspaceOwner } from '@/lib/workspace-authz';
 
 /**
  * Classify the diff type by comparing model prediction to corrected output.

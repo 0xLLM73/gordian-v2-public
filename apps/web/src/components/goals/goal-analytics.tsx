@@ -1,10 +1,11 @@
 'use client';
+
 // Client boundary: fetches analytics on demand, manages collapse state + renders charts
 
-import { getGoalAnalyticsAction } from '@/app/actions/goals';
-import { GOAL_TYPE_COLORS } from '@/lib/colors';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useCallback, useState, useTransition } from 'react';
+import { getGoalAnalyticsAction } from '@/app/actions/goals';
+import { GOAL_TYPE_COLORS } from '@/lib/colors';
 
 interface GoalTypeStats {
 	type: string;

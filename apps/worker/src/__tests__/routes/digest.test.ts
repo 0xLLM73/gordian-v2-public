@@ -181,31 +181,33 @@ describe('POST /digest/generate', () => {
 		expect(mockDigestQueueAdd).toHaveBeenCalledOnce();
 	});
 
-	it.each(['waiting', 'active', 'delayed', 'prioritized'])(
-		'returns the existing digest job when it is %s',
-		async (state) => {
-			const remove = vi.fn();
-			mockDigestQueueGetJob.mockResolvedValue({
-				getState: vi.fn().mockResolvedValue(state),
-				remove,
-			});
-			const { digest } = await import('../../routes/digest');
+	it.each([
+		'waiting',
+		'active',
+		'delayed',
+		'prioritized',
+	])('returns the existing digest job when it is %s', async (state) => {
+		const remove = vi.fn();
+		mockDigestQueueGetJob.mockResolvedValue({
+			getState: vi.fn().mockResolvedValue(state),
+			remove,
+		});
+		const { digest } = await import('../../routes/digest');
 
-			const res = await digest.request('/generate', {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-					'X-Internal-Secret': SECRET,
-				},
-				body: JSON.stringify(VALID_BODY),
-			});
+		const res = await digest.request('/generate', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'X-Internal-Secret': SECRET,
+			},
+			body: JSON.stringify(VALID_BODY),
+		});
 
-			expect(res.status).toBe(200);
-			const json = (await res.json()) as { existing: boolean; state: string };
-			expect(json.existing).toBe(true);
-			expect(json.state).toBe(state);
-			expect(remove).not.toHaveBeenCalled();
-			expect(mockDigestQueueAdd).not.toHaveBeenCalled();
-		},
-	);
+		expect(res.status).toBe(200);
+		const json = (await res.json()) as { existing: boolean; state: string };
+		expect(json.existing).toBe(true);
+		expect(json.state).toBe(state);
+		expect(remove).not.toHaveBeenCalled();
+		expect(mockDigestQueueAdd).not.toHaveBeenCalled();
+	});
 });

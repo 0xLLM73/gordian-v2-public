@@ -1,13 +1,16 @@
+import { getContactsByIds, listConnections } from '@repo/db';
+import Link from 'next/link';
 import { ConnectionActions } from '@/components/connections/connection-actions';
 import { CONNECTION_STATUS_COLORS } from '@/lib/colors';
 import { getWorkspaceEnvelope } from '@/lib/workspace';
-import { getContactsByIds, listConnections } from '@repo/db';
-import Link from 'next/link';
 
 export async function ConnectionList({
 	workspaceId,
 	event,
-}: { workspaceId: string; event?: string }) {
+}: {
+	workspaceId: string;
+	event?: string;
+}) {
 	const envelope = await getWorkspaceEnvelope(workspaceId);
 	if (!envelope) {
 		return <p className="text-sm text-muted-foreground">Workspace not found.</p>;

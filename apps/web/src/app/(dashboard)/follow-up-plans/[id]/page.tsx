@@ -1,13 +1,3 @@
-import { ContactReplyPauseNotice } from '@/components/follow-up-plans/contact-reply-pause-notice';
-import { FollowUpContactContext } from '@/components/follow-up-plans/follow-up-contact-context';
-import { FollowUpPlanActions } from '@/components/follow-up-plans/follow-up-plan-actions';
-import { SavePlanTemplateAction } from '@/components/follow-up-plans/save-plan-template-action';
-import { StepProcessingStatus } from '@/components/follow-up-plans/step-processing-status';
-import { StepRescheduleAction } from '@/components/follow-up-plans/step-reschedule-action';
-import { StepReviewActions } from '@/components/follow-up-plans/step-review-actions';
-import { StepSendStatus } from '@/components/follow-up-plans/step-send-status';
-import { FOLLOW_UP_PLAN_STATUS_COLORS } from '@/lib/colors';
-import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
 import {
 	getContactsByIds,
 	getFollowUpPlan,
@@ -23,6 +13,16 @@ import {
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Suspense } from 'react';
+import { ContactReplyPauseNotice } from '@/components/follow-up-plans/contact-reply-pause-notice';
+import { FollowUpContactContext } from '@/components/follow-up-plans/follow-up-contact-context';
+import { FollowUpPlanActions } from '@/components/follow-up-plans/follow-up-plan-actions';
+import { SavePlanTemplateAction } from '@/components/follow-up-plans/save-plan-template-action';
+import { StepProcessingStatus } from '@/components/follow-up-plans/step-processing-status';
+import { StepRescheduleAction } from '@/components/follow-up-plans/step-reschedule-action';
+import { StepReviewActions } from '@/components/follow-up-plans/step-review-actions';
+import { StepSendStatus } from '@/components/follow-up-plans/step-send-status';
+import { FOLLOW_UP_PLAN_STATUS_COLORS } from '@/lib/colors';
+import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
 
 const statusLabels: Record<string, string> = {
 	draft: 'Draft',

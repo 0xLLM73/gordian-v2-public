@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-	type NotificationBudget,
 	canSendNotification,
 	createDefaultBudget,
+	type NotificationBudget,
 	recordMuteEvent,
 	recordNotificationEngaged,
 	recordNotificationIgnored,

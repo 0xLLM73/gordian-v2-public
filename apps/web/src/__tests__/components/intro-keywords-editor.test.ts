@@ -4,21 +4,21 @@ vi.mock('@/app/actions/preferences', () => ({
 	updatePreferencesAction: vi.fn(),
 }));
 
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import React from 'react';
 import { updatePreferencesAction } from '@/app/actions/preferences';
 import {
 	BUILT_IN_KEYWORDS,
 	BUILT_IN_NEW_CONNECTION_KEYWORDS,
-	IntroKeywordsEditor,
-	MAX_CUSTOM_INTRO_KEYWORDS,
 	getDetectionKeywordValidationError,
 	getIntroKeywordValidationError,
+	IntroKeywordsEditor,
+	MAX_CUSTOM_INTRO_KEYWORDS,
 	normalizeDetectionKeywords,
 	normalizeIntroKeyword,
 	normalizeIntroKeywords,
 	prepareDetectionKeywordsForSave,
 } from '@/components/settings/intro-keywords-editor';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import React from 'react';
 
 vi.stubGlobal('React', React);
 

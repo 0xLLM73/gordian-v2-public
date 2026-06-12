@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { DealsActiveFilters, buildDealsHref } from './deals-active-filters';
+import { buildDealsHref, DealsActiveFilters } from './deals-active-filters';
 
 describe('DealsActiveFilters', () => {
 	beforeEach(() => {

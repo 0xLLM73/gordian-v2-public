@@ -1,11 +1,11 @@
 'use client';
 
+import type { DealStage } from '@repo/shared';
+import { useRouter } from 'next/navigation';
+import { useAction } from 'next-safe-action/hooks';
+import { useEffect, useId, useState } from 'react';
 import { updateDealAction } from '@/app/actions/deals';
 import { cn } from '@/lib/utils';
-import type { DealStage } from '@repo/shared';
-import { useAction } from 'next-safe-action/hooks';
-import { useRouter } from 'next/navigation';
-import { useEffect, useId, useState } from 'react';
 import { DEAL_STAGE_FILTERS, DEAL_STAGE_LABELS } from './filter-options';
 
 const DEAL_STAGES = DEAL_STAGE_FILTERS.filter((stage) => stage !== 'all') as DealStage[];

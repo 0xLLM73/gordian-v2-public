@@ -1,6 +1,6 @@
-import { getUserWorkspaceId, getWorkspaceEnvelope } from '@/lib/workspace';
 import { db } from '@repo/db';
 import { describe, expect, it, vi } from 'vitest';
+import { getUserWorkspaceId, getWorkspaceEnvelope } from '@/lib/workspace';
 
 // Mock Next.js modules (imported by workspace.ts but not used in these tests)
 vi.mock('next/headers', () => ({ headers: vi.fn() }));

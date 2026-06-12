@@ -1,6 +1,6 @@
+import { getCalibration } from '@repo/db';
 import { CalibrationWizard } from '@/app/(dashboard)/calibration/calibration-wizard';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
-import { getCalibration } from '@repo/db';
 
 export const metadata = { title: 'Calibrate Gordian' };
 

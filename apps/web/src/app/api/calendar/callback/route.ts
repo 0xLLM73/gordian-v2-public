@@ -1,11 +1,11 @@
+import { createCalendarConnection } from '@repo/db';
+import { headers } from 'next/headers';
+import type { NextRequest } from 'next/server';
+import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { verifyOAuthState } from '@/lib/oauth-state';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { getUserWorkspaceId, getWorkspaceEnvelope } from '@/lib/workspace';
-import { createCalendarConnection } from '@repo/db';
-import { headers } from 'next/headers';
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;

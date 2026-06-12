@@ -1,5 +1,9 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
+import { useAction } from 'next-safe-action/hooks';
+import { useState } from 'react';
+import { toast } from 'sonner';
 import { deleteDealAction, updateDealAction } from '@/app/actions/deals';
 import {
 	AlertDialog,
@@ -21,10 +25,6 @@ import {
 	DialogTitle,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { useAction } from 'next-safe-action/hooks';
-import { useRouter } from 'next/navigation';
-import { useState } from 'react';
-import { toast } from 'sonner';
 
 const STAGE_ORDER = ['discovery', 'diligence', 'negotiation', 'committed', 'won'];
 

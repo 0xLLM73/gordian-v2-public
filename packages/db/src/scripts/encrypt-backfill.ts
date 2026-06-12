@@ -1,5 +1,5 @@
-import { computeBlindIndex, decrypt, deriveKeys, encrypt, unwrapWrk } from '@repo/crypto';
 import type { SealedEnvelope } from '@repo/crypto';
+import { computeBlindIndex, decrypt, deriveKeys, encrypt, unwrapWrk } from '@repo/crypto';
 /**
  * Encryption Backfill Script
  *

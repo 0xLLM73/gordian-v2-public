@@ -1,10 +1,10 @@
 import type { SealedEnvelope } from '@repo/crypto';
 import {
-	type UpsertInvestorProfileData,
 	getDealsByContact,
 	isFeatureEnabled,
 	listDealParticipants,
 	listKnowledgeByContact,
+	type UpsertInvestorProfileData,
 	upsertInvestorProfile,
 } from '@repo/db';
 

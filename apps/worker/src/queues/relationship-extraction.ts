@@ -1,12 +1,13 @@
 import {
 	type ContactMaskEntity,
-	type SealedEnvelope,
 	decrypt,
 	deriveKeys,
 	generatePersonPseudonym,
 	maskContactAliases,
+	type SealedEnvelope,
 	unwrapWrk,
 } from '@repo/crypto';
+import type { ContactMaskingAlias } from '@repo/db';
 import {
 	createConnection,
 	createIntroduction,
@@ -18,7 +19,6 @@ import {
 	listContactMaskingAliases,
 	searchContactByName,
 } from '@repo/db';
-import type { ContactMaskingAlias } from '@repo/db';
 import { redactSensitive } from '@repo/shared';
 import { type Job, Queue, Worker } from 'bullmq';
 import { detectConnections, hasConnectionKeywords } from '../ai/connection-detection';

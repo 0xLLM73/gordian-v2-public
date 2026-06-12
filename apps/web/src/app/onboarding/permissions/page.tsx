@@ -1,14 +1,14 @@
 'use client';
 
-import { saveConsentAction } from '@/app/actions/calibration';
-import { SYNC_OPTIONS, resolveAiProcessingForSync } from '@/app/onboarding/sync/sync-settings';
-import { OnboardingCard } from '@/components/onboarding/onboarding-card';
-import { useOnboarding } from '@/components/onboarding/onboarding-provider';
-import { Button } from '@/components/ui/button';
 import { TELEGRAM_CONSENT_VERSION, type TelegramSyncScope } from '@repo/shared';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { saveConsentAction } from '@/app/actions/calibration';
+import { resolveAiProcessingForSync, SYNC_OPTIONS } from '@/app/onboarding/sync/sync-settings';
+import { OnboardingCard } from '@/components/onboarding/onboarding-card';
+import { useOnboarding } from '@/components/onboarding/onboarding-provider';
+import { Button } from '@/components/ui/button';
 
 type SafetyTone = 'ok' | 'neutral' | 'warn';
 

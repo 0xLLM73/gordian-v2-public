@@ -1,6 +1,8 @@
 'use client';
+
 // Needs interactivity: confirm/dismiss buttons, dismiss popover, card animations, viewport tracking
 
+import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import {
 	confirmCommitmentAction,
 	dismissCommitmentAction,
@@ -9,7 +11,6 @@ import {
 } from '@/app/actions/commitments';
 import { GuidedActionCard } from '@/components/onboarding/guided-action-card';
 import { cn } from '@/lib/utils';
-import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 
 interface Commitment {
 	id: string;

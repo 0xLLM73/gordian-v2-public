@@ -1,8 +1,8 @@
 'use client';
 
-import { getAuditLogsAction } from '@/app/actions/audit-log';
 import { useAction } from 'next-safe-action/hooks';
 import { useCallback, useEffect, useState } from 'react';
+import { getAuditLogsAction } from '@/app/actions/audit-log';
 
 const ACTOR_TYPES = ['user', 'system', 'ai'] as const;
 const ACTIONS = [

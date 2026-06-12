@@ -1,8 +1,8 @@
 'use client';
 
-import { searchContactsAction } from '@/app/actions/contacts';
 import Link from 'next/link';
 import { useState, useTransition } from 'react';
+import { searchContactsAction } from '@/app/actions/contacts';
 
 export function ContactSearch() {
 	const [query, setQuery] = useState('');

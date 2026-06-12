@@ -1,6 +1,10 @@
 'use client';
+
 // 'use client' — needs useState/useEffect for wizard steps + useAction for server action calls
 
+import { useRouter } from 'next/navigation';
+import { useAction } from 'next-safe-action/hooks';
+import { useEffect, useState } from 'react';
 import { listContactsAction } from '@/app/actions/contacts';
 import {
 	activateFollowUpPlanAction,
@@ -13,9 +17,6 @@ import type {
 	FollowUpPlanReadiness,
 	FollowUpPlanReadinessTone,
 } from '@/lib/follow-up-plans-readiness-types';
-import { useAction } from 'next-safe-action/hooks';
-import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
 
 interface Template {
 	id: string;

@@ -1,3 +1,7 @@
+import { accounts, and, db, eq, getCalibration, getPreferences, isFeatureEnabled } from '@repo/db';
+import { isAiAnalysisAvailable } from '@repo/shared';
+import Link from 'next/link';
+import { Suspense } from 'react';
 import { PreferencesForm } from '@/components/preferences-form';
 import { AiAnalysisConsent } from '@/components/settings/ai-analysis-consent';
 import { BriefScheduleEditor } from '@/components/settings/brief-schedule-editor';
@@ -18,10 +22,6 @@ import { isRuntimeEnvEnabled } from '@/lib/runtime-env';
 import { isStoredSessionUnwrapOutsideImportsAllowed } from '@/lib/telegram-session-policy';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
 import { isWorkspaceOwner } from '@/lib/workspace-authz';
-import { accounts, and, db, eq, getCalibration, getPreferences, isFeatureEnabled } from '@repo/db';
-import { isAiAnalysisAvailable } from '@repo/shared';
-import Link from 'next/link';
-import { Suspense } from 'react';
 
 function telegramSessionUnlockScopeStatus(): TelegramSafetyItem {
 	const legacyUnwrapAllowed = isStoredSessionUnwrapOutsideImportsAllowed();
@@ -669,7 +669,10 @@ async function FeatureAutomationStatusSection({
 async function PreferencesSection({
 	workspaceId,
 	userId,
-}: { workspaceId: string; userId: string }) {
+}: {
+	workspaceId: string;
+	userId: string;
+}) {
 	const prefs = await getPreferences(workspaceId, userId);
 	return <PreferencesForm initial={prefs} />;
 }
@@ -677,7 +680,10 @@ async function PreferencesSection({
 async function BriefScheduleSection({
 	workspaceId,
 	userId,
-}: { workspaceId: string; userId: string }) {
+}: {
+	workspaceId: string;
+	userId: string;
+}) {
 	const prefs = await getPreferences(workspaceId, userId);
 	return (
 		<BriefScheduleEditor
@@ -691,7 +697,10 @@ async function BriefScheduleSection({
 async function CalendarSection({
 	workspaceId,
 	enabled,
-}: { workspaceId: string; enabled: boolean }) {
+}: {
+	workspaceId: string;
+	enabled: boolean;
+}) {
 	if (!enabled) {
 		return (
 			<DisabledSettingState>
@@ -737,7 +746,11 @@ async function AiAnalysisConsentSection({
 	workspaceId,
 	userId,
 	aiAvailable,
-}: { workspaceId: string; userId: string; aiAvailable: boolean }) {
+}: {
+	workspaceId: string;
+	userId: string;
+	aiAvailable: boolean;
+}) {
 	const envelope = await getWorkspaceEnvelope(workspaceId);
 	const calibration = envelope ? await getCalibration(userId, workspaceId, envelope) : null;
 	return (
@@ -753,7 +766,10 @@ async function AiAnalysisConsentSection({
 async function DetectionKeywordsSection({
 	workspaceId,
 	userId,
-}: { workspaceId: string; userId: string }) {
+}: {
+	workspaceId: string;
+	userId: string;
+}) {
 	const prefs = await getPreferences(workspaceId, userId);
 	return (
 		<div className="grid gap-6 md:grid-cols-2">
@@ -774,7 +790,10 @@ async function DetectionKeywordsSection({
 async function GhostingPreferencesSection({
 	workspaceId,
 	userId,
-}: { workspaceId: string; userId: string }) {
+}: {
+	workspaceId: string;
+	userId: string;
+}) {
 	const prefs = await getPreferences(workspaceId, userId);
 	return (
 		<GhostingPreferences
@@ -788,7 +807,11 @@ async function NotificationsSection({
 	workspaceId,
 	userId,
 	disabled,
-}: { workspaceId: string; userId: string; disabled: boolean }) {
+}: {
+	workspaceId: string;
+	userId: string;
+	disabled: boolean;
+}) {
 	const prefs = await getPreferences(workspaceId, userId);
 	return (
 		<NotificationPreferences

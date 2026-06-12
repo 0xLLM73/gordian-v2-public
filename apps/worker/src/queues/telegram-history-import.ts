@@ -37,10 +37,10 @@ import {
 	workspaces,
 } from '@repo/db';
 import {
-	TELEGRAM_CONSENT_VERSION,
 	canRunCommitmentExtraction,
 	isAiAnalysisAvailable,
 	redactSensitive,
+	TELEGRAM_CONSENT_VERSION,
 } from '@repo/shared';
 import { Queue, Worker } from 'bullmq';
 import { canRunConnectionDetection } from '../ai/connection-detection';

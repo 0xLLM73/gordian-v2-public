@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
-	KNOWLEDGE_EMBEDDING_DIMENSIONS,
 	assertTrustedLocalAiBaseUrl,
 	formatKnowledgeEmbeddingInput,
 	getKnowledgeEmbeddingFingerprint,
 	getKnowledgeEmbeddingFingerprintWarning,
 	getKnowledgeEmbeddingRuntime,
 	getKnowledgeLlmRuntime,
+	KNOWLEDGE_EMBEDDING_DIMENSIONS,
 	knowledgeEmbeddingFingerprintKey,
 } from '../knowledge-ai';
 

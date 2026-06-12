@@ -1,7 +1,7 @@
 'use client';
 
-import { createFollowUpPlanTemplateFromPlanAction } from '@/app/actions/follow-up-plans';
 import * as React from 'react';
+import { createFollowUpPlanTemplateFromPlanAction } from '@/app/actions/follow-up-plans';
 
 export function SavePlanTemplateAction({ followUpPlanId }: { followUpPlanId: string }) {
 	const [pending, setPending] = React.useState(false);

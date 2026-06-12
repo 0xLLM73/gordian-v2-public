@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { type Page, expect, test } from '@playwright/test';
+import { expect, type Page, test } from '@playwright/test';
 import { AUTH_FILE } from './fixtures/auth';
 
 test.use({ storageState: AUTH_FILE });

@@ -1,5 +1,5 @@
-import { computeBlindIndex, getCurrentKeys, withKeys } from '@repo/crypto';
 import type { SealedEnvelope } from '@repo/crypto';
+import { computeBlindIndex, getCurrentKeys, withKeys } from '@repo/crypto';
 import { and, asc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { db } from '../client';
 import { accounts } from '../schema/auth';

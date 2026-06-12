@@ -1,6 +1,6 @@
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { getInviteByToken } from '@repo/db';
 import Link from 'next/link';
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { InviteSignupForm } from './signup-form';
 
 export default async function InvitePage({ params }: { params: Promise<{ token: string }> }) {

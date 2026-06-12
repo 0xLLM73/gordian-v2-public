@@ -1,6 +1,6 @@
-import { getWorkspaceEnvelope } from '@/lib/workspace';
 import { getContactsByIds, getIntroducerLeaderboard } from '@repo/db';
 import Link from 'next/link';
+import { getWorkspaceEnvelope } from '@/lib/workspace';
 
 interface IntroducerLeaderboardProps {
 	workspaceId: string;

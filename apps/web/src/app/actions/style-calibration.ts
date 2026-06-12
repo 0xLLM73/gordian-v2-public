@@ -1,9 +1,9 @@
 'use server';
 
-import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
-import { track } from '@/lib/track';
 import { getVoiceProfile, isFeatureEnabled, markCalibrationComplete } from '@repo/db';
 import { z } from 'zod';
+import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
+import { track } from '@/lib/track';
 
 export const getCalibrationSamplesAction = workspaceAction
 	.schema(z.object({}))

@@ -1,12 +1,12 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 import { inviteSignupAction } from '@/app/actions/invites';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { authClient } from '@/lib/auth-client';
-import { useRouter } from 'next/navigation';
-import { useState } from 'react';
 
 export function InviteSignupForm({ token, email }: { token: string; email: string | null }) {
 	const router = useRouter();

@@ -1,7 +1,3 @@
-import { HEALTH_BADGE_COLORS } from '@/lib/colors';
-import { getContactInitial } from '@/lib/contact-initial';
-import { formatRelativeDate } from '@/lib/format';
-import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
 import {
 	getAccessibleContacts,
 	getHealthScore,
@@ -11,6 +7,10 @@ import {
 } from '@repo/db';
 import Link from 'next/link';
 import { Suspense } from 'react';
+import { HEALTH_BADGE_COLORS } from '@/lib/colors';
+import { getContactInitial } from '@/lib/contact-initial';
+import { formatRelativeDate } from '@/lib/format';
+import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
 import { AccountFilter } from './account-filter';
 import { AddContactButton } from './add-contact-modal';
 import { ContactSearch } from './contact-search';
@@ -83,7 +83,10 @@ function resolveSelectedAccount(accountParam: string | undefined, accountIds: st
 async function AccountFilterSection({
 	accounts,
 	selectedAccountKey,
-}: { accounts: string[]; selectedAccountKey?: string }) {
+}: {
+	accounts: string[];
+	selectedAccountKey?: string;
+}) {
 	if (accounts.length === 0) return null;
 	return (
 		<AccountFilter

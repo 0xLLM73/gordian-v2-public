@@ -1,8 +1,7 @@
 'use client';
 
 import { Columns3, List } from 'lucide-react';
-import { Children } from 'react';
-import { useState } from 'react';
+import { Children, useState } from 'react';
 
 export function DealsViewToggle({
 	listView,

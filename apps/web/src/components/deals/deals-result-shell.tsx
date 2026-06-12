@@ -1,5 +1,9 @@
 'use client';
 
+import type { DealSortOption, StageVelocityStats } from '@repo/db';
+import type { DealStage } from '@repo/shared';
+import { useAction } from 'next-safe-action/hooks';
+import { useEffect, useMemo, useState } from 'react';
 import { listDealsAction } from '@/app/actions/deals';
 import { DealActions } from '@/components/deals/deal-actions';
 import { DealRow } from '@/components/deals/deal-row';
@@ -9,10 +13,6 @@ import { DealsResultSummary } from '@/components/deals/deals-result-summary';
 import { DealsViewToggle } from '@/components/deals/deals-view-toggle';
 import { EditDealButton } from '@/components/deals/edit-deal-button';
 import { Button } from '@/components/ui/button';
-import type { DealSortOption, StageVelocityStats } from '@repo/db';
-import type { DealStage } from '@repo/shared';
-import { useAction } from 'next-safe-action/hooks';
-import { useEffect, useMemo, useState } from 'react';
 import type { DealSortFilter, DealStageFilter } from './filter-options';
 import type { GhostCandidate } from './ghost-card';
 

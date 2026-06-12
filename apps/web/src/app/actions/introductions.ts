@@ -1,11 +1,11 @@
 'use server';
 
-import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
 import {
 	listIntroductions as dalList,
 	updateIntroductionStatus as dalUpdateStatus,
 } from '@repo/db';
 import { z } from 'zod';
+import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
 
 const introStatusSchema = z.enum(['triage', 'active', 'archive']);
 const introResolutionSchema = z.enum(['completed', 'dismissed']);

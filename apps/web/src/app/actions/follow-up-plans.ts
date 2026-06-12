@@ -1,6 +1,5 @@
 'use server';
 
-import { workspaceAction } from '@/lib/safe-action';
 import {
 	activateFollowUpPlan as dalActivate,
 	approveStep as dalApproveStep,
@@ -23,6 +22,7 @@ import {
 	resumeFollowUpPlan as dalResume,
 } from '@repo/db';
 import { z } from 'zod';
+import { workspaceAction } from '@/lib/safe-action';
 
 export const listFollowUpPlansAction = workspaceAction
 	.schema(

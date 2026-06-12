@@ -1,3 +1,12 @@
+import {
+	getContactsByIds,
+	getFollowUpPlanSteps,
+	getFollowUpPlanWorkerHealth,
+	getGoal,
+	listFollowUpPlans,
+} from '@repo/db';
+import Link from 'next/link';
+import { Suspense } from 'react';
 import { FollowUpPlanActions } from '@/components/follow-up-plans/follow-up-plan-actions';
 import { FollowUpPlanAttentionMessage } from '@/components/follow-up-plans/follow-up-plan-attention-message';
 import { FollowUpPlanWizardButton } from '@/components/follow-up-plans/follow-up-plan-wizard';
@@ -15,15 +24,6 @@ import {
 } from '@/lib/follow-up-plan-step-attention';
 import { getFollowUpPlanReadiness } from '@/lib/follow-up-plans-readiness';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
-import {
-	getContactsByIds,
-	getFollowUpPlanSteps,
-	getFollowUpPlanWorkerHealth,
-	getGoal,
-	listFollowUpPlans,
-} from '@repo/db';
-import Link from 'next/link';
-import { Suspense } from 'react';
 
 type FollowUpPlansSearchParams = Record<string, string | string[] | undefined>;
 type FollowUpPlan = Awaited<ReturnType<typeof listFollowUpPlans>>[number];

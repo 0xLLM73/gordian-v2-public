@@ -1,8 +1,8 @@
 'use server';
 
+import { z } from 'zod';
 import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
 import { track } from '@/lib/track';
-import { z } from 'zod';
 
 const chatMessageSchema = z.object({
 	role: z.enum(['user', 'assistant']),

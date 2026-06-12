@@ -1,7 +1,3 @@
-import { auth } from '@/lib/auth';
-import { checkRateLimit } from '@/lib/rate-limit';
-import { isStoredSessionUnwrapOutsideImportsAllowed } from '@/lib/telegram-session-policy';
-import { getUserWorkspaceId } from '@/lib/workspace';
 import {
 	and,
 	contacts,
@@ -14,13 +10,17 @@ import {
 	userCalibrations,
 } from '@repo/db';
 import {
-	TELEGRAM_CONSENT_VERSION,
 	canRunLocalEmbeddingGeneration,
 	isAiAnalysisAvailable,
 	isVendorAiEgressEnabled,
+	TELEGRAM_CONSENT_VERSION,
 } from '@repo/shared';
 import { headers } from 'next/headers';
 import { NextResponse } from 'next/server';
+import { auth } from '@/lib/auth';
+import { checkRateLimit } from '@/lib/rate-limit';
+import { isStoredSessionUnwrapOutsideImportsAllowed } from '@/lib/telegram-session-policy';
+import { getUserWorkspaceId } from '@/lib/workspace';
 
 type SafetyTone = 'ok' | 'neutral' | 'warn';
 

@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
-import { decrypt, encrypt, keyStore } from '@repo/crypto';
 import type { DerivedKeys } from '@repo/crypto';
+import { decrypt, encrypt, keyStore } from '@repo/crypto';
 import { describe, expect, it } from 'vitest';
 
 // Build a minimal DerivedKeys context for testing

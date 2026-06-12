@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-	LOCAL_KG_MODEL_PRESETS,
 	chooseInstalledCommitmentModel,
+	LOCAL_KG_MODEL_PRESETS,
 	localKgEnvValues,
 } from './local-kg-models.mjs';
 

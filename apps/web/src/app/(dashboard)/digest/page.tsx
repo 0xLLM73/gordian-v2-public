@@ -1,7 +1,7 @@
-import { DigestViewer } from '@/components/digest/digest-viewer';
-import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
 import { getCalibration, getContactsByIds, listDigests } from '@repo/db';
 import { Suspense } from 'react';
+import { DigestViewer } from '@/components/digest/digest-viewer';
+import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
 
 export default async function DigestPage() {
 	const session = await requireSession();

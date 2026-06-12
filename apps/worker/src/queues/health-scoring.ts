@@ -3,8 +3,8 @@ import {
 	type ContactHealthFeedbackRow,
 	commitments,
 	contactRelationships,
-	contactTags,
 	contacts,
+	contactTags,
 	db,
 	eq,
 	getActiveContactHealthFeedback,
@@ -17,9 +17,9 @@ import {
 } from '@repo/db';
 import { Worker } from 'bullmq';
 import {
-	type RelationshipHealthAiSignals,
 	analyzeRelationshipHealthLocal,
 	canRunLocalRelationshipHealthAnalysis,
+	type RelationshipHealthAiSignals,
 } from '../ai/relationship-health';
 import { withRLS } from '../middleware/rls';
 import { broadcastUpdate } from '../realtime/broadcast';
@@ -30,6 +30,12 @@ import {
 } from './health-scoring-queue';
 import { enqueueRelationshipEvaluation } from './outcome-evaluation';
 
+export type {
+	EnqueueHealthScoringOptions,
+	EnqueueHealthScoringResult,
+	HealthScoringFreshness,
+	HealthScoringJobData,
+} from './health-scoring-queue';
 export {
 	enqueueHealthScoringForWorkspace,
 	getHealthScoringFreshness,
@@ -37,12 +43,6 @@ export {
 	isHealthScoringFresh,
 	queueHealthScoringForAllWorkspaces,
 	resolveHealthScoringStaleAfterMs,
-} from './health-scoring-queue';
-export type {
-	EnqueueHealthScoringOptions,
-	EnqueueHealthScoringResult,
-	HealthScoringFreshness,
-	HealthScoringJobData,
 } from './health-scoring-queue';
 
 // ─── Weights ────────────────────────────────────────────────────────────────

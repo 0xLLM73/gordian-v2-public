@@ -1,4 +1,4 @@
-import { type Locator, expect, test } from '@playwright/test';
+import { expect, type Locator, test } from '@playwright/test';
 import { AUTH_FILE } from './fixtures/auth';
 import { createDisposableDeal, deleteDisposableDeal } from './fixtures/deals';
 

@@ -1,15 +1,15 @@
-export {
-	buildDealContextPack,
-	buildDeterministicDealOutput,
-	generateDealLocalAiOutput,
-	getDealLocalAiStatus,
-} from '@repo/shared';
 export type {
 	BuildDealContextInput,
 	DealContextPack,
 	DealLocalAiGeneratedOutput,
 	DealLocalAiRunType,
 	DealLocalAiStatus,
+} from '@repo/shared';
+export {
+	buildDealContextPack,
+	buildDeterministicDealOutput,
+	generateDealLocalAiOutput,
+	getDealLocalAiStatus,
 } from '@repo/shared';
 
 import type { DealContextPack } from '@repo/shared';

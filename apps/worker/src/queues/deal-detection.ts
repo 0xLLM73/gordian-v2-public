@@ -12,7 +12,7 @@
  * Worker decrypts, then ELM-masks before calling GC3/GC4 (SEC-S7-003/004).
  */
 
-import { type SealedEnvelope, decrypt, deriveKeys, maskEntities, unwrapWrk } from '@repo/crypto';
+import { decrypt, deriveKeys, maskEntities, type SealedEnvelope, unwrapWrk } from '@repo/crypto';
 import { hasUserAiAnalysisConsent } from '@repo/db';
 import { redactSensitive } from '@repo/shared';
 import { Queue, Worker } from 'bullmq';

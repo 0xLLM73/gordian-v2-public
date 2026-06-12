@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { withKeys } from '@repo/crypto';
 import type { SealedEnvelope } from '@repo/crypto';
+import { withKeys } from '@repo/crypto';
 import { and, asc, count, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { db } from '../client';
 import { contacts } from '../schema/contacts';
@@ -10,10 +10,10 @@ import {
 	followUpPlanDraftRevisions,
 	followUpPlanSendRecords,
 	followUpPlanSteps,
+	followUpPlans,
 	followUpPlanTemplateVersions,
 	followUpPlanUserTemplateVersions,
 	followUpPlanWorkerHeartbeats,
-	followUpPlans,
 } from '../schema/follow-up-plans';
 
 // ─── Templates ────────────────────────────────────────────────────────────────

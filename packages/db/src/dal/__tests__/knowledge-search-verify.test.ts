@@ -29,12 +29,8 @@ vi.mock('../../client', () => ({
 		execute: mockExecute,
 		select: mockSelect,
 		transaction: vi.fn(
-			(
-				fn: (tx: {
-					execute: typeof mockExecute;
-					select: typeof mockSelect;
-				}) => Promise<unknown>,
-			) => fn({ execute: mockExecute, select: mockSelect }),
+			(fn: (tx: { execute: typeof mockExecute; select: typeof mockSelect }) => Promise<unknown>) =>
+				fn({ execute: mockExecute, select: mockSelect }),
 		),
 	},
 }));

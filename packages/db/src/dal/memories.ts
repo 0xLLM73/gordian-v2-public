@@ -1,5 +1,5 @@
-import { withKeys } from '@repo/crypto';
 import type { SealedEnvelope } from '@repo/crypto';
+import { withKeys } from '@repo/crypto';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { db } from '../client';
 import { memories } from '../schema/memories';

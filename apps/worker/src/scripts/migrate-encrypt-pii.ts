@@ -12,8 +12,8 @@
  *   pnpm --filter worker tsx src/scripts/migrate-encrypt-pii.ts
  */
 
-import { decrypt, deriveKeys, encrypt, unwrapWrk } from '@repo/crypto';
 import type { SealedEnvelope } from '@repo/crypto';
+import { decrypt, deriveKeys, encrypt, unwrapWrk } from '@repo/crypto';
 import { db, sql } from '@repo/db';
 
 // ---------------------------------------------------------------------------

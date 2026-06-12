@@ -1,11 +1,11 @@
 'use client';
 
-import { findConnectionsForPeriodAction } from '@/app/actions/connections';
 import { Loader2, Play, Search } from 'lucide-react';
-import { useAction } from 'next-safe-action/hooks';
 import { useRouter } from 'next/navigation';
+import { useAction } from 'next-safe-action/hooks';
 import { useState } from 'react';
 import { toast } from 'sonner';
+import { findConnectionsForPeriodAction } from '@/app/actions/connections';
 
 type PeriodUnit = 'days' | 'weeks' | 'months';
 

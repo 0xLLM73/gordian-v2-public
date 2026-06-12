@@ -1,11 +1,11 @@
 'use client';
 
+import { MessageCircle } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 // Needs client boundary: useState for panel toggle, provides ChatContextProvider to subtree
 import { ChatContextProvider } from '@/hooks/use-chat-context';
 import { useMediaQuery } from '@/hooks/use-media-query';
-import { MessageCircle } from 'lucide-react';
-import { useEffect, useState } from 'react';
 import { ChatPanel } from './chat-panel';
 
 export function ChatToggle({ children }: { children: React.ReactNode }) {

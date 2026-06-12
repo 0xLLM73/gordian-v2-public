@@ -26,8 +26,8 @@ import { config } from 'dotenv';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 config({ path: path.resolve(__dirname, '../.env.local') });
 
-import { maskEntities } from '@repo/crypto';
 import type { SealedEnvelope } from '@repo/crypto';
+import { maskEntities } from '@repo/crypto';
 import { createCommitment, db, finalizeBanditReward, getBanditStats, sql } from '@repo/db';
 import { extractCommitmentsWithBandit } from '../apps/worker/src/ai/commitment-extraction';
 import { generateEmbedding } from '../apps/worker/src/ai/embeddings';

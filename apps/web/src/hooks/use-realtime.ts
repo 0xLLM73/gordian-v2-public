@@ -1,9 +1,9 @@
 'use client';
 
-import { getRealtimeTokenAction } from '@/app/actions/realtime';
 import { createClient } from '@supabase/supabase-js';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef } from 'react';
+import { getRealtimeTokenAction } from '@/app/actions/realtime';
 
 /** Token refresh interval: 50 minutes (token expires at 60) */
 const TOKEN_REFRESH_MS = 50 * 60 * 1000;

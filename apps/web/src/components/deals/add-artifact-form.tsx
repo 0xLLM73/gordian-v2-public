@@ -1,5 +1,9 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
+import { useAction } from 'next-safe-action/hooks';
+import { useState } from 'react';
+import { toast } from 'sonner';
 import { addDealArtifactAction, removeDealArtifactAction } from '@/app/actions/deals';
 import {
 	AlertDialog,
@@ -13,10 +17,6 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { useAction } from 'next-safe-action/hooks';
-import { useRouter } from 'next/navigation';
-import { useState } from 'react';
-import { toast } from 'sonner';
 
 export function AddArtifactForm({ dealId }: { dealId: string }) {
 	const [open, setOpen] = useState(false);

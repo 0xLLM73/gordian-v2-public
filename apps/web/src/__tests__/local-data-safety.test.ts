@@ -1,3 +1,4 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	DEMO_LOGIN_LOCAL_TELEGRAM_DATA_MESSAGE,
 	DEMO_LOGIN_SAFETY_CHECK_FAILED_MESSAGE,
@@ -6,7 +7,6 @@ import {
 	resolveDemoLoginSafety,
 	shouldBlockDemoCredentialSignIn,
 } from '@/lib/local-data-safety';
-import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@repo/db', () => ({
 	accounts: {},

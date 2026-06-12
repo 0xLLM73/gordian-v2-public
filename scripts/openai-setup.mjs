@@ -7,8 +7,8 @@ import readline from 'node:readline/promises';
 import { writePrivateEnvFile } from './lib/env-file.mjs';
 import { materializeLocalRuntimeSecrets } from './lib/local-runtime-safety.mjs';
 import {
-	OPENAI_LOCAL_MODE_VALUES,
 	getOpenAIApiKeyProvider,
+	OPENAI_LOCAL_MODE_VALUES,
 	validateOpenAIApiKey,
 	writeOpenAIApiKeyToKeychain,
 } from './lib/openai-local-mode.mjs';

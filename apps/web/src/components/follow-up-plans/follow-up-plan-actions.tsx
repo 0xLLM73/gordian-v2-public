@@ -1,14 +1,15 @@
 'use client';
+
 // 'use client' — needs useAction hooks for server action mutations + useRouter for refresh
 
+import { useRouter } from 'next/navigation';
+import { useAction } from 'next-safe-action/hooks';
 import {
 	activateFollowUpPlanAction,
 	cancelFollowUpPlanAction,
 	pauseFollowUpPlanAction,
 	resumeFollowUpPlanAction,
 } from '@/app/actions/follow-up-plans';
-import { useAction } from 'next-safe-action/hooks';
-import { useRouter } from 'next/navigation';
 
 export function FollowUpPlanActions({
 	followUpPlanId,

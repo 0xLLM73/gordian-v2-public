@@ -5,11 +5,11 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import {
 	ALLOW_NONLOCAL_DEMO_TARGETS_ENV,
+	assertLocalDemoTargets,
 	GRAMMY_SESSION_KEY_PREFIX,
+	isLegacyGrammySessionEntry,
 	LOCAL_REDIS_PURGE_PATTERNS,
 	LOCAL_RUNTIME_SECRET_KEYS,
-	assertLocalDemoTargets,
-	isLegacyGrammySessionEntry,
 	materializeLocalRuntimeSecrets,
 } from './lib/local-runtime-safety.mjs';
 import { parseEnvText } from './lib/telegram-local-mode.mjs';

@@ -1,8 +1,8 @@
-import { auth } from '@/lib/auth';
 import type { SealedEnvelope } from '@repo/crypto';
 import { db, eq, workspaceMembers, workspaces } from '@repo/db';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
+import { auth } from '@/lib/auth';
 
 /**
  * Verify session and return user context.

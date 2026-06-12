@@ -1,9 +1,5 @@
 'use server';
 
-import { isRuntimeEnvEnabled } from '@/lib/runtime-env';
-import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
-import { isStoredSessionUnwrapOutsideImportsAllowed } from '@/lib/telegram-session-policy';
-import { track } from '@/lib/track';
 import {
 	type getLatestTelegramImportProgress,
 	getLatestTelegramImportProgressWithHistory,
@@ -12,11 +8,15 @@ import {
 } from '@repo/db';
 import {
 	DEFAULT_TELEGRAM_SYNC_SCOPE,
+	isAiAnalysisAvailable,
 	TELEGRAM_CONSENT_VERSION,
 	TELEGRAM_SYNC_SCOPES,
-	isAiAnalysisAvailable,
 } from '@repo/shared';
 import { z } from 'zod';
+import { isRuntimeEnvEnabled } from '@/lib/runtime-env';
+import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
+import { isStoredSessionUnwrapOutsideImportsAllowed } from '@/lib/telegram-session-policy';
+import { track } from '@/lib/track';
 
 const WORKER_SYNC_TIMEOUT_MS = 8000;
 

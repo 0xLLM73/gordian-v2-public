@@ -1,6 +1,5 @@
 'use server';
 
-import { workspaceAction } from '@/lib/safe-action';
 import {
 	canManageContact,
 	getUserTelegramAccountIds as dalGetAccounts,
@@ -9,6 +8,7 @@ import {
 	unshareContact as dalUnshare,
 } from '@repo/db';
 import { z } from 'zod';
+import { workspaceAction } from '@/lib/safe-action';
 
 export const shareContactAction = workspaceAction
 	.schema(

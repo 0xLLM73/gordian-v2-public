@@ -1,8 +1,9 @@
 'use client';
+
 // 'use client' — needs useEffect to fire analytics event on mount
 
-import { useDashboardTracking } from '@/hooks/use-dashboard-tracking';
 import { useEffect } from 'react';
+import { useDashboardTracking } from '@/hooks/use-dashboard-tracking';
 
 export function NewIntelViewTracker({
 	newContactCount,

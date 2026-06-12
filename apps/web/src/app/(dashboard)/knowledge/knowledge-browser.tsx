@@ -2,6 +2,9 @@
 
 // Client boundary: type filter tabs + debounced search input, calls server action on change
 
+import { CheckCircle2, CircleHelp, Loader2, Network, Pencil, Play, Plus } from 'lucide-react';
+import Link from 'next/link';
+import React, { useRef, useState, useTransition } from 'react';
 import {
 	createManualKnowledgeNodeAction,
 	getKnowledgeAnalysisEstimateAction,
@@ -17,9 +20,6 @@ import { KnowledgeGraph } from '@/components/knowledge/knowledge-graph';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatRelativeDate } from '@/lib/format';
 import { sortByRelevance } from '@/lib/knowledge-utils';
-import { CheckCircle2, CircleHelp, Loader2, Network, Pencil, Play, Plus } from 'lucide-react';
-import Link from 'next/link';
-import React, { useRef, useState, useTransition } from 'react';
 
 type NodeType = 'topic' | 'project' | 'organization' | 'technology' | 'sector' | 'concept';
 type AnalysisMode = 'incremental' | 'evidence' | 'full';

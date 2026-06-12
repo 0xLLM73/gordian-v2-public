@@ -1,5 +1,5 @@
-import { getUserWorkspaceId, requireSession } from '@/lib/workspace';
 import { getDashboardAnalyticsStats } from '@repo/db';
+import { getUserWorkspaceId, requireSession } from '@/lib/workspace';
 
 export default async function AnalyticsPanel() {
 	try {

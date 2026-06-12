@@ -1,12 +1,12 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
+import { useAction } from 'next-safe-action/hooks';
+import { useState } from 'react';
+import { toast } from 'sonner';
 import { updateDealAction } from '@/app/actions/deals';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { useAction } from 'next-safe-action/hooks';
-import { useRouter } from 'next/navigation';
-import { useState } from 'react';
-import { toast } from 'sonner';
 
 interface EditDealButtonProps {
 	dealId: string;

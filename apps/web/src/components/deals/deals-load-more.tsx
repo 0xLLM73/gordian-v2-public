@@ -1,15 +1,16 @@
 'use client';
+
 // Needs interactivity: load-more state management, server action calls
 
+import type { DealStage } from '@repo/shared';
+import { useAction } from 'next-safe-action/hooks';
+import type { ReactNode } from 'react';
+import { useState } from 'react';
 import { listDealsAction } from '@/app/actions/deals';
 import { DealActions } from '@/components/deals/deal-actions';
 import { DealRow } from '@/components/deals/deal-row';
 import { EditDealButton } from '@/components/deals/edit-deal-button';
 import { Button } from '@/components/ui/button';
-import type { DealStage } from '@repo/shared';
-import { useAction } from 'next-safe-action/hooks';
-import type { ReactNode } from 'react';
-import { useState } from 'react';
 
 type DealSortOption = 'last_activity' | 'highest_value' | 'newest' | 'oldest' | 'most_stalled';
 

@@ -1,7 +1,7 @@
 'use client';
 
-import { generateDigestAction, listDigestsAction } from '@/app/actions/digest';
 import * as React from 'react';
+import { generateDigestAction, listDigestsAction } from '@/app/actions/digest';
 
 type Period = 'today' | 'yesterday' | '3d' | 'week';
 

@@ -1,3 +1,21 @@
+import type { ContactHealthFeedbackRow, UpcomingCommitment } from '@repo/db';
+import {
+	getActiveContactHealthFeedback,
+	getCalibrationCompletionStatus,
+	getCommitmentsByWorkspace,
+	getContactsByIds,
+	getDashboardStats,
+	getHealthScoresByWorkspace,
+	getLatestMessageTimestamp,
+	getPendingDrafts,
+	getUpcomingCommitments,
+	listConnections,
+	listDeals,
+	listIntroductions,
+	listKnowledgeNodes,
+} from '@repo/db';
+import Link from 'next/link';
+import { Suspense } from 'react';
 import { getLatestBriefAction } from '@/app/actions/brief';
 import { MorningBriefCard, MorningBriefSkeleton } from '@/components/brief/morning-brief-card';
 import { CommitmentActions } from '@/components/commitment-actions';
@@ -19,24 +37,6 @@ import { isRuntimeEnvEnabled } from '@/lib/runtime-env';
 import { isStoredSessionUnwrapOutsideImportsAllowed } from '@/lib/telegram-session-policy';
 import { track } from '@/lib/track';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
-import {
-	getActiveContactHealthFeedback,
-	getCalibrationCompletionStatus,
-	getCommitmentsByWorkspace,
-	getContactsByIds,
-	getDashboardStats,
-	getHealthScoresByWorkspace,
-	getLatestMessageTimestamp,
-	getPendingDrafts,
-	getUpcomingCommitments,
-	listConnections,
-	listDeals,
-	listIntroductions,
-	listKnowledgeNodes,
-} from '@repo/db';
-import type { ContactHealthFeedbackRow, UpcomingCommitment } from '@repo/db';
-import Link from 'next/link';
-import { Suspense } from 'react';
 import { StatsBar } from './stats-bar';
 
 export default async function DashboardPage({

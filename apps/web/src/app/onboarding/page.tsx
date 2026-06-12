@@ -1,4 +1,3 @@
-import { getUserWorkspaceId, requireSession } from '@/lib/workspace';
 import {
 	contacts,
 	db,
@@ -9,6 +8,7 @@ import {
 } from '@repo/db';
 import { TELEGRAM_CONSENT_VERSION } from '@repo/shared';
 import { redirect } from 'next/navigation';
+import { getUserWorkspaceId, requireSession } from '@/lib/workspace';
 
 export default async function OnboardingRedirectPage() {
 	const session = await requireSession();

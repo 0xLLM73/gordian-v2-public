@@ -1,8 +1,8 @@
 'use client';
 
-import { saveConsentAction } from '@/app/actions/calibration';
 import { TELEGRAM_CONSENT_VERSION } from '@repo/shared';
 import { useMemo, useState, useTransition } from 'react';
+import { saveConsentAction } from '@/app/actions/calibration';
 
 interface AiAnalysisConsentProps {
 	aiAvailable: boolean;
