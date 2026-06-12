@@ -1,6 +1,7 @@
 'use server';
 
 import {
+	getCalibration,
 	type getLatestTelegramImportProgress,
 	getLatestTelegramImportProgressWithHistory,
 	getUserTelegramAccountIds,
@@ -168,20 +169,18 @@ export const triggerSyncAction = workspaceAction
 export const getTelegramImportStatusAction = workspaceAction
 	.schema(z.object({}))
 	.action(async ({ ctx }) => {
-		const accountIds = await getUserTelegramAccountIds(ctx.session.user.id);
-		const hasCurrentConsent = await hasCurrentTelegramConsent(
-			ctx.session.user.id,
-			ctx.workspaceId,
-			TELEGRAM_CONSENT_VERSION,
-		);
-		const progress = await getLatestTelegramImportProgressWithHistory(
-			ctx.workspaceId,
-			ctx.session.user.id,
-		);
+		const [accountIds, hasCurrentConsent, progress, calibration] = await Promise.all([
+			getUserTelegramAccountIds(ctx.session.user.id),
+			hasCurrentTelegramConsent(ctx.session.user.id, ctx.workspaceId, TELEGRAM_CONSENT_VERSION),
+			getLatestTelegramImportProgressWithHistory(ctx.workspaceId, ctx.session.user.id),
+			getCalibration(ctx.session.user.id, ctx.workspaceId, ctx.envelope),
+		]);
 		return {
 			import: serializeImportProgress(progress.latest),
 			lastDataImport: serializeImportProgress(progress.lastDataImport),
 			hasCurrentTelegramConsent: hasCurrentConsent,
+			aiAnalysisConsent: calibration?.consentAiAnalysis === true,
+			aiAnalysisAvailable: isAiAnalysisAvailable(process.env),
 			telegramAccounts: telegramAccountOptions(accountIds),
 		};
 	});
@@ -191,6 +190,7 @@ const startTelegramImportSchema = z.object({
 	telegramAccountKey: z.string().regex(/^\d+$/).optional(),
 	runAiDuringImport: z.boolean().default(false),
 	backfillOlderHistory: z.boolean().default(false),
+	historyWindowDays: z.number().int().min(1).max(3650).optional(),
 });
 
 export const startTelegramImportAction = workspaceAction
@@ -222,7 +222,11 @@ export const startTelegramImportAction = workspaceAction
 				sourceAccountId,
 				largeImportConfirmed: true,
 				localAnalysisMode: parsedInput.runAiDuringImport ? 'inline' : 'deferred',
-				importMode: parsedInput.backfillOlderHistory ? 'backfill' : 'recent',
+				importMode:
+					parsedInput.backfillOlderHistory || parsedInput.historyWindowDays ? 'backfill' : 'recent',
+				...(parsedInput.historyWindowDays
+					? { historyWindowDays: parsedInput.historyWindowDays }
+					: {}),
 			},
 			'Failed to start Telegram import',
 		);
@@ -230,7 +234,9 @@ export const startTelegramImportAction = workspaceAction
 		track(ctx.workspaceId, ctx.session.user.id, 'telegram.history_import_started', {
 			scope: 'all_private_and_groups',
 			local_analysis_mode: parsedInput.runAiDuringImport ? 'inline' : 'deferred',
-			import_mode: parsedInput.backfillOlderHistory ? 'backfill' : 'recent',
+			import_mode:
+				parsedInput.backfillOlderHistory || parsedInput.historyWindowDays ? 'backfill' : 'recent',
+			history_window_days: parsedInput.historyWindowDays ?? null,
 		});
 
 		return { importRunId: result.importRunId, status: result.status };
@@ -240,6 +246,7 @@ const importRunSchema = z.object({ runId: z.string().uuid() });
 const resumeImportRunSchema = importRunSchema.extend({
 	runAiDuringImport: z.boolean().default(false),
 	backfillOlderHistory: z.boolean().default(false),
+	historyWindowDays: z.number().int().min(1).max(3650).optional(),
 });
 
 export const pauseTelegramImportAction = workspaceAction
@@ -262,7 +269,11 @@ export const resumeTelegramImportAction = workspaceAction
 				userId: ctx.session.user.id,
 				workspaceId: ctx.workspaceId,
 				localAnalysisMode: parsedInput.runAiDuringImport ? 'inline' : 'deferred',
-				importMode: parsedInput.backfillOlderHistory ? 'backfill' : 'recent',
+				importMode:
+					parsedInput.backfillOlderHistory || parsedInput.historyWindowDays ? 'backfill' : 'recent',
+				...(parsedInput.historyWindowDays
+					? { historyWindowDays: parsedInput.historyWindowDays }
+					: {}),
 			},
 			'Failed to resume Telegram import',
 		);

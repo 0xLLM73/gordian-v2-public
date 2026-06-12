@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockGetTopPatterns = vi.fn();
 const mockGetGoldenLibrary = vi.fn();
+const mockWithWorkspaceRLS = vi.fn();
 const mockSeedBanditPriors = vi.fn();
 const mockCheckCommitmentHeuristic = vi.fn((_content: string) => ({
 	matched: false,
@@ -15,6 +16,7 @@ const mockSelectPromptVariant = vi.fn(() =>
 vi.mock('@repo/db', () => ({
 	getTopPatterns: mockGetTopPatterns,
 	getGoldenLibrary: mockGetGoldenLibrary,
+	withWorkspaceRLS: mockWithWorkspaceRLS,
 }));
 
 vi.mock('../bandit', () => ({
@@ -64,6 +66,9 @@ describe('local Qwen commitment extraction', () => {
 		}));
 		mockGetTopPatterns.mockResolvedValue([]);
 		mockGetGoldenLibrary.mockResolvedValue([]);
+		mockWithWorkspaceRLS.mockImplementation(
+			async (_workspaceId: string, fn: () => Promise<unknown>) => fn(),
+		);
 		fetchMock.mockResolvedValue({
 			ok: true,
 			json: () =>
@@ -167,6 +172,54 @@ describe('local Qwen commitment extraction', () => {
 			'11111111-1111-4111-8111-111111111111',
 		]);
 		expect(result.traceId).toBe('trace-local-qwen');
+	});
+
+	it('does not hold workspace RLS while waiting for the local Qwen response', async () => {
+		let rlsDepth = 0;
+		mockWithWorkspaceRLS.mockImplementation(
+			async (_workspaceId: string, fn: () => Promise<unknown>) => {
+				rlsDepth++;
+				try {
+					return await fn();
+				} finally {
+					rlsDepth--;
+				}
+			},
+		);
+		fetchMock.mockImplementation(async () => {
+			expect(rlsDepth).toBe(0);
+			return {
+				ok: true,
+				json: () =>
+					Promise.resolve({
+						message: {
+							content: JSON.stringify({ commitments: [] }),
+						},
+					}),
+				text: () => Promise.resolve(''),
+			};
+		});
+		enableLocalQwenCommitments();
+		const { extractCommitmentsWithBandit } = await import('../commitment-extraction');
+
+		await extractCommitmentsWithBandit(
+			[
+				{
+					id: '11111111-1111-4111-8111-111111111111',
+					sourceMessageId: '11111111-1111-4111-8111-111111111111',
+					role: 'user',
+					content: "I'll send the deck tomorrow.",
+					timestamp: '2026-01-01T00:00:00Z',
+				},
+			],
+			'2026-01-01T00:00:00Z',
+			'user-1',
+			'workspace-1',
+			{ workspaceSalt: Buffer.from('workspace-salt') },
+		);
+
+		expect(fetchMock).toHaveBeenCalled();
+		expect(mockWithWorkspaceRLS).toHaveBeenCalledWith('workspace-1', expect.any(Function));
 	});
 
 	it('does not store heuristic-looking text when local Qwen returns no commitment', async () => {

@@ -10,7 +10,11 @@ import { getCommitmentsByContact, getDealsByContact } from '@repo/db';
 import { redactSensitive } from '@repo/shared';
 import { inferWithCache, streamInfer } from './cached-inference';
 import type { ChatMessage } from './chat';
-import { CHAT_SYSTEM_KERNEL } from './chat';
+import {
+	CHAT_SYSTEM_KERNEL,
+	prefetchWorkspaceContextForLocalChat,
+	shouldPrefetchWorkspaceContext,
+} from './chat';
 import { CHAT_TOOLS, TOOL_EXECUTORS } from './chat-tools';
 import { runLocalChat, shouldUseLocalChat } from './local-chat';
 import { MODEL_IDS, routeQuery } from './query-router';
@@ -156,6 +160,8 @@ export async function chatStream(
 
 		const toolsUsed: string[] = [];
 		let hasDraftedThisRequest = false;
+		const useLocalChat = shouldUseLocalChat();
+		const shouldLoadWorkspaceContext = useLocalChat && shouldPrefetchWorkspaceContext(trimmed);
 
 		// P2: Semantic cache — ELM mask last user query, check cache before LLM
 		const WRITE_TOOLS = new Set([
@@ -169,7 +175,7 @@ export async function chatStream(
 		const lastUserMsg = [...trimmed].reverse().find((m) => m.role === 'user');
 		const lastUserText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
 
-		if (lastUserText) {
+		if (lastUserText && !shouldLoadWorkspaceContext) {
 			try {
 				const wrk = await unwrapWrk(envelope);
 				const keys = await deriveKeys(wrk, workspaceId, envelope.wrkVersion);
@@ -192,7 +198,20 @@ export async function chatStream(
 			}
 		}
 
-		if (shouldUseLocalChat()) {
+		if (useLocalChat) {
+			if (shouldLoadWorkspaceContext) {
+				const workspaceDomainKnowledge = await prefetchWorkspaceContextForLocalChat(
+					workspaceId,
+					envelope,
+					trimmed,
+				);
+				if (workspaceDomainKnowledge) {
+					domainKnowledge = [domainKnowledge, workspaceDomainKnowledge]
+						.filter(Boolean)
+						.join('\n\n');
+				}
+			}
+
 			const localResult = await runLocalChat({
 				workspaceId,
 				envelope,

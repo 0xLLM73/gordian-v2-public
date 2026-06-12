@@ -14,6 +14,7 @@ vi.mock('@repo/db', () => ({
 	getBanditStatsBucketed: mockGetBanditStatsBucketed,
 	recordBanditTrial: mockRecordBanditTrial,
 	finalizeBanditReward: mockFinalizeBanditReward,
+	withWorkspaceRLS: vi.fn((_workspaceId: string, fn: () => unknown) => fn()),
 }));
 
 vi.mock('../cached-inference', () => ({

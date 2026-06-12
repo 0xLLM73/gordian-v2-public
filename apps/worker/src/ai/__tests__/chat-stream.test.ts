@@ -8,6 +8,12 @@ const mockGetCommitmentsByContact = vi.hoisted(() => vi.fn());
 const mockGetDealsByContact = vi.hoisted(() => vi.fn());
 const mockListDeals = vi.hoisted(() => vi.fn());
 const mockHybridSearch = vi.hoisted(() => vi.fn());
+const mockGetDashboardStats = vi.hoisted(() => vi.fn());
+const mockGetHealthScoresByWorkspace = vi.hoisted(() => vi.fn());
+const mockGetMessageContactCoverageReport = vi.hoisted(() => vi.fn());
+const mockGetMessagesByTimeRange = vi.hoisted(() => vi.fn());
+const mockListContacts = vi.hoisted(() => vi.fn());
+const mockListKnowledgeNodes = vi.hoisted(() => vi.fn());
 const mockGenerateEmbedding = vi.hoisted(() => vi.fn());
 const mockSearchKnowledgeNodes = vi.hoisted(() => vi.fn());
 const mockKnowledgeGraphSearch = vi.hoisted(() => vi.fn());
@@ -29,6 +35,12 @@ vi.mock('@repo/db', () => ({
 	getDealsByContact: mockGetDealsByContact,
 	listDeals: mockListDeals,
 	hybridSearch: mockHybridSearch,
+	getDashboardStats: mockGetDashboardStats,
+	getHealthScoresByWorkspace: mockGetHealthScoresByWorkspace,
+	getMessageContactCoverageReport: mockGetMessageContactCoverageReport,
+	getMessagesByTimeRange: mockGetMessagesByTimeRange,
+	listContacts: mockListContacts,
+	listKnowledgeNodes: mockListKnowledgeNodes,
 	searchKnowledgeNodes: mockSearchKnowledgeNodes,
 	knowledgeGraphSearch: mockKnowledgeGraphSearch,
 	provenanceSearch: mockProvenanceSearch,
@@ -205,6 +217,64 @@ describe('chatStream', () => {
 		expect(body.stream).toBe(false);
 		expect(body.think).toBe(false);
 		expect(body.format.properties).toHaveProperty('response');
+	});
+
+	it('prefetches safe workspace context for broad local Qwen stream prompts', async () => {
+		enableLocalQwenChat();
+		mockGetDashboardStats.mockResolvedValue({
+			contactCount: 1,
+			activeCommitmentCount: 0,
+			openDealCount: 0,
+			totalDealValue: 0,
+			activeGoalCount: 0,
+		});
+		mockListContacts.mockResolvedValue([]);
+		mockListDeals.mockResolvedValue([]);
+		mockGetActiveCommitments.mockResolvedValue([]);
+		mockGetHealthScoresByWorkspace.mockResolvedValue([]);
+		mockGetMessageContactCoverageReport.mockResolvedValue({
+			totalMessages: 42,
+			linkedContactMessages: 30,
+			messagesWithSenderMetadata: 35,
+			chatsWithNullContactMessages: 1,
+			byChatType: [],
+		});
+		mockListKnowledgeNodes.mockResolvedValue([
+			{
+				displayName: 'AI Infrastructure',
+				type: 'sector',
+				description: 'Infrastructure for AI development',
+				mentionCount: 3,
+			},
+		]);
+		fetchMock.mockResolvedValue(
+			localModelResponse({
+				type: 'answer',
+				response: 'Your broad local themes include AI infrastructure.',
+			}),
+		);
+
+		const cb = makeCallbacks();
+		await chatStream(
+			'ws-1',
+			fakeEnvelope,
+			[{ role: 'user', content: 'What high-level themes do you see from my local data?' }],
+			'',
+			cb,
+		);
+
+		expect(cb.onTextDelta).toHaveBeenCalledWith(
+			'Your broad local themes include AI infrastructure.',
+		);
+		expect(cb.onDone).toHaveBeenCalledWith([]);
+		expect(mockInferWithCache).not.toHaveBeenCalled();
+		expect(mockStreamInfer).not.toHaveBeenCalled();
+		expect(mockListKnowledgeNodes).toHaveBeenCalledWith('ws-1', { limit: 12 }, fakeEnvelope);
+		const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as {
+			messages: Array<{ role: string; content: string }>;
+		};
+		expect(body.messages[0]?.content).toContain('Safe workspace overview');
+		expect(body.messages[0]?.content).toContain('AI Infrastructure');
 	});
 
 	it('emits onToolStart/onToolEnd around tool execution', async () => {

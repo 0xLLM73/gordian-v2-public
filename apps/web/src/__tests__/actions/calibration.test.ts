@@ -30,12 +30,17 @@ vi.mock('@/lib/workspace', () => ({
 }));
 
 const mockGetCalibration = vi.fn();
+const mockGetUserTelegramAccountIds = vi.fn();
 const mockUpsertCalibration = vi.fn();
 const mockSaveConsent = vi.fn();
+const mockFetch = vi.fn();
+
+vi.stubGlobal('fetch', mockFetch);
 
 vi.mock('@repo/db', () => ({
 	withWorkspaceRLS: vi.fn((_wsId: string, fn: (tx: unknown) => unknown) => fn({})),
 	getCalibration: mockGetCalibration,
+	getUserTelegramAccountIds: mockGetUserTelegramAccountIds,
 	upsertCalibration: mockUpsertCalibration,
 	saveConsent: mockSaveConsent,
 }));
@@ -76,6 +81,10 @@ describe('calibration actions', () => {
 	beforeEach(() => {
 		vi.resetModules();
 		vi.clearAllMocks();
+		vi.unstubAllEnvs();
+		mockGetCalibration.mockResolvedValue(null);
+		mockGetUserTelegramAccountIds.mockResolvedValue([]);
+		mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ status: 'queued' }) });
 	});
 
 	describe('getCalibrationAction', () => {
@@ -317,6 +326,82 @@ describe('calibration actions', () => {
 				consentTelegramAccess: true,
 				consentVersion: 2,
 			});
+		});
+
+		it('queues a Telegram AI catch-up when durable AI consent is first enabled', async () => {
+			vi.stubEnv('AI_PROCESSING_ENABLED', 'true');
+			vi.stubEnv('WORKER_URL', 'http://localhost:3001');
+			vi.stubEnv('WORKER_INTERNAL_SECRET', 'test-secret');
+			mockGetCalibration.mockResolvedValueOnce({ ...MOCK_CALIBRATION, consentAiAnalysis: false });
+			mockGetUserTelegramAccountIds.mockResolvedValueOnce(['123456789']);
+			mockSaveConsent.mockResolvedValue(undefined);
+
+			const { saveConsentAction } = await import('@/app/actions/calibration');
+			const result = await saveConsentAction({
+				consentDataProcessing: true,
+				consentAiAnalysis: true,
+				consentTelegramAccess: true,
+				consentVersion: 2,
+			});
+
+			expect(result?.data).toEqual({ saved: true });
+			expect(mockFetch).toHaveBeenCalledWith(
+				'http://localhost:3001/telegram/ai-consent-catchup',
+				expect.objectContaining({
+					method: 'POST',
+					headers: expect.objectContaining({
+						'X-Internal-Secret': 'test-secret',
+					}),
+				}),
+			);
+			const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+			expect(requestBody).toEqual({
+				userId: 'user-1',
+				workspaceId: WORKSPACE_ID,
+				sourceAccountId: '123456789',
+			});
+		});
+
+		it('does not queue Telegram AI catch-up when durable AI consent was already enabled', async () => {
+			vi.stubEnv('AI_PROCESSING_ENABLED', 'true');
+			vi.stubEnv('WORKER_URL', 'http://localhost:3001');
+			vi.stubEnv('WORKER_INTERNAL_SECRET', 'test-secret');
+			mockGetCalibration.mockResolvedValueOnce({ ...MOCK_CALIBRATION, consentAiAnalysis: true });
+			mockGetUserTelegramAccountIds.mockResolvedValueOnce(['123456789']);
+			mockSaveConsent.mockResolvedValue(undefined);
+
+			const { saveConsentAction } = await import('@/app/actions/calibration');
+			const result = await saveConsentAction({
+				consentDataProcessing: true,
+				consentAiAnalysis: true,
+				consentTelegramAccess: true,
+				consentVersion: 2,
+			});
+
+			expect(result?.data).toEqual({ saved: true });
+			expect(mockFetch).not.toHaveBeenCalled();
+		});
+
+		it('does not block saving consent when Telegram AI catch-up cannot be queued', async () => {
+			vi.stubEnv('AI_PROCESSING_ENABLED', 'true');
+			vi.stubEnv('WORKER_URL', 'http://localhost:3001');
+			vi.stubEnv('WORKER_INTERNAL_SECRET', 'test-secret');
+			mockGetCalibration.mockResolvedValueOnce({ ...MOCK_CALIBRATION, consentAiAnalysis: false });
+			mockGetUserTelegramAccountIds.mockResolvedValueOnce(['123456789']);
+			mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
+			mockSaveConsent.mockResolvedValue(undefined);
+
+			const { saveConsentAction } = await import('@/app/actions/calibration');
+			const result = await saveConsentAction({
+				consentDataProcessing: true,
+				consentAiAnalysis: true,
+				consentTelegramAccess: true,
+				consentVersion: 2,
+			});
+
+			expect(result?.data).toEqual({ saved: true });
+			expect(mockSaveConsent).toHaveBeenCalled();
+			expect(mockFetch).toHaveBeenCalledTimes(1);
 		});
 
 		it('persists AI-analysis consent when local Qwen analysis is configured', async () => {

@@ -1,5 +1,5 @@
 import type { SealedEnvelope } from '@repo/crypto';
-import { computeBlindIndex, getCurrentKeys, withKeys } from '@repo/crypto';
+import { withKeys } from '@repo/crypto';
 import { and, asc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { db } from '../client';
 import { accounts } from '../schema/auth';
@@ -31,6 +31,16 @@ export interface ContactMaskingAlias {
 	firstName: string | null;
 	lastName: string | null;
 	username: string | null;
+}
+
+function normalizeContactSearchText(value: unknown): string {
+	if (typeof value !== 'string') return '';
+	return value
+		.toLowerCase()
+		.normalize('NFKD')
+		.replace(/\p{M}/gu, '')
+		.replace(/[^a-z0-9@._+-]+/g, ' ')
+		.trim();
 }
 
 export async function getContactsByIds(
@@ -165,9 +175,6 @@ export async function searchContactByName(
 	envelope: SealedEnvelope,
 ) {
 	return withKeys(envelope, async () => {
-		const keys = getCurrentKeys();
-		const nameHash = computeBlindIndex(searchName, keys.bik);
-
 		// Check both first_name_bidx and last_name_bidx for matches
 		const blindIndexResults = await db
 			.select()
@@ -175,25 +182,33 @@ export async function searchContactByName(
 			.where(
 				and(
 					eq(contacts.workspaceId, workspaceId),
-					or(eq(contacts.firstNameBidx, nameHash), eq(contacts.lastNameBidx, nameHash)),
+					or(eq(contacts.firstNameBidx, searchName), eq(contacts.lastNameBidx, searchName)),
 				),
 			);
 
 		if (blindIndexResults.length > 0) return blindIndexResults;
 
 		// Fallback: decrypted name scan for small contact lists.
-		// Handles display names with special chars (e.g. "Nick | SharkLabs")
-		// where blind index HMAC("Nick | SharkLabs") != HMAC("Nick").
+		// Handles display names or multi-token queries where a field-level blind index is too narrow.
 		const allContacts = await db
 			.select()
 			.from(contacts)
 			.where(eq(contacts.workspaceId, workspaceId));
 
-		const needle = searchName.toLowerCase();
+		const needle = normalizeContactSearchText(searchName);
+		if (!needle) return [];
 		return allContacts.filter((c) => {
-			const first = ((c.firstName as string) || '').toLowerCase();
-			const last = ((c.lastName as string) || '').toLowerCase();
-			return first.includes(needle) || last.includes(needle);
+			const first = normalizeContactSearchText(c.firstName);
+			const last = normalizeContactSearchText(c.lastName);
+			const searchable = [
+				first,
+				last,
+				[first, last].filter(Boolean).join(' '),
+				normalizeContactSearchText(c.username),
+				normalizeContactSearchText(c.email),
+				normalizeContactSearchText(c.phone),
+			].join(' ');
+			return searchable.includes(needle);
 		});
 	});
 }
@@ -204,13 +219,10 @@ export async function searchContactByPhone(
 	envelope: SealedEnvelope,
 ) {
 	return withKeys(envelope, async () => {
-		const keys = getCurrentKeys();
-		const phoneHash = computeBlindIndex(phone, keys.bik);
-
 		return await db
 			.select()
 			.from(contacts)
-			.where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.phoneBidx, phoneHash)));
+			.where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.phoneBidx, phone)));
 	});
 }
 
@@ -220,13 +232,10 @@ export async function searchContactByEmail(
 	envelope: SealedEnvelope,
 ) {
 	return withKeys(envelope, async () => {
-		const keys = getCurrentKeys();
-		const emailHash = computeBlindIndex(email, keys.bik);
-
 		return await db
 			.select()
 			.from(contacts)
-			.where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.emailBidx, emailHash)));
+			.where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.emailBidx, email)));
 	});
 }
 
@@ -236,13 +245,10 @@ export async function searchContactByUsername(
 	envelope: SealedEnvelope,
 ) {
 	return withKeys(envelope, async () => {
-		const keys = getCurrentKeys();
-		const usernameHash = computeBlindIndex(username, keys.bik);
-
 		return await db
 			.select()
 			.from(contacts)
-			.where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.usernameBidx, usernameHash)));
+			.where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.usernameBidx, username)));
 	});
 }
 

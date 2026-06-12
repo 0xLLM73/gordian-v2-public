@@ -605,6 +605,7 @@ export function KnowledgeBrowser({
 	const isSearchActive = query.trim().length > 0;
 	const selectedAnalysisMode =
 		ANALYSIS_MODES.find((item) => item.key === analysisMode) ?? ANALYSIS_MODES[0];
+	const hasManualKnowledgeConsent = analysisEstimate?.hasConsent !== false;
 
 	return (
 		<div>
@@ -632,6 +633,7 @@ export function KnowledgeBrowser({
 				result={manualResult}
 				error={manualError}
 				stage={manualBuildStage}
+				hasAiConsent={hasManualKnowledgeConsent}
 				isPending={isManualCreateRunning || isManualPending}
 				onTypeChange={setManualType}
 				onNameChange={setManualName}
@@ -1110,6 +1112,7 @@ function ManualKnowledgeNodePanel({
 	result,
 	error,
 	stage,
+	hasAiConsent,
 	isPending,
 	onTypeChange,
 	onNameChange,
@@ -1122,6 +1125,7 @@ function ManualKnowledgeNodePanel({
 	result: ManualKnowledgeNodeResult | null;
 	error: string | null;
 	stage: 'idle' | 'creating' | 'complete' | 'error';
+	hasAiConsent: boolean;
 	isPending: boolean;
 	onTypeChange: (type: NodeType) => void;
 	onNameChange: (name: string) => void;
@@ -1172,13 +1176,23 @@ function ManualKnowledgeNodePanel({
 				<button
 					type="button"
 					onClick={onCreate}
-					disabled={isPending || name.trim().length < 2}
+					disabled={isPending || !hasAiConsent || name.trim().length < 2}
 					className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50"
 				>
 					{isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
 					{isPending ? 'Building' : 'Add knowledge'}
 				</button>
 			</div>
+			{!hasAiConsent ? (
+				<div className="mt-3 border-t border-border pt-3 text-xs text-muted-foreground">
+					Manual knowledge nodes create local embeddings and optional evidence links, so AI analysis
+					consent is required.{' '}
+					<Link href="/settings" className="font-medium text-primary hover:underline">
+						Enable AI analysis in Settings
+					</Link>
+					.
+				</div>
+			) : null}
 			{result || error ? (
 				<div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 border-t border-border pt-3 text-xs text-muted-foreground">
 					{result?.created ? (

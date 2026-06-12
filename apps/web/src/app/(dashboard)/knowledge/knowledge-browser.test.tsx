@@ -373,10 +373,14 @@ describe('KnowledgeBrowser evidence-aware search cards', () => {
 			'disabled',
 			true,
 		);
-		expect(screen.getByRole('link', { name: 'Enable AI analysis in Settings' })).toHaveProperty(
-			'href',
-			'http://localhost:3000/settings',
-		);
+		fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Manual node' } });
+		expect(screen.getByRole('button', { name: 'Add knowledge' })).toHaveProperty('disabled', true);
+		expect(screen.getByText(/manual knowledge nodes create local embeddings/i)).toBeTruthy();
+		const settingsLinks = screen.getAllByRole('link', {
+			name: 'Enable AI analysis in Settings',
+		});
+		expect(settingsLinks.length).toBeGreaterThanOrEqual(1);
+		expect(settingsLinks[0]).toHaveProperty('href', 'http://localhost:3000/settings');
 	});
 
 	it('creates a manual knowledge node and shows the completed local build summary', async () => {

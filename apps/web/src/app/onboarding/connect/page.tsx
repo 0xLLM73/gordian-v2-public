@@ -54,6 +54,7 @@ export default function ConnectPage() {
 	const [error, setError] = useState<string | null>(null);
 	const [pending, setPending] = useState(false);
 	const [consentOpen, setConsentOpen] = useState(false);
+	const canSendCode = phone.trim().length > 0 && consentAcknowledged;
 
 	if (!TELEGRAM_LINKING_ENABLED) {
 		return (
@@ -185,7 +186,7 @@ export default function ConnectPage() {
 					</p>
 				</div>
 
-				<Button type="submit" disabled={pending} className="w-full">
+				<Button type="submit" disabled={pending || !canSendCode} className="w-full">
 					{pending ? 'Sending code...' : 'Send Verification Code'}
 				</Button>
 			</form>

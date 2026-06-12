@@ -29,7 +29,13 @@ describe('TelegramImportManagerCard', () => {
 	});
 
 	it('shows large import safety status before any import starts', async () => {
-		mockGetTelegramImportStatusAction.mockResolvedValue({ data: {} });
+		mockGetTelegramImportStatusAction.mockResolvedValue({
+			data: {
+				aiAnalysisAvailable: true,
+				aiAnalysisConsent: false,
+				telegramAccounts: [{ key: '0', label: 'Local Telegram' }],
+			},
+		});
 
 		render(React.createElement(TelegramImportManagerCard));
 
@@ -37,21 +43,43 @@ describe('TelegramImportManagerCard', () => {
 			expect(screen.getByText('Import safety')).toBeTruthy();
 		});
 		expect(screen.getByText('Message sending')).toBeTruthy();
-		expect(screen.getByText('History scope')).toBeTruthy();
-		expect(screen.getByText('AI during import')).toBeTruthy();
-		expect(screen.getByText('AI after import')).toBeTruthy();
+		expect(screen.getAllByText('History window')).toHaveLength(2);
+		expect(screen.getByText('AI processing')).toBeTruthy();
+		expect(screen.getByText('AI consent')).toBeTruthy();
 		expect(screen.getByText('Local worker')).toBeTruthy();
 		expect(screen.getAllByText('Off')).toHaveLength(2);
-		expect(screen.getByText('New only')).toBeTruthy();
-		expect(screen.getByText('Deferred')).toBeTruthy();
+		expect(screen.getAllByText('Last 3 months')).toHaveLength(2);
+		expect(screen.getByText('Off until enabled')).toBeTruthy();
 		expect(screen.getByText('Required')).toBeTruthy();
-		expect(screen.getByText(/backfill older history/i)).toBeTruthy();
-		expect(screen.getByText(/run ai while importing/i)).toBeTruthy();
+		expect(screen.getByText(/choose how far back this import may read/i)).toBeTruthy();
+		expect(screen.getByText(/run inline ai during import/i)).toBeTruthy();
+	});
+
+	it('points first-run users to Telegram connection before enabling import controls', async () => {
+		mockGetTelegramImportStatusAction.mockResolvedValue({ data: { telegramAccounts: [] } });
+
+		render(React.createElement(TelegramImportManagerCard));
+
+		await waitFor(() => {
+			expect(
+				screen.getByText(/connect telegram before starting a local history import/i),
+			).toBeTruthy();
+		});
+		expect(screen.getByRole('link', { name: 'Connect Telegram' }).getAttribute('href')).toBe(
+			'/onboarding/connect',
+		);
+		expect(
+			(screen.getByLabelText(/start a local large import/i) as HTMLInputElement).disabled,
+		).toBe(true);
+		expect(screen.getByText(/connect telegram in onboarding before starting/i)).toBeTruthy();
 	});
 
 	it('points users to the permissions review when import consent is missing', async () => {
 		mockGetTelegramImportStatusAction.mockResolvedValue({
-			data: { hasCurrentTelegramConsent: false },
+			data: {
+				hasCurrentTelegramConsent: false,
+				telegramAccounts: [{ key: '0', label: 'Local Telegram' }],
+			},
 		});
 
 		render(React.createElement(TelegramImportManagerCard));
@@ -64,8 +92,29 @@ describe('TelegramImportManagerCard', () => {
 		);
 	});
 
+	it('does not show the permissions review link before Telegram is linked', async () => {
+		mockGetTelegramImportStatusAction.mockResolvedValue({
+			data: { hasCurrentTelegramConsent: false, telegramAccounts: [] },
+		});
+
+		render(React.createElement(TelegramImportManagerCard));
+
+		await waitFor(() => {
+			expect(
+				screen.getByText(/connect telegram before starting a local history import/i),
+			).toBeTruthy();
+		});
+		expect(screen.queryByRole('link', { name: 'review permissions' })).toBeNull();
+	});
+
 	it('saves Telegram import consent before starting a large import', async () => {
-		mockGetTelegramImportStatusAction.mockResolvedValue({ data: {} });
+		mockGetTelegramImportStatusAction.mockResolvedValue({
+			data: {
+				aiAnalysisAvailable: true,
+				aiAnalysisConsent: false,
+				telegramAccounts: [{ key: '0', label: 'Local Telegram' }],
+			},
+		});
 		mockSaveConsentAction.mockResolvedValue({ data: { saved: true } });
 		mockStartTelegramImportAction.mockResolvedValue({
 			data: { importRunId: 'import-1', status: 'queued' },
@@ -77,7 +126,7 @@ describe('TelegramImportManagerCard', () => {
 			expect(screen.getByRole('button', { name: /start large import/i })).toBeTruthy();
 		});
 		fireEvent.click(screen.getByLabelText(/start a local large import/i));
-		fireEvent.click(screen.getByLabelText(/run ai while importing/i));
+		fireEvent.click(screen.getByLabelText(/run inline ai during import/i));
 		fireEvent.click(screen.getByRole('button', { name: /start large import/i }));
 
 		await waitFor(() => {
@@ -92,7 +141,81 @@ describe('TelegramImportManagerCard', () => {
 			confirmLargeImport: true,
 			telegramAccountKey: '0',
 			runAiDuringImport: true,
-			backfillOlderHistory: false,
+			backfillOlderHistory: true,
+			historyWindowDays: 90,
+		});
+	});
+
+	it('can start a recent-only import from the history window selector', async () => {
+		mockGetTelegramImportStatusAction.mockResolvedValue({
+			data: {
+				aiAnalysisAvailable: true,
+				aiAnalysisConsent: false,
+				telegramAccounts: [{ key: '0', label: 'Local Telegram' }],
+			},
+		});
+		mockSaveConsentAction.mockResolvedValue({ data: { saved: true } });
+		mockStartTelegramImportAction.mockResolvedValue({
+			data: { importRunId: 'import-1', status: 'queued' },
+		});
+
+		render(React.createElement(TelegramImportManagerCard));
+
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: /start large import/i })).toBeTruthy();
+		});
+		fireEvent.change(screen.getByLabelText(/history window/i), {
+			target: { value: 'recent' },
+		});
+		fireEvent.click(screen.getByLabelText(/start a local large import/i));
+		fireEvent.click(screen.getByRole('button', { name: /start large import/i }));
+
+		await waitFor(() => {
+			expect(mockStartTelegramImportAction).toHaveBeenCalledWith({
+				confirmLargeImport: true,
+				telegramAccountKey: '0',
+				runAiDuringImport: false,
+				backfillOlderHistory: false,
+			});
+		});
+	});
+
+	it('preserves durable AI consent when starting import with inline AI off', async () => {
+		mockGetTelegramImportStatusAction.mockResolvedValue({
+			data: {
+				aiAnalysisAvailable: true,
+				aiAnalysisConsent: true,
+				telegramAccounts: [{ key: '0', label: 'Local Telegram' }],
+			},
+		});
+		mockSaveConsentAction.mockResolvedValue({ data: { saved: true } });
+		mockStartTelegramImportAction.mockResolvedValue({
+			data: { importRunId: 'import-1', status: 'queued' },
+		});
+
+		render(React.createElement(TelegramImportManagerCard));
+
+		await waitFor(() => {
+			expect(screen.getByText('Allowed')).toBeTruthy();
+		});
+		expect(screen.getByText('After import')).toBeTruthy();
+		fireEvent.click(screen.getByLabelText(/start a local large import/i));
+		fireEvent.click(screen.getByRole('button', { name: /start large import/i }));
+
+		await waitFor(() => {
+			expect(mockSaveConsentAction).toHaveBeenCalledWith({
+				consentDataProcessing: true,
+				consentAiAnalysis: true,
+				consentTelegramAccess: true,
+				consentVersion: 2,
+			});
+		});
+		expect(mockStartTelegramImportAction).toHaveBeenCalledWith({
+			confirmLargeImport: true,
+			telegramAccountKey: '0',
+			runAiDuringImport: false,
+			backfillOlderHistory: true,
+			historyWindowDays: 90,
 		});
 	});
 

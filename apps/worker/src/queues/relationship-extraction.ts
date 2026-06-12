@@ -18,6 +18,7 @@ import {
 	hasUserAiAnalysisConsent,
 	listContactMaskingAliases,
 	searchContactByName,
+	withWorkspaceRLS,
 } from '@repo/db';
 import { redactSensitive } from '@repo/shared';
 import { type Job, Queue, Worker } from 'bullmq';
@@ -28,7 +29,6 @@ import {
 	hasIntroKeywords,
 } from '../ai/introduction-detection';
 import { extractRelationships } from '../ai/relationship-extraction';
-import { withRLS } from '../middleware/rls';
 import { connection } from '../redis';
 
 /**
@@ -514,11 +514,13 @@ async function buildFreshBatchContext(
 	const customKeywordPhrases = customIntroKeywords.map((keyword) =>
 		keyword.trim().toLowerCase().replace(/\s+/g, ' '),
 	);
-	const contacts = await listContactMaskingAliases(workspaceId, envelope, {
-		limit: 5000,
-		sourceAccountId: data.sourceAccountId,
-		includeLegacy: Boolean(data.sourceAccountId),
-	}).catch(() => []);
+	const contacts = await withWorkspaceRLS(workspaceId, () =>
+		listContactMaskingAliases(workspaceId, envelope, {
+			limit: 5000,
+			sourceAccountId: data.sourceAccountId,
+			includeLegacy: Boolean(data.sourceAccountId),
+		}),
+	).catch(() => []);
 	const contactEntities = contacts.map(toContactMaskEntity);
 	const aliasToContactId = new Map<string, string>();
 	const sourceMessageIds: string[] = [];
@@ -618,13 +620,15 @@ async function resolveIntroContactId(
 	const legacyName = refs.find((ref) => !isPseudonymRef(ref));
 	if (!legacyName) return undefined;
 
-	const candidates = await searchContactByName(workspaceId, legacyName, envelope).catch(() => []);
+	const candidates = await withWorkspaceRLS(workspaceId, () =>
+		searchContactByName(workspaceId, legacyName, envelope),
+	).catch(() => []);
 	return candidates[0]?.id;
 }
 
 export const relationshipExtractionWorker = new Worker<RelationshipExtractionJobData>(
 	'relationship-extraction',
-	withRLS(async (job) => {
+	async (job) => {
 		const { workspaceId, contactId, userId } = job.data;
 		const envelope = envelopeFromJob(job.data);
 		const targetLabel = jobTargetLabel(job.data);
@@ -639,7 +643,10 @@ export const relationshipExtractionWorker = new Worker<RelationshipExtractionJob
 			await updateRelationshipDiagnostics(job, diagnostics);
 			return { skipped: true, reason: 'missing_user_id', diagnostics };
 		}
-		if (userId && !(await hasUserAiAnalysisConsent(userId, workspaceId))) {
+		if (
+			userId &&
+			!(await withWorkspaceRLS(workspaceId, () => hasUserAiAnalysisConsent(userId, workspaceId)))
+		) {
 			console.log(
 				`[relationship-extraction] AI consent no longer persisted for workspace=${workspaceId.slice(0, 8)} user=${userId.slice(0, 8)}, skipping`,
 			);
@@ -664,7 +671,9 @@ export const relationshipExtractionWorker = new Worker<RelationshipExtractionJob
 		// Use contentSanitized — already ELM-masked, safe to pass to LLM
 		const memories =
 			envelope && contactId
-				? await getMemoriesByContact(workspaceId, contactId, envelope, { limit: 20 })
+				? await withWorkspaceRLS(workspaceId, () =>
+						getMemoriesByContact(workspaceId, contactId, envelope, { limit: 20 }),
+					)
 				: [];
 		diagnostics.memoriesLoaded = memories.length;
 
@@ -674,8 +683,8 @@ export const relationshipExtractionWorker = new Worker<RelationshipExtractionJob
 			.join('\n\n');
 		diagnostics.hadSanitizedMemories = Boolean(sanitizedContent);
 		const [customKeywords, customConnectionKeywords] = await Promise.all([
-			getWorkspaceIntroKeywords(workspaceId),
-			getWorkspaceConnectionKeywords(workspaceId),
+			withWorkspaceRLS(workspaceId, () => getWorkspaceIntroKeywords(workspaceId)),
+			withWorkspaceRLS(workspaceId, () => getWorkspaceConnectionKeywords(workspaceId)),
 		]);
 		const freshBatch = await buildFreshBatchContext(
 			job.data,
@@ -718,8 +727,12 @@ export const relationshipExtractionWorker = new Worker<RelationshipExtractionJob
 			for (const rel of extracted) {
 				// Attempt to resolve source and target names to real contact IDs
 				const [sourceCandidates, targetCandidates] = await Promise.all([
-					searchContactByName(workspaceId, rel.source_name, envelope).catch(() => []),
-					searchContactByName(workspaceId, rel.target_name, envelope).catch(() => []),
+					withWorkspaceRLS(workspaceId, () =>
+						searchContactByName(workspaceId, rel.source_name, envelope),
+					).catch(() => []),
+					withWorkspaceRLS(workspaceId, () =>
+						searchContactByName(workspaceId, rel.target_name, envelope),
+					).catch(() => []),
 				]);
 
 				const sourceContact = sourceCandidates[0];
@@ -729,19 +742,21 @@ export const relationshipExtractionWorker = new Worker<RelationshipExtractionJob
 				if (sourceContact.id === targetContact.id) continue;
 
 				try {
-					await createRelationship(
-						workspaceId,
-						{
-							sourceContactId: sourceContact.id,
-							targetContactId: targetContact.id,
-							relationshipType: rel.relationship_type as Parameters<
-								typeof createRelationship
-							>[1]['relationshipType'],
-							strength: rel.strength_estimate,
-							source: 'ai_extracted',
-							evidence: { reasoning: rel.reasoning },
-						},
-						envelope,
+					await withWorkspaceRLS(workspaceId, () =>
+						createRelationship(
+							workspaceId,
+							{
+								sourceContactId: sourceContact.id,
+								targetContactId: targetContact.id,
+								relationshipType: rel.relationship_type as Parameters<
+									typeof createRelationship
+								>[1]['relationshipType'],
+								strength: rel.strength_estimate,
+								source: 'ai_extracted',
+								evidence: { reasoning: rel.reasoning },
+							},
+							envelope,
+						),
 					);
 					relationshipsStored++;
 				} catch (err) {
@@ -816,20 +831,22 @@ export const relationshipExtractionWorker = new Worker<RelationshipExtractionJob
 							intro,
 							freshBatch.sourceMessageIds,
 						);
-						await createIntroduction(
-							workspaceId,
-							{
-								introducerContactId: introducerId,
-								introducedContactId1: person1Id,
-								introducedContactId2: person2Id,
-								context: intro.context,
-								confidence: intro.confidence,
-								reasoning: intro.reasoning,
-								sourceMessageIds,
-								status: autoConfirm ? 'active' : 'triage',
-								autoConfirmed: autoConfirm,
-							},
-							envelope,
+						await withWorkspaceRLS(workspaceId, () =>
+							createIntroduction(
+								workspaceId,
+								{
+									introducerContactId: introducerId,
+									introducedContactId1: person1Id,
+									introducedContactId2: person2Id,
+									context: intro.context,
+									confidence: intro.confidence,
+									reasoning: intro.reasoning,
+									sourceMessageIds,
+									status: autoConfirm ? 'active' : 'triage',
+									autoConfirmed: autoConfirm,
+								},
+								envelope,
+							),
 						);
 						console.log(
 							`[relationship-extraction] Detected introduction by ${introducerId.slice(0, 8)}`,
@@ -882,30 +899,30 @@ export const relationshipExtractionWorker = new Worker<RelationshipExtractionJob
 					// In DMs, entity masking makes this impossible — fall back to the job's contactId
 					// since the conversation is between the user and this specific contact.
 					let resolvedContactId = contactId;
-					const candidates = await searchContactByName(
-						workspaceId,
-						conn.contact_name,
-						envelope,
+					const candidates = await withWorkspaceRLS(workspaceId, () =>
+						searchContactByName(workspaceId, conn.contact_name, envelope),
 					).catch(() => []);
 					if (candidates[0]) {
 						resolvedContactId = candidates[0].id;
 					}
 
 					try {
-						await createConnection(
-							workspaceId,
-							{
-								contactId: resolvedContactId,
-								event: conn.event,
-								context: conn.context,
-								confidence: conn.confidence,
-								reasoning: conn.reasoning,
-								sourceMessageIds: selectConnectionSourceMessageIds(
-									conn,
-									freshBatch.sourceMessageIds,
-								),
-							},
-							envelope,
+						await withWorkspaceRLS(workspaceId, () =>
+							createConnection(
+								workspaceId,
+								{
+									contactId: resolvedContactId,
+									event: conn.event,
+									context: conn.context,
+									confidence: conn.confidence,
+									reasoning: conn.reasoning,
+									sourceMessageIds: selectConnectionSourceMessageIds(
+										conn,
+										freshBatch.sourceMessageIds,
+									),
+								},
+								envelope,
+							),
 						);
 						console.log(
 							`[relationship-extraction] Detected new connection with ${resolvedContactId.slice(0, 8)}`,
@@ -946,7 +963,7 @@ export const relationshipExtractionWorker = new Worker<RelationshipExtractionJob
 			connectionsRejected,
 			diagnostics,
 		};
-	}),
+	},
 	{
 		connection,
 		prefix: '{ai-flow}',

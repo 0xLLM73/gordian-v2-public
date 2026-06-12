@@ -5,7 +5,7 @@
 	"type": "module",
 	"scripts": {
 		"build": "tsc --noEmit && node esbuild.config.mjs",
-		"dev": "tsx watch src/index.ts",
+		"dev": "tsx watch --exclude \"node_modules/**\" --exclude \"../../node_modules/**\" src/index.ts",
 		"purge:secrets": "tsx scripts/purge-runtime-secrets.ts",
 		"start": "node dist/index.js",
 		"typecheck": "tsc --noEmit",

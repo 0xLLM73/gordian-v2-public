@@ -64,6 +64,7 @@ interface DiscoverJobData {
 	sourceAccountId: string;
 	localAnalysisMode?: 'deferred' | 'inline';
 	importMode?: 'recent' | 'backfill';
+	historyWindowDays?: number;
 }
 
 interface PageJobData extends DiscoverJobData {
@@ -76,6 +77,23 @@ interface PageJobData extends DiscoverJobData {
 }
 
 type TelegramHistoryImportJobData = DiscoverJobData | PageJobData;
+
+type AiConsentCatchupFeatureResult =
+	| { status: 'disabled' | 'missing_consent' | 'unavailable'; reason: string }
+	| {
+			status: 'queued';
+			contactsProcessed?: number;
+			chatsProcessed?: number;
+			messagesQueued: number;
+			maxAgeDays?: number;
+	  };
+
+export interface TelegramAiConsentCatchupResult {
+	sourceAccountId: string;
+	commitments: AiConsentCatchupFeatureResult;
+	introductions: AiConsentCatchupFeatureResult;
+	connections: AiConsentCatchupFeatureResult;
+}
 
 interface GramJSDialog {
 	chatId: string;
@@ -173,6 +191,15 @@ function shouldRunInlineLocalAnalysis(data: DiscoverJobData): boolean {
 
 function resolveImportMode(data: DiscoverJobData): 'recent' | 'backfill' {
 	return data.importMode === 'backfill' ? 'backfill' : 'recent';
+}
+
+function historyWindowCutoffMs(data: DiscoverJobData): number | null {
+	if (!data.historyWindowDays) return null;
+	return Date.now() - data.historyWindowDays * 24 * 60 * 60 * 1000;
+}
+
+function messageWithinHistoryWindow(message: GramJSMessage, cutoffMs: number | null): boolean {
+	return cutoffMs === null || message.date * 1000 >= cutoffMs;
 }
 
 function recentImportMaxPagesPerChat(): number {
@@ -894,6 +921,166 @@ async function queueCompletedImportConnectionDiscovery(data: DiscoverJobData): P
 	);
 }
 
+export async function queueTelegramAiConsentCatchup(input: {
+	workspaceId: string;
+	userId: string;
+	sourceAccountId: string;
+}): Promise<TelegramAiConsentCatchupResult> {
+	const missingConsent = {
+		status: 'missing_consent' as const,
+		reason: 'AI analysis consent is required.',
+	};
+	if (!(await hasUserAiAnalysisConsent(input.userId, input.workspaceId))) {
+		return {
+			sourceAccountId: input.sourceAccountId,
+			commitments: missingConsent,
+			introductions: missingConsent,
+			connections: missingConsent,
+		};
+	}
+
+	const result: TelegramAiConsentCatchupResult = {
+		sourceAccountId: input.sourceAccountId,
+		commitments: { status: 'disabled', reason: 'Commitment auto-discovery is disabled.' },
+		introductions: {
+			status: 'disabled',
+			reason: 'Introduction auto-discovery is disabled.',
+		},
+		connections: { status: 'disabled', reason: 'Connection auto-discovery is disabled.' },
+	};
+
+	const aiUnavailable = !isAiAnalysisAvailable(process.env);
+	const commitmentConfig = autoCommitmentDiscoveryConfig();
+	if (commitmentConfig.enabled) {
+		if (aiUnavailable || !canRunCommitmentExtraction(process.env)) {
+			result.commitments = {
+				status: 'unavailable',
+				reason: 'Commitment extraction is not configured.',
+			};
+		} else {
+			const queued = await queueCommitmentReprocess({
+				workspaceId: input.workspaceId,
+				userId: input.userId,
+				sourceAccountId: input.sourceAccountId,
+				maxAgeDays: commitmentConfig.maxAgeDays,
+				contactLimit: commitmentConfig.contactLimit,
+				batchSize: commitmentConfig.batchSize,
+				skipWorkspaceRelationshipDerivation: true,
+			});
+			result.commitments = {
+				status: 'queued',
+				contactsProcessed: queued.contactsProcessed,
+				messagesQueued: queued.messagesQueued,
+				maxAgeDays: queued.maxAgeDays,
+			};
+			appendAuditLog({
+				workspaceId: input.workspaceId,
+				actorType: 'system',
+				actorId: input.userId,
+				action: 'generate',
+				resourceType: 'message',
+				metadata: {
+					operation: 'telegram_ai_consent_catchup_commitment_reprocess',
+					contactsProcessed: queued.contactsProcessed,
+					messagesQueued: queued.messagesQueued,
+					batchSize: queued.batchSize,
+					contactLimit: queued.contactLimit,
+					maxAgeDays: queued.maxAgeDays,
+					sourceAccountFiltered: true,
+				},
+			});
+		}
+	}
+
+	const introductionConfig = autoIntroductionDiscoveryConfig();
+	if (introductionConfig.enabled) {
+		if (aiUnavailable || !canRunIntroductionDetection(process.env)) {
+			result.introductions = {
+				status: 'unavailable',
+				reason: 'Introduction detection is not configured.',
+			};
+		} else {
+			const queued = await queueIntroductionReprocess({
+				workspaceId: input.workspaceId,
+				userId: input.userId,
+				sourceAccountId: input.sourceAccountId,
+				maxAgeDays: introductionConfig.maxAgeDays,
+				chatLimit: introductionConfig.chatLimit,
+				batchSize: introductionConfig.batchSize,
+			});
+			result.introductions = {
+				status: 'queued',
+				chatsProcessed: queued.chatsProcessed,
+				messagesQueued: queued.messagesQueued,
+				maxAgeDays: queued.maxAgeDays,
+			};
+			appendAuditLog({
+				workspaceId: input.workspaceId,
+				actorType: 'system',
+				actorId: input.userId,
+				action: 'generate',
+				resourceType: 'message',
+				metadata: {
+					operation: 'telegram_ai_consent_catchup_introduction_reprocess',
+					chatsProcessed: queued.chatsProcessed,
+					messagesQueued: queued.messagesQueued,
+					batchSize: queued.batchSize,
+					chatLimit: queued.chatLimit,
+					maxAgeDays: queued.maxAgeDays,
+					sourceAccountFiltered: true,
+				},
+			});
+		}
+	}
+
+	const connectionConfig = autoConnectionDiscoveryConfig();
+	if (connectionConfig.enabled) {
+		if (aiUnavailable || !canRunConnectionDetection(process.env)) {
+			result.connections = {
+				status: 'unavailable',
+				reason: 'Connection detection is not configured.',
+			};
+		} else {
+			const queued = await queueConnectionReprocess({
+				workspaceId: input.workspaceId,
+				userId: input.userId,
+				sourceAccountId: input.sourceAccountId,
+				maxAgeDays: connectionConfig.maxAgeDays,
+				contactLimit: connectionConfig.contactLimit,
+				batchSize: connectionConfig.batchSize,
+			});
+			result.connections = {
+				status: 'queued',
+				contactsProcessed: queued.contactsProcessed,
+				messagesQueued: queued.messagesQueued,
+				maxAgeDays: queued.maxAgeDays,
+			};
+			appendAuditLog({
+				workspaceId: input.workspaceId,
+				actorType: 'system',
+				actorId: input.userId,
+				action: 'generate',
+				resourceType: 'message',
+				metadata: {
+					operation: 'telegram_ai_consent_catchup_connection_reprocess',
+					contactsProcessed: queued.contactsProcessed,
+					messagesQueued: queued.messagesQueued,
+					batchSize: queued.batchSize,
+					contactLimit: queued.contactLimit,
+					maxAgeDays: queued.maxAgeDays,
+					sourceAccountFiltered: true,
+				},
+			});
+		}
+	}
+
+	console.log(
+		`[telegram-history-import] Queued AI consent catch-up for workspace=${short(input.workspaceId)} account=${short(input.sourceAccountId)}`,
+	);
+
+	return result;
+}
+
 async function maybeFinalizeRun(data: DiscoverJobData): Promise<void> {
 	const result = await withImportRLS(data.workspaceId, async () => {
 		const run = await getTelegramImportRun(data.workspaceId, data.runId);
@@ -1224,6 +1411,7 @@ async function processDiscover(data: DiscoverJobData): Promise<void> {
 					sourceAccountId: data.sourceAccountId,
 					...(data.localAnalysisMode ? { localAnalysisMode: data.localAnalysisMode } : {}),
 					importMode: resolveImportMode(data),
+					...(data.historyWindowDays ? { historyWindowDays: data.historyWindowDays } : {}),
 					runChatId: chat.id,
 					...(chat.newerThanMessageId ? { newerThanMessageId: chat.newerThanMessageId } : {}),
 					...(chat.preserveBackfillOffset ? { preserveBackfillOffset: true } : {}),
@@ -1239,7 +1427,7 @@ async function processDiscover(data: DiscoverJobData): Promise<void> {
 	);
 	await broadcastProgress(data.workspaceId, data.runId, 'importing');
 	console.log(
-		`[telegram-history-import] queued ${discovery.queuedChats} dialog(s) for run=${short(data.runId)} mode=${resolveImportMode(data)}`,
+		`[telegram-history-import] queued ${discovery.queuedChats} dialog(s) for run=${short(data.runId)} mode=${resolveImportMode(data)} window_days=${data.historyWindowDays ?? 'unbounded'}`,
 	);
 }
 
@@ -1339,19 +1527,25 @@ async function processPage(data: PageJobData): Promise<void> {
 		throw err;
 	}
 
-	const messages = (messagesResult.messages ?? []).filter((message) => message.id > 0);
+	const fetchedMessages = (messagesResult.messages ?? []).filter((message) => message.id > 0);
+	const cutoffMs = historyWindowCutoffMs(data);
+	const historyWindowReached =
+		cutoffMs !== null && fetchedMessages.some((message) => message.date * 1000 < cutoffMs);
+	const messages = fetchedMessages.filter((message) =>
+		messageWithinHistoryWindow(message, cutoffMs),
+	);
 	const messageIds = messages.map((message) => message.id);
 	const oldest = messageIds.length > 0 ? Math.min(...messageIds) : null;
 	const newest = messageIds.length > 0 ? Math.max(...messageIds) : null;
 	const nextOffsetMessageId = oldest ?? ready.runChat.nextOffsetMessageId;
 	const mode = resolveImportMode(data);
 	const nextPageNumber = (data.pageNumber ?? 0) + 1;
-	const pageExhausted = messages.length < PAGE_SIZE;
+	const pageExhausted = fetchedMessages.length < PAGE_SIZE;
 	const recentPageLimitReached =
 		mode === 'recent' &&
 		!data.newerThanMessageId &&
 		nextPageNumber >= recentImportMaxPagesPerChat();
-	const chatComplete = pageExhausted || recentPageLimitReached;
+	const chatComplete = pageExhausted || recentPageLimitReached || historyWindowReached;
 	const historyComplete = data.newerThanMessageId
 		? data.existingHistoryComplete === true
 		: pageExhausted;

@@ -18,6 +18,12 @@ const mockGetActiveCommitments = vi.hoisted(() => vi.fn());
 const mockGetDealsByContact = vi.hoisted(() => vi.fn());
 const mockListDeals = vi.hoisted(() => vi.fn());
 const mockHybridSearch = vi.hoisted(() => vi.fn());
+const mockGetDashboardStats = vi.hoisted(() => vi.fn());
+const mockGetHealthScoresByWorkspace = vi.hoisted(() => vi.fn());
+const mockGetMessageContactCoverageReport = vi.hoisted(() => vi.fn());
+const mockGetMessagesByTimeRange = vi.hoisted(() => vi.fn());
+const mockListContacts = vi.hoisted(() => vi.fn());
+const mockListKnowledgeNodes = vi.hoisted(() => vi.fn());
 const mockSearchKnowledgeNodes = vi.hoisted(() => vi.fn());
 const mockKnowledgeGraphSearch = vi.hoisted(() => vi.fn());
 const mockProvenanceSearch = vi.hoisted(() => vi.fn());
@@ -49,6 +55,12 @@ vi.mock('@repo/db', () => ({
 	getDealsByContact: mockGetDealsByContact,
 	listDeals: mockListDeals,
 	hybridSearch: mockHybridSearch,
+	getDashboardStats: mockGetDashboardStats,
+	getHealthScoresByWorkspace: mockGetHealthScoresByWorkspace,
+	getMessageContactCoverageReport: mockGetMessageContactCoverageReport,
+	getMessagesByTimeRange: mockGetMessagesByTimeRange,
+	listContacts: mockListContacts,
+	listKnowledgeNodes: mockListKnowledgeNodes,
 	searchKnowledgeNodes: mockSearchKnowledgeNodes,
 	knowledgeGraphSearch: mockKnowledgeGraphSearch,
 	provenanceSearch: mockProvenanceSearch,

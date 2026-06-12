@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockCreateTelegramImportRun = vi.hoisted(() => vi.fn());
 const mockEnqueueTelegramHistoryImport = vi.hoisted(() => vi.fn());
+const mockQueueTelegramAiConsentCatchup = vi.hoisted(() => vi.fn());
 const mockGetTelegramImportRun = vi.hoisted(() => vi.fn());
 const mockGetUserTelegramAccountIds = vi.hoisted(() => vi.fn());
 const mockHasCurrentTelegramConsent = vi.hoisted(() => vi.fn());
+const mockHasUserAiAnalysisConsent = vi.hoisted(() => vi.fn());
 const mockIsWorkspaceMember = vi.hoisted(() => vi.fn());
 const mockRequestTelegramImportPause = vi.hoisted(() => vi.fn());
 const mockRequestTelegramImportCancel = vi.hoisted(() => vi.fn());
@@ -34,6 +36,7 @@ vi.mock('../../queues/sync', () => ({
 
 vi.mock('../../queues/telegram-history-import', () => ({
 	enqueueTelegramHistoryImport: mockEnqueueTelegramHistoryImport,
+	queueTelegramAiConsentCatchup: mockQueueTelegramAiConsentCatchup,
 }));
 
 vi.mock('@repo/shared/handoff-token', () => ({
@@ -55,6 +58,7 @@ vi.mock('@repo/db', () => ({
 	getTelegramImportRun: mockGetTelegramImportRun,
 	getUserTelegramAccountIds: mockGetUserTelegramAccountIds,
 	hasCurrentTelegramConsent: mockHasCurrentTelegramConsent,
+	hasUserAiAnalysisConsent: mockHasUserAiAnalysisConsent,
 	isWorkspaceMember: mockIsWorkspaceMember,
 	requestTelegramImportCancel: mockRequestTelegramImportCancel,
 	requestTelegramImportPause: mockRequestTelegramImportPause,
@@ -91,6 +95,7 @@ beforeEach(async () => {
 	mockIsWorkspaceMember.mockResolvedValue(true);
 	mockGetUserTelegramAccountIds.mockResolvedValue([SOURCE_ACCOUNT_ID]);
 	mockHasCurrentTelegramConsent.mockResolvedValue(true);
+	mockHasUserAiAnalysisConsent.mockResolvedValue(true);
 	mockUpdateTelegramImportRunStatus.mockResolvedValue(null);
 	mockCreateTelegramImportRun.mockResolvedValue({
 		id: RUN_ID,
@@ -100,8 +105,74 @@ beforeEach(async () => {
 		status: 'queued',
 	});
 	mockEnqueueTelegramHistoryImport.mockResolvedValue({ id: 'job-1' });
+	mockQueueTelegramAiConsentCatchup.mockResolvedValue({
+		sourceAccountId: SOURCE_ACCOUNT_ID,
+		commitments: { status: 'queued', contactsProcessed: 1, messagesQueued: 2 },
+		introductions: { status: 'queued', chatsProcessed: 1, messagesQueued: 2 },
+		connections: { status: 'queued', contactsProcessed: 1, messagesQueued: 2 },
+	});
 
 	telegram = (await import('../../routes/telegram')).telegram;
+});
+
+describe('POST /telegram/ai-consent-catchup', () => {
+	it('requires the internal secret', async () => {
+		const res = await telegram.request('/ai-consent-catchup', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				userId: USER_ID,
+				workspaceId: WORKSPACE_ID,
+				sourceAccountId: SOURCE_ACCOUNT_ID,
+			}),
+		});
+
+		expect(res.status).toBe(401);
+		expect(mockQueueTelegramAiConsentCatchup).not.toHaveBeenCalled();
+	});
+
+	it('queues catch-up for a linked Telegram account after durable AI consent', async () => {
+		const res = await post('/ai-consent-catchup', {
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			sourceAccountId: SOURCE_ACCOUNT_ID,
+		});
+
+		expect(res.status).toBe(200);
+		expect(await res.json()).toMatchObject({
+			status: 'queued',
+			sourceAccountId: SOURCE_ACCOUNT_ID,
+		});
+		expect(mockQueueTelegramAiConsentCatchup).toHaveBeenCalledWith({
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			sourceAccountId: SOURCE_ACCOUNT_ID,
+		});
+	});
+
+	it('rejects catch-up when durable AI consent is missing', async () => {
+		mockHasUserAiAnalysisConsent.mockResolvedValueOnce(false);
+
+		const res = await post('/ai-consent-catchup', {
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			sourceAccountId: SOURCE_ACCOUNT_ID,
+		});
+
+		expect(res.status).toBe(403);
+		expect(mockQueueTelegramAiConsentCatchup).not.toHaveBeenCalled();
+	});
+
+	it('rejects catch-up for a Telegram account that is not linked to the user', async () => {
+		const res = await post('/ai-consent-catchup', {
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			sourceAccountId: '987654321',
+		});
+
+		expect(res.status).toBe(403);
+		expect(mockQueueTelegramAiConsentCatchup).not.toHaveBeenCalled();
+	});
 });
 
 describe('POST /telegram/history-import/start', () => {
@@ -235,6 +306,27 @@ describe('POST /telegram/history-import/start', () => {
 		});
 	});
 
+	it('passes a bounded history window to the import queue', async () => {
+		const res = await post('/history-import/start', {
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			sourceAccountId: SOURCE_ACCOUNT_ID,
+			largeImportConfirmed: true,
+			historyWindowDays: 90,
+		});
+
+		expect(res.status).toBe(200);
+		expect(mockEnqueueTelegramHistoryImport).toHaveBeenCalledWith({
+			runId: RUN_ID,
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			sourceAccountId: SOURCE_ACCOUNT_ID,
+			localAnalysisMode: 'deferred',
+			importMode: 'backfill',
+			historyWindowDays: 90,
+		});
+	});
+
 	it('marks the run failed when the initial enqueue fails', async () => {
 		mockEnqueueTelegramHistoryImport.mockRejectedValueOnce(new Error('redis down'));
 
@@ -295,6 +387,33 @@ describe('POST /telegram/history-import/:runId controls', () => {
 			sourceAccountId: SOURCE_ACCOUNT_ID,
 			localAnalysisMode: 'deferred',
 			importMode: 'recent',
+		});
+	});
+
+	it('resumes a paused run with a bounded history window', async () => {
+		mockResumeTelegramImportRun.mockResolvedValue({
+			id: RUN_ID,
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			sourceAccountId: SOURCE_ACCOUNT_ID,
+			status: 'importing',
+		});
+
+		const res = await post(`/history-import/${RUN_ID}/resume`, {
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			historyWindowDays: 180,
+		});
+
+		expect(res.status).toBe(200);
+		expect(mockEnqueueTelegramHistoryImport).toHaveBeenCalledWith({
+			runId: RUN_ID,
+			userId: USER_ID,
+			workspaceId: WORKSPACE_ID,
+			sourceAccountId: SOURCE_ACCOUNT_ID,
+			localAnalysisMode: 'deferred',
+			importMode: 'backfill',
+			historyWindowDays: 180,
 		});
 	});
 });

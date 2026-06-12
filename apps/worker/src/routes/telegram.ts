@@ -7,6 +7,7 @@ import {
 	getTelegramImportRun,
 	getUserTelegramAccountIds,
 	hasCurrentTelegramConsent,
+	hasUserAiAnalysisConsent,
 	isWorkspaceMember,
 	requestTelegramImportCancel,
 	requestTelegramImportPause,
@@ -24,7 +25,10 @@ import { Hono } from 'hono';
 import { sendToUser, setAuthPending, terminateUser } from '../gramjs/thread';
 import { validateInternalSecret } from '../middleware/auth';
 import { syncQueue } from '../queues/sync';
-import { enqueueTelegramHistoryImport } from '../queues/telegram-history-import';
+import {
+	enqueueTelegramHistoryImport,
+	queueTelegramAiConsentCatchup,
+} from '../queues/telegram-history-import';
 import { connection } from '../redis';
 import {
 	isTelegramBotEnabled,
@@ -59,6 +63,13 @@ const TELEGRAM_ACCOUNT_ID_RE = /^\d{1,20}$/;
 const AUTH_PHONE_CODE_TTL_SECONDS = 5 * 60;
 type TelegramImportLocalAnalysisMode = 'deferred' | 'inline';
 type TelegramHistoryImportMode = 'recent' | 'backfill';
+
+function normalizeHistoryWindowDays(value: unknown): number | undefined {
+	if (value === undefined || value === null || value === '') return undefined;
+	const numeric = Number(value);
+	if (!Number.isFinite(numeric)) return undefined;
+	return Math.min(Math.max(Math.trunc(numeric), 1), 3650);
+}
 
 function phoneSecret(): string {
 	const secret =
@@ -394,6 +405,7 @@ telegram.post('/history-import/start', async (c) => {
 			largeImportConfirmed?: unknown;
 			localAnalysisMode?: unknown;
 			importMode?: unknown;
+			historyWindowDays?: unknown;
 		}>();
 		const userId = typeof body.userId === 'string' ? body.userId : '';
 		const workspaceId = typeof body.workspaceId === 'string' ? body.workspaceId : '';
@@ -401,8 +413,9 @@ telegram.post('/history-import/start', async (c) => {
 		const largeImportConfirmed = body.largeImportConfirmed === true;
 		const localAnalysisMode: TelegramImportLocalAnalysisMode =
 			body.localAnalysisMode === 'inline' ? 'inline' : 'deferred';
+		const historyWindowDays = normalizeHistoryWindowDays(body.historyWindowDays);
 		const importMode: TelegramHistoryImportMode =
-			body.importMode === 'backfill' ? 'backfill' : 'recent';
+			historyWindowDays || body.importMode === 'backfill' ? 'backfill' : 'recent';
 
 		if (
 			!UUID_RE.test(userId) ||
@@ -443,6 +456,7 @@ telegram.post('/history-import/start', async (c) => {
 					sourceAccountId,
 					localAnalysisMode,
 					importMode,
+					...(historyWindowDays ? { historyWindowDays } : {}),
 				});
 			} catch (err) {
 				await updateTelegramImportRunStatus(workspaceId, run.id, 'failed', {
@@ -499,13 +513,15 @@ telegram.post('/history-import/:runId/resume', async (c) => {
 		workspaceId?: unknown;
 		localAnalysisMode?: unknown;
 		importMode?: unknown;
+		historyWindowDays?: unknown;
 	}>();
 	const userId = typeof body.userId === 'string' ? body.userId : '';
 	const workspaceId = typeof body.workspaceId === 'string' ? body.workspaceId : '';
 	const localAnalysisMode: TelegramImportLocalAnalysisMode =
 		body.localAnalysisMode === 'inline' ? 'inline' : 'deferred';
+	const historyWindowDays = normalizeHistoryWindowDays(body.historyWindowDays);
 	const importMode: TelegramHistoryImportMode =
-		body.importMode === 'backfill' ? 'backfill' : 'recent';
+		historyWindowDays || body.importMode === 'backfill' ? 'backfill' : 'recent';
 	if (!UUID_RE.test(runId) || !UUID_RE.test(userId) || !UUID_RE.test(workspaceId)) {
 		return c.json({ error: 'Invalid runId, userId, or workspaceId format' }, 400);
 	}
@@ -527,6 +543,7 @@ telegram.post('/history-import/:runId/resume', async (c) => {
 		sourceAccountId: run.sourceAccountId,
 		localAnalysisMode,
 		importMode,
+		...(historyWindowDays ? { historyWindowDays } : {}),
 	});
 	return c.json({ status: run.status, importRunId: run.id });
 });
@@ -558,6 +575,54 @@ telegram.post('/history-import/:runId/cancel', async (c) => {
 		return c.json({ status: 'cancelled', importRunId: runId });
 	}
 	return c.json({ status: updated?.status ?? current.status, importRunId: runId });
+});
+
+telegram.post('/ai-consent-catchup', async (c) => {
+	const internalSecret = c.req.header('X-Internal-Secret');
+	if (!validateInternalSecret(internalSecret)) {
+		return c.json({ error: 'Unauthorized' }, 401);
+	}
+
+	const body = await c.req.json<{
+		userId?: unknown;
+		workspaceId?: unknown;
+		sourceAccountId?: unknown;
+	}>();
+	const userId = typeof body.userId === 'string' ? body.userId : '';
+	const workspaceId = typeof body.workspaceId === 'string' ? body.workspaceId : '';
+	const sourceAccountId =
+		typeof body.sourceAccountId === 'string' ? body.sourceAccountId.trim() : '';
+
+	if (
+		!UUID_RE.test(userId) ||
+		!UUID_RE.test(workspaceId) ||
+		!TELEGRAM_ACCOUNT_ID_RE.test(sourceAccountId)
+	) {
+		return c.json({ error: 'Invalid userId, workspaceId, or sourceAccountId format' }, 400);
+	}
+	if (!(await isWorkspaceMember(workspaceId, userId))) {
+		return c.json({ error: 'User is not a member of this workspace.' }, 403);
+	}
+	if (!(await hasUserAiAnalysisConsent(userId, workspaceId))) {
+		return c.json({ error: 'AI analysis consent is required.' }, 403);
+	}
+
+	const linkedAccounts = await getUserTelegramAccountIds(userId);
+	if (!linkedAccounts.includes(sourceAccountId)) {
+		return c.json({ error: 'Source Telegram account is not linked to this user.' }, 403);
+	}
+
+	try {
+		const result = await queueTelegramAiConsentCatchup({
+			userId,
+			workspaceId,
+			sourceAccountId,
+		});
+		return c.json({ status: 'queued', ...result });
+	} catch (err) {
+		console.error('[ai-consent-catchup] Error:', redactSensitive(err));
+		return c.json({ error: 'Failed to queue AI consent catch-up' }, 500);
+	}
 });
 
 /**

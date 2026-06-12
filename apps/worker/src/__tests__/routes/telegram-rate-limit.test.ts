@@ -25,6 +25,7 @@ vi.mock('../../queues/sync', () => ({
 
 vi.mock('../../queues/telegram-history-import', () => ({
 	enqueueTelegramHistoryImport: vi.fn(),
+	queueTelegramAiConsentCatchup: vi.fn(),
 }));
 
 vi.mock('@repo/shared/handoff-token', async (importOriginal) => {
@@ -43,6 +44,7 @@ vi.mock('@repo/crypto', () => ({
 // ASA-002 fix: telegram.ts now queries @repo/db to look up userId from telegramUserId
 vi.mock('@repo/db', () => ({
 	appendAuditLog: vi.fn(),
+	hasUserAiAnalysisConsent: vi.fn().mockResolvedValue(true),
 	isWorkspaceMember: vi.fn().mockResolvedValue(true),
 	getUserTelegramAccountIds: vi.fn().mockResolvedValue(['123456789', '987654321']),
 	db: {

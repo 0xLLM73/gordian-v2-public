@@ -7,6 +7,12 @@ const mockGetCommitmentsByContact = vi.hoisted(() => vi.fn());
 const mockGetDealsByContact = vi.hoisted(() => vi.fn());
 const mockListDeals = vi.hoisted(() => vi.fn());
 const mockHybridSearch = vi.hoisted(() => vi.fn());
+const mockGetDashboardStats = vi.hoisted(() => vi.fn());
+const mockGetHealthScoresByWorkspace = vi.hoisted(() => vi.fn());
+const mockGetMessageContactCoverageReport = vi.hoisted(() => vi.fn());
+const mockGetMessagesByTimeRange = vi.hoisted(() => vi.fn());
+const mockListContacts = vi.hoisted(() => vi.fn());
+const mockListKnowledgeNodes = vi.hoisted(() => vi.fn());
 const mockGenerateEmbedding = vi.hoisted(() => vi.fn());
 const fetchMock = vi.hoisted(() => vi.fn());
 
@@ -21,6 +27,12 @@ vi.mock('@repo/db', () => ({
 	getDealsByContact: mockGetDealsByContact,
 	listDeals: mockListDeals,
 	hybridSearch: mockHybridSearch,
+	getDashboardStats: mockGetDashboardStats,
+	getHealthScoresByWorkspace: mockGetHealthScoresByWorkspace,
+	getMessageContactCoverageReport: mockGetMessageContactCoverageReport,
+	getMessagesByTimeRange: mockGetMessagesByTimeRange,
+	listContacts: mockListContacts,
+	listKnowledgeNodes: mockListKnowledgeNodes,
 }));
 
 vi.mock('../embeddings', () => ({
@@ -52,6 +64,15 @@ const localModelResponse = (payload: Record<string, unknown>) => ({
 			message: {
 				content: JSON.stringify(payload),
 			},
+		}),
+	text: () => Promise.resolve(''),
+});
+
+const localModelTextResponse = (content: string) => ({
+	ok: true,
+	json: () =>
+		Promise.resolve({
+			message: { content },
 		}),
 	text: () => Promise.resolve(''),
 });
@@ -142,6 +163,73 @@ describe('chat', () => {
 		expect(body.format.properties).toHaveProperty('tools');
 		expect(body.options.temperature).toBe(0.2);
 		expect(body.options.num_predict).toBeGreaterThan(0);
+	});
+
+	it('accepts plain-text final answers from local Qwen', async () => {
+		enableLocalQwenChat();
+		fetchMock.mockResolvedValueOnce(
+			localModelTextResponse(
+				'Your local context points to a small set of active relationship themes.',
+			),
+		);
+
+		const result = await chat('ws-1', fakeEnvelope, [{ role: 'user', content: 'Hi' }]);
+
+		expect(result.response).toBe(
+			'Your local context points to a small set of active relationship themes.',
+		);
+		expect(result.toolsUsed).toEqual([]);
+		expect(mockInferWithCache).not.toHaveBeenCalled();
+	});
+
+	it('prefetches safe workspace context for broad local Qwen prompts', async () => {
+		enableLocalQwenChat();
+		mockGetDashboardStats.mockResolvedValue({
+			contactCount: 1,
+			activeCommitmentCount: 0,
+			openDealCount: 0,
+			totalDealValue: 0,
+			activeGoalCount: 0,
+		});
+		mockListContacts.mockResolvedValue([]);
+		mockListDeals.mockResolvedValue([]);
+		mockGetActiveCommitments.mockResolvedValue([]);
+		mockGetHealthScoresByWorkspace.mockResolvedValue([]);
+		mockGetMessageContactCoverageReport.mockResolvedValue({
+			totalMessages: 42,
+			linkedContactMessages: 30,
+			messagesWithSenderMetadata: 35,
+			chatsWithNullContactMessages: 1,
+			byChatType: [],
+		});
+		mockListKnowledgeNodes.mockResolvedValue([
+			{
+				displayName: 'Solana',
+				type: 'technology',
+				description: 'Layer 1 blockchain',
+				mentionCount: 5,
+			},
+		]);
+		fetchMock.mockResolvedValueOnce(
+			localModelResponse({
+				type: 'answer',
+				response: 'Your current local themes include Solana and blockchain infrastructure.',
+			}),
+		);
+
+		const result = await chat('ws-1', fakeEnvelope, [
+			{ role: 'user', content: 'What high-level themes do you see?' },
+		]);
+
+		expect(result.toolsUsed).toEqual([]);
+		expect(result.response).toContain('Solana');
+		expect(mockListKnowledgeNodes).toHaveBeenCalledWith('ws-1', { limit: 12 }, fakeEnvelope);
+		expect(mockInferWithCache).not.toHaveBeenCalled();
+		const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as {
+			messages: Array<{ role: string; content: string }>;
+		};
+		expect(body.messages[0]?.content).toContain('Safe workspace overview');
+		expect(body.messages[0]?.content).toContain('Solana');
 	});
 
 	it('preserves local chat fallback from commitment Qwen config', async () => {

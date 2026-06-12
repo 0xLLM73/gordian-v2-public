@@ -5,12 +5,18 @@ import {
 	getActiveCommitments,
 	getCommitmentsByContact,
 	getContact,
+	getDashboardStats,
 	getDeal,
 	getDealsByContact,
+	getHealthScoresByWorkspace,
+	getMessageContactCoverageReport,
+	getMessagesByTimeRange,
 	graphragSearch,
 	hybridSearch,
 	knowledgeGraphSearch,
+	listContacts,
 	listDeals,
+	listKnowledgeNodes,
 	provenanceSearch,
 	searchContactByName,
 	searchKnowledgeNodes,
@@ -134,6 +140,79 @@ export const SEARCH_PRECEDENTS_TOOL: Tool = {
 		required: ['query'],
 	},
 };
+
+export const GET_WORKSPACE_CONTEXT_TOOL: Tool = {
+	name: 'get_workspace_context',
+	description:
+		'Get a safe local workspace overview for broad questions. Returns counts, top contacts, open deals, active commitments, relationship-health labels, imported-message coverage, and top generated knowledge nodes. Use first for broad questions like "what themes do you see?", "what should I know?", "what is going on?", or "summarize my local data".',
+	input_schema: {
+		type: 'object' as const,
+		properties: {},
+		required: [],
+	},
+};
+
+export const LIST_KNOWLEDGE_TOPICS_TOOL: Tool = {
+	name: 'list_knowledge_topics',
+	description:
+		'List top generated knowledge graph topics, projects, organizations, technologies, sectors, and concepts. Use for broad topic/theme questions before asking the user to provide a specific topic.',
+	input_schema: {
+		type: 'object' as const,
+		properties: {
+			limit: {
+				type: 'number',
+				description: 'Maximum topics to return. Defaults to 12 and is capped at 20.',
+			},
+			type: {
+				type: 'string',
+				enum: ['topic', 'project', 'organization', 'technology', 'sector', 'concept'],
+				description: 'Optional knowledge node type filter.',
+			},
+		},
+		required: [],
+	},
+};
+
+export const SEARCH_IMPORTED_MESSAGES_TOOL: Tool = {
+	name: 'search_imported_messages',
+	description:
+		'Search encrypted imported Telegram messages locally for a specific query. Returns only bounded, entity-masked snippets with timestamps and direction; raw private message text is not returned. Use only when the user asks about a specific term, topic, or conversation detail.',
+	input_schema: {
+		type: 'object' as const,
+		properties: {
+			query: {
+				type: 'string',
+				description: 'Specific term or topic to search for in local imported messages.',
+			},
+			days: {
+				type: 'number',
+				description: 'Lookback window in days. Defaults to 90 and is capped at 365.',
+			},
+			limit: {
+				type: 'number',
+				description: 'Maximum masked snippets to return. Defaults to 6 and is capped at 10.',
+			},
+		},
+		required: ['query'],
+	},
+};
+
+type KnowledgeTopicType =
+	| 'topic'
+	| 'project'
+	| 'organization'
+	| 'technology'
+	| 'sector'
+	| 'concept';
+
+const KNOWLEDGE_TOPIC_TYPES = new Set<KnowledgeTopicType>([
+	'topic',
+	'project',
+	'organization',
+	'technology',
+	'sector',
+	'concept',
+]);
 
 export const CREATE_COMMITMENT_TOOL: Tool = {
 	name: 'create_commitment',
@@ -308,11 +387,14 @@ export const TRACE_DECISION_TOOL: Tool = {
 };
 
 export const CHAT_TOOLS: Tool[] = [
+	GET_WORKSPACE_CONTEXT_TOOL,
+	LIST_KNOWLEDGE_TOPICS_TOOL,
 	SEARCH_CONTACTS_TOOL,
 	GET_COMMITMENTS_TOOL,
 	GET_DEALS_TOOL,
 	SEARCH_MEMORIES_TOOL,
 	SEARCH_KNOWLEDGE_TOOL,
+	SEARCH_IMPORTED_MESSAGES_TOOL,
 	SEARCH_PRECEDENTS_TOOL,
 	TRACE_DECISION_TOOL,
 	CREATE_COMMITMENT_TOOL,
@@ -373,6 +455,37 @@ const COMMITMENT_OMIT = [
 // Fields to strip from deal results
 const DEAL_OMIT = ['workspaceId', 'stageHistory', 'terms'];
 
+const MAX_IMPORTED_MESSAGE_SCAN = 500;
+
+function clampPositiveNumber(value: unknown, fallback: number, max: number): number {
+	const parsed = typeof value === 'number' ? value : Number(value);
+	if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+	return Math.min(max, Math.floor(parsed));
+}
+
+function normalizeSearchText(value: unknown): string {
+	return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function snippetAround(text: string, query: string, maxLength = 220): string {
+	const normalized = text.toLowerCase();
+	const index = normalized.indexOf(query.toLowerCase());
+	if (index === -1) return text.slice(0, maxLength);
+	const start = Math.max(0, index - 80);
+	const end = Math.min(text.length, index + query.length + 120);
+	const prefix = start > 0 ? '...' : '';
+	const suffix = end < text.length ? '...' : '';
+	return `${prefix}${text.slice(start, end)}${suffix}`.slice(0, maxLength + 6);
+}
+
+async function maskSnippet(snippet: string, envelope: SealedEnvelope): Promise<string> {
+	return withKeys(envelope, async () => {
+		const keys = getCurrentKeys();
+		const detected = prefilterEntities(snippet);
+		return maskEntities(snippet, keys.bik, detected).maskedText;
+	});
+}
+
 export type ToolExecutor = (
 	input: Record<string, unknown>,
 	workspaceId: string,
@@ -380,6 +493,106 @@ export type ToolExecutor = (
 ) => Promise<string>;
 
 export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
+	get_workspace_context: async (_input, workspaceId, envelope) => {
+		const [stats, contacts, deals, commitments, healthScores, messageCoverage, knowledgeNodes] =
+			await Promise.all([
+				getDashboardStats(workspaceId),
+				listContacts(workspaceId, envelope, { limit: 12 }),
+				listDeals(workspaceId, envelope, { limit: 12 }),
+				getActiveCommitments(workspaceId, envelope, { limit: 12 }),
+				getHealthScoresByWorkspace(workspaceId, { limit: 12, sort: 'composite_asc' }),
+				getMessageContactCoverageReport(workspaceId),
+				listKnowledgeNodes(workspaceId, { limit: 12 }, envelope),
+			]);
+
+		const contactNameById = new Map(
+			contacts.map((contact) => [
+				contact.id,
+				[String(contact.firstName ?? ''), String(contact.lastName ?? '')].join(' ').trim() ||
+					String(contact.username ?? 'Unnamed contact'),
+			]),
+		);
+
+		const context = {
+			counts: {
+				contacts: stats.contactCount,
+				activeCommitments: stats.activeCommitmentCount,
+				openDeals: stats.openDealCount,
+				activeGoals: stats.activeGoalCount,
+				importedMessages: messageCoverage.totalMessages,
+				linkedImportedMessages: messageCoverage.linkedContactMessages,
+				generatedKnowledgeNodes: knowledgeNodes.length,
+			},
+			topContacts: contacts.slice(0, 8).map((contact) => ({
+				name:
+					[String(contact.firstName ?? ''), String(contact.lastName ?? '')].join(' ').trim() ||
+					contact.username ||
+					'Unnamed contact',
+				messageCount: contact.messageCount ?? 0,
+				lastMessageAt: contact.lastMessageAt ?? null,
+			})),
+			openDeals: cleanForAI(deals.slice(0, 8) as Record<string, unknown>[], [
+				...DEAL_OMIT,
+				'id',
+				'contactId',
+			]),
+			activeCommitments: cleanForAI(commitments.slice(0, 8) as Record<string, unknown>[], [
+				...COMMITMENT_OMIT,
+				'id',
+				'contactId',
+			]),
+			relationshipHealth: healthScores.slice(0, 8).map((score) => ({
+				contactName: contactNameById.get(score.contactId) ?? 'Contact',
+				label: score.label,
+				trend: score.trend,
+				composite: score.composite,
+			})),
+			messageCoverage: {
+				totalMessages: messageCoverage.totalMessages,
+				linkedContactMessages: messageCoverage.linkedContactMessages,
+				messagesWithSenderMetadata: messageCoverage.messagesWithSenderMetadata,
+				chatsWithUnattributedMessages: messageCoverage.chatsWithNullContactMessages,
+				byChatType: messageCoverage.byChatType.map((row) => ({
+					type: row.chatType,
+					totalMessages: row.totalMessages,
+					linkedContactMessages: row.linkedContactMessages,
+				})),
+			},
+			topKnowledgeTopics: knowledgeNodes.slice(0, 12).map((node) => ({
+				name: node.displayName,
+				type: node.type,
+				description: node.description ?? null,
+				mentionCount: node.mentionCount,
+				lastSeenAt: node.lastSeenAt ?? null,
+				reviewStatus: node.reviewStatus ?? null,
+			})),
+			safety:
+				'Workspace context is local, workspace-scoped, and read-only. Imported message content is summarized by counts here; use search_imported_messages for specific masked snippets.',
+		};
+		return JSON.stringify(context, null, 2);
+	},
+
+	list_knowledge_topics: async (input, workspaceId, envelope) => {
+		const limit = clampPositiveNumber(input.limit, 12, 20);
+		const type =
+			typeof input.type === 'string' && KNOWLEDGE_TOPIC_TYPES.has(input.type as KnowledgeTopicType)
+				? (input.type as KnowledgeTopicType)
+				: undefined;
+		const nodes = await listKnowledgeNodes(workspaceId, { limit, type }, envelope);
+		if (nodes.length === 0) return 'No generated knowledge topics found.';
+		return formatToolResult(
+			nodes.map((node) => ({
+				name: node.displayName,
+				type: node.type,
+				description: node.description ?? null,
+				mentionCount: node.mentionCount,
+				lastSeenAt: node.lastSeenAt ?? null,
+				reviewStatus: node.reviewStatus ?? null,
+			})),
+			'knowledge topics',
+		);
+	},
+
 	search_contacts: async (input, workspaceId, envelope) => {
 		const name = input.name as string;
 		const results = await searchContactByName(workspaceId, name, envelope);
@@ -508,6 +721,42 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
 		// Strip internal scoring metrics — AI only needs content and category
 		const cleaned = results.map((r) => ({ content: r.content, category: r.category }));
 		return formatToolResult(cleaned, 'memories');
+	},
+
+	search_imported_messages: async (input, workspaceId, envelope) => {
+		const query = normalizeSearchText(input.query);
+		if (query.length < 2) {
+			return 'Search imported messages requires a specific query of at least 2 characters.';
+		}
+		const days = clampPositiveNumber(input.days, 90, 365);
+		const limit = clampPositiveNumber(input.limit, 6, 10);
+		const end = new Date();
+		const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+		const rows = await getMessagesByTimeRange(workspaceId, start, end, envelope, {
+			limit: MAX_IMPORTED_MESSAGE_SCAN,
+			order: 'desc',
+		});
+
+		const matches = rows
+			.filter(
+				(message) => typeof message.text === 'string' && message.text.toLowerCase().includes(query),
+			)
+			.slice(0, limit);
+		if (matches.length === 0) {
+			return `No imported message matches found for "${input.query}" in the last ${days} days.`;
+		}
+
+		const masked = await Promise.all(
+			matches.map(async (message) => ({
+				sentAt: message.sentAt,
+				direction: message.isOutgoing ? 'outgoing' : 'incoming',
+				maskedSnippet: await maskSnippet(
+					snippetAround(String(message.text ?? ''), query),
+					envelope,
+				),
+			})),
+		);
+		return formatToolResult(masked, 'imported message matches');
 	},
 
 	search_precedents: async (input, workspaceId, envelope) => {

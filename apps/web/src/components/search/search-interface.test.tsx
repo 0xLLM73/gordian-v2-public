@@ -118,7 +118,7 @@ describe('SearchInterface', () => {
 						contacts: 'Encrypted exact/name search',
 						memories: 'Hybrid semantic + text search',
 						commitments: 'Semantic vector + encrypted-text fallback',
-						deals: 'Encrypted exact title search',
+						deals: 'Encrypted exact/title text search',
 						knowledge: 'Evidence-backed knowledge search runs separately',
 						goals: 'Title search runs separately',
 					},

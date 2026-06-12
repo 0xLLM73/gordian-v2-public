@@ -6,6 +6,12 @@ const mockGetActiveCommitments = vi.hoisted(() => vi.fn());
 const mockGetDealsByContact = vi.hoisted(() => vi.fn());
 const mockListDeals = vi.hoisted(() => vi.fn());
 const mockHybridSearch = vi.hoisted(() => vi.fn());
+const mockGetDashboardStats = vi.hoisted(() => vi.fn());
+const mockGetHealthScoresByWorkspace = vi.hoisted(() => vi.fn());
+const mockGetMessageContactCoverageReport = vi.hoisted(() => vi.fn());
+const mockGetMessagesByTimeRange = vi.hoisted(() => vi.fn());
+const mockListContacts = vi.hoisted(() => vi.fn());
+const mockListKnowledgeNodes = vi.hoisted(() => vi.fn());
 const mockGenerateEmbedding = vi.hoisted(() => vi.fn());
 const mockPrefilterEntities = vi.hoisted(() => vi.fn());
 const mockSearchKnowledgeNodes = vi.hoisted(() => vi.fn());
@@ -24,6 +30,12 @@ vi.mock('@repo/db', () => ({
 	getDealsByContact: mockGetDealsByContact,
 	listDeals: mockListDeals,
 	hybridSearch: mockHybridSearch,
+	getDashboardStats: mockGetDashboardStats,
+	getHealthScoresByWorkspace: mockGetHealthScoresByWorkspace,
+	getMessageContactCoverageReport: mockGetMessageContactCoverageReport,
+	getMessagesByTimeRange: mockGetMessagesByTimeRange,
+	listContacts: mockListContacts,
+	listKnowledgeNodes: mockListKnowledgeNodes,
 	searchKnowledgeNodes: mockSearchKnowledgeNodes,
 	knowledgeGraphSearch: mockKnowledgeGraphSearch,
 	provenanceSearch: mockProvenanceSearch,
@@ -65,14 +77,17 @@ const fakeEnvelope = {
 };
 
 describe('CHAT_TOOLS', () => {
-	it('defines 13 tools with valid names and input_schema', () => {
-		expect(CHAT_TOOLS).toHaveLength(13);
+	it('defines 16 tools with valid names and input_schema', () => {
+		expect(CHAT_TOOLS).toHaveLength(16);
 		const names = CHAT_TOOLS.map((t) => t.name);
+		expect(names).toContain('get_workspace_context');
+		expect(names).toContain('list_knowledge_topics');
 		expect(names).toContain('search_contacts');
 		expect(names).toContain('get_commitments');
 		expect(names).toContain('get_deals');
 		expect(names).toContain('search_memories');
 		expect(names).toContain('search_knowledge');
+		expect(names).toContain('search_imported_messages');
 		expect(names).toContain('search_precedents');
 		expect(names).toContain('create_commitment');
 		expect(names).toContain('update_deal_stage');
@@ -128,6 +143,106 @@ describe('CHAT_TOOLS', () => {
 		const result = await TOOL_EXECUTORS.get_deals({}, 'ws-4', fakeEnvelope);
 
 		expect(result).toBe('No deals found.');
+	});
+
+	it('get_workspace_context returns safe local summaries without raw message text or internal ids', async () => {
+		mockGetDashboardStats.mockResolvedValue({
+			contactCount: 2,
+			activeCommitmentCount: 1,
+			openDealCount: 1,
+			totalDealValue: 1000,
+			activeGoalCount: 1,
+		});
+		mockListContacts.mockResolvedValue([
+			{
+				id: 'contact-1',
+				firstName: 'Alice',
+				lastName: 'Example',
+				username: null,
+				messageCount: 12,
+				lastMessageAt: new Date('2026-06-10T12:00:00Z'),
+			},
+		]);
+		mockListDeals.mockResolvedValue([
+			{
+				id: 'deal-1',
+				contactId: 'contact-1',
+				title: 'Seed round',
+				stage: 'diligence',
+				value: 1000,
+				workspaceId: 'ws-ctx',
+			},
+		]);
+		mockGetActiveCommitments.mockResolvedValue([
+			{
+				id: 'commitment-1',
+				contactId: 'contact-1',
+				title: 'Follow up',
+				status: 'active',
+				workspaceId: 'ws-ctx',
+			},
+		]);
+		mockGetHealthScoresByWorkspace.mockResolvedValue([
+			{ contactId: 'contact-1', label: 'healthy', trend: 'stable', composite: 0.82 },
+		]);
+		mockGetMessageContactCoverageReport.mockResolvedValue({
+			totalMessages: 25,
+			linkedContactMessages: 20,
+			messagesWithSenderMetadata: 22,
+			chatsWithNullContactMessages: 1,
+			byChatType: [{ chatType: 'private', totalMessages: 25, linkedContactMessages: 20 }],
+		});
+		mockListKnowledgeNodes.mockResolvedValue([
+			{
+				id: 'node-1',
+				displayName: 'Solana',
+				type: 'technology',
+				description: 'Layer 1 blockchain',
+				mentionCount: 4,
+				lastSeenAt: new Date('2026-06-10T12:00:00Z'),
+				reviewStatus: 'unreviewed',
+			},
+		]);
+
+		const result = await TOOL_EXECUTORS.get_workspace_context({}, 'ws-ctx', fakeEnvelope);
+		const parsed = JSON.parse(result) as {
+			counts: { importedMessages: number };
+			topContacts: Array<{ name: string }>;
+			openDeals: Array<Record<string, unknown>>;
+			topKnowledgeTopics: Array<{ name: string }>;
+		};
+
+		expect(parsed.counts.importedMessages).toBe(25);
+		expect(parsed.topContacts[0]?.name).toBe('Alice Example');
+		expect(parsed.topKnowledgeTopics[0]?.name).toBe('Solana');
+		expect(JSON.stringify(parsed.openDeals)).not.toContain('deal-1');
+		expect(result).not.toContain('raw private message');
+	});
+
+	it('list_knowledge_topics returns top generated nodes for broad theme questions', async () => {
+		mockListKnowledgeNodes.mockResolvedValue([
+			{
+				displayName: 'AI Infrastructure',
+				type: 'sector',
+				description: 'Infrastructure for AI development',
+				mentionCount: 3,
+				lastSeenAt: null,
+				reviewStatus: 'unreviewed',
+			},
+		]);
+
+		const result = await TOOL_EXECUTORS.list_knowledge_topics(
+			{ limit: 5 },
+			'ws-topics',
+			fakeEnvelope,
+		);
+
+		expect(mockListKnowledgeNodes).toHaveBeenCalledWith(
+			'ws-topics',
+			{ limit: 5, type: undefined },
+			fakeEnvelope,
+		);
+		expect(result).toContain('AI Infrastructure');
 	});
 
 	it('search_knowledge executor uses provenanceSearch then falls back to text search', async () => {
@@ -221,6 +336,38 @@ describe('CHAT_TOOLS', () => {
 		});
 		// Prefilter should have been called on the query
 		expect(mockPrefilterEntities).toHaveBeenCalledWith('funding round');
+	});
+
+	it('search_imported_messages returns only masked snippets for local message matches', async () => {
+		mockGetMessagesByTimeRange.mockResolvedValue([
+			{
+				text: 'Alice wants to discuss Solana validator infrastructure next week.',
+				isOutgoing: false,
+				sentAt: new Date('2026-06-10T12:00:00Z'),
+			},
+			{
+				text: 'Unrelated local message',
+				isOutgoing: true,
+				sentAt: new Date('2026-06-09T12:00:00Z'),
+			},
+		]);
+
+		const result = await TOOL_EXECUTORS.search_imported_messages(
+			{ query: 'Solana', days: 30, limit: 3 },
+			'ws-msg',
+			fakeEnvelope,
+		);
+
+		expect(mockGetMessagesByTimeRange).toHaveBeenCalledWith(
+			'ws-msg',
+			expect.any(Date),
+			expect.any(Date),
+			fakeEnvelope,
+			expect.objectContaining({ limit: 500, order: 'desc' }),
+		);
+		expect(result).toContain('maskedSnippet');
+		expect(result).toContain('Solana validator infrastructure');
+		expect(result).not.toContain('Unrelated local message');
 	});
 
 	it('search_precedents executor returns formatted precedents with graph context', async () => {

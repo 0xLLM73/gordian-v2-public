@@ -13,6 +13,9 @@ You help the user understand their contacts, deals, commitments, and relationshi
 
 Rules:
 - Answer questions using the available tools to look up real data
+- For broad overview/theme questions, use get_workspace_context and/or list_knowledge_topics before answering
+- For generated topic/theme questions, use list_knowledge_topics before asking the user to provide a specific topic
+- For imported-message questions, use search_imported_messages only with a specific query; summarize masked snippets instead of quoting raw messages
 - Never fabricate contacts, deals, or commitments — only reference what tools return
 - If a search returns no results, say so honestly
 - Keep responses concise and actionable
@@ -33,6 +36,35 @@ export interface ChatResult {
 	toolsUsed: string[];
 }
 
+const WORKSPACE_CONTEXT_QUERY_RE =
+	/\b(theme|themes|overview|summari[sz]e|what do you see|what should i know|what is going on|all local information|local information|local data|knowledge graph|crm|digest|high-level|high level)\b/i;
+
+function lastUserText(messages: ChatMessage[]): string {
+	const lastUserMsg = [...messages].reverse().find((message) => message.role === 'user');
+	return typeof lastUserMsg?.content === 'string' ? lastUserMsg.content.trim() : '';
+}
+
+export function shouldPrefetchWorkspaceContext(messages: ChatMessage[]): boolean {
+	const text = lastUserText(messages);
+	return Boolean(text && WORKSPACE_CONTEXT_QUERY_RE.test(text));
+}
+
+export async function prefetchWorkspaceContextForLocalChat(
+	workspaceId: string,
+	envelope: SealedEnvelope,
+	messages: ChatMessage[],
+): Promise<string> {
+	if (!shouldPrefetchWorkspaceContext(messages)) return '';
+
+	try {
+		const context = await TOOL_EXECUTORS.get_workspace_context({}, workspaceId, envelope);
+		return `Safe workspace overview for this local-only chat request:\n${context}`;
+	} catch (err) {
+		console.error('[chat] Failed to prefetch workspace context:', redactSensitive(err));
+		return '';
+	}
+}
+
 export async function chat(
 	workspaceId: string,
 	envelope: SealedEnvelope,
@@ -43,11 +75,17 @@ export async function chat(
 		messages.length > MAX_MESSAGES ? messages.slice(messages.length - MAX_MESSAGES) : messages;
 
 	if (shouldUseLocalChat()) {
+		const domainKnowledge = await prefetchWorkspaceContextForLocalChat(
+			workspaceId,
+			envelope,
+			trimmed,
+		);
 		return runLocalChat({
 			workspaceId,
 			envelope,
 			messages: trimmed,
 			systemPrompt: CHAT_SYSTEM_KERNEL,
+			domainKnowledge,
 			maxIterations: MAX_ITERATIONS,
 		});
 	}

@@ -26,6 +26,7 @@ vi.mock('../../queues/sync', () => ({
 
 vi.mock('../../queues/telegram-history-import', () => ({
 	enqueueTelegramHistoryImport: vi.fn(),
+	queueTelegramAiConsentCatchup: vi.fn(),
 }));
 
 vi.mock('@repo/shared/handoff-token', () => ({
@@ -43,7 +44,10 @@ vi.mock('@repo/crypto', () => ({
 vi.mock('@repo/db', () => ({
 	appendAuditLog: mockAppendAuditLog,
 	getAccessibleContactTelegramId: mockGetAccessibleContactTelegramId,
+	getUserTelegramAccountIds: vi.fn().mockResolvedValue(['123456789']),
+	hasUserAiAnalysisConsent: vi.fn().mockResolvedValue(true),
 	isFeatureEnabled: mockIsFeatureEnabled,
+	isWorkspaceMember: vi.fn().mockResolvedValue(true),
 	db: {
 		query: {
 			accounts: {
