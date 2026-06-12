@@ -1,3 +1,11 @@
+import {
+	getContactsByIds,
+	getDealStageCounts,
+	getStageVelocityStats,
+	listDeals,
+	listPendingCandidates,
+} from '@repo/db';
+import { Suspense } from 'react';
 import { CreateDealForm } from '@/components/deals/create-deal-form';
 import { DealsActiveFilters } from '@/components/deals/deals-active-filters';
 import { DealsEmptyState } from '@/components/deals/deals-empty-state';
@@ -12,14 +20,6 @@ import {
 	normalizeDealStageFilter,
 } from '@/components/deals/filter-options';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
-import {
-	getContactsByIds,
-	getDealStageCounts,
-	getStageVelocityStats,
-	listDeals,
-	listPendingCandidates,
-} from '@repo/db';
-import { Suspense } from 'react';
 
 export default async function DealsPage({
 	searchParams,
@@ -76,7 +76,11 @@ async function DealsList({
 	workspaceId,
 	stage,
 	sort,
-}: { workspaceId: string; stage: DealStageFilter; sort: DealSortFilter }) {
+}: {
+	workspaceId: string;
+	stage: DealStageFilter;
+	sort: DealSortFilter;
+}) {
 	const envelope = await getWorkspaceEnvelope(workspaceId);
 	if (!envelope) {
 		return <DealsEmptyState reason="envelope_unavailable" />;

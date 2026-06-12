@@ -1,6 +1,5 @@
 'use server';
 
-import { workspaceAction } from '@/lib/safe-action';
 import { withKeys } from '@repo/crypto';
 import {
 	and,
@@ -13,6 +12,7 @@ import {
 	eq,
 } from '@repo/db';
 import { z } from 'zod';
+import { workspaceAction } from '@/lib/safe-action';
 
 export const listPendingCandidatesAction = workspaceAction
 	.schema(

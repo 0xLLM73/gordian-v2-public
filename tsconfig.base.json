@@ -12,6 +12,7 @@
 		"isolatedModules": true,
 		"verbatimModuleSyntax": true,
 		"resolveJsonModule": true,
+		"types": ["node"],
 		"lib": ["ES2022"]
 	}
 }

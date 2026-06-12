@@ -1,8 +1,8 @@
 #!/usr/bin/env tsx
 import { pathToFileURL } from 'node:url';
 import {
-	type MemoryMessageBackfillReport,
 	backfillMemoryMessageMetadata,
+	type MemoryMessageBackfillReport,
 } from '../packages/db/src/dal/memories';
 import { loadRootEnv } from './lib/load-root-env.mjs';
 

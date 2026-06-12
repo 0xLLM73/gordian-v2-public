@@ -1,8 +1,8 @@
 'use server';
 
-import { workspaceAction } from '@/lib/safe-action';
 import { getDecisionsByWorkspace as dalGetDecisions } from '@repo/db';
 import { z } from 'zod';
+import { workspaceAction } from '@/lib/safe-action';
 
 export const getDecisionsAction = workspaceAction
 	.schema(

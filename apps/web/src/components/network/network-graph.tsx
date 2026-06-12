@@ -1,11 +1,11 @@
 'use client';
 
-// Canvas API is browser-only — must use next/dynamic with ssr:false
-import { getNetworkGraphAction } from '@/app/actions/network';
-import type { GraphData, GraphNode } from '@/app/actions/network';
-import { HEALTH_HEX_COLORS } from '@/lib/colors';
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
+import type { GraphData, GraphNode } from '@/app/actions/network';
+// Canvas API is browser-only — must use next/dynamic with ssr:false
+import { getNetworkGraphAction } from '@/app/actions/network';
+import { HEALTH_HEX_COLORS } from '@/lib/colors';
 
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 

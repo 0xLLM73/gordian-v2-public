@@ -7,9 +7,12 @@ import {
 	maskEntities,
 	unwrapWrk,
 } from '@repo/crypto';
-import { accounts, and, db, eq, workspaces } from '@repo/db';
-import { contacts } from '@repo/db';
 import {
+	accounts,
+	and,
+	contacts,
+	db,
+	eq,
 	getUnembeddedMemories,
 	hasUserAiAnalysisConsent,
 	listChats,
@@ -18,6 +21,7 @@ import {
 	updateMessageSenderMetadataByTelegramIds,
 	upsertChat,
 	upsertMessages,
+	workspaces,
 } from '@repo/db';
 import { redactSensitive } from '@repo/shared';
 import { Queue, Worker } from 'bullmq';

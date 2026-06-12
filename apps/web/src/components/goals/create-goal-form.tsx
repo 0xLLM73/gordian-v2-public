@@ -1,13 +1,13 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
+import { useAction } from 'next-safe-action/hooks';
+import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
 import { listContactsAction } from '@/app/actions/contacts';
 import { createGoalAction } from '@/app/actions/goals';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { useAction } from 'next-safe-action/hooks';
-import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
-import { toast } from 'sonner';
 
 interface Contact {
 	id: string;

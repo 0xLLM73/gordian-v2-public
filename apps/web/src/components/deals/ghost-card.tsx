@@ -1,11 +1,12 @@
 'use client';
+
 // Client boundary: expand/collapse state, confirm/dismiss with optimistic UI
 
-import { confirmCandidateAction, dismissCandidateAction } from '@/app/actions/deal-candidates';
 import { Sparkles } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
+import { confirmCandidateAction, dismissCandidateAction } from '@/app/actions/deal-candidates';
 
 export interface GhostCandidate {
 	id: string;
@@ -33,7 +34,10 @@ function getConfidenceTier(confidence: number): { label: string; color: string }
 export function GhostCard({
 	candidate,
 	onRemove,
-}: { candidate: GhostCandidate; onRemove: (id: string) => void }) {
+}: {
+	candidate: GhostCandidate;
+	onRemove: (id: string) => void;
+}) {
 	const router = useRouter();
 	const [expanded, setExpanded] = useState(false);
 	const [isPending, startTransition] = useTransition();

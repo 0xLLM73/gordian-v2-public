@@ -1,5 +1,5 @@
-import { DEAL_STAGE_LABELS } from '@/components/deals/filter-options';
 import Link from 'next/link';
+import { DEAL_STAGE_LABELS } from '@/components/deals/filter-options';
 
 type DealsEmptyStateReason = 'workspace_unavailable' | 'envelope_unavailable' | 'empty_pipeline';
 

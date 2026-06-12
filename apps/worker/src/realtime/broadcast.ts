@@ -1,4 +1,4 @@
-import { type SupabaseClient, createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 /**
  * Supabase Realtime Broadcast integration (followup3).

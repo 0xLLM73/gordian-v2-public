@@ -1,7 +1,7 @@
-import { OnboardingProvider } from '@/components/onboarding/onboarding-provider';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { OnboardingProvider } from '@/components/onboarding/onboarding-provider';
 import PermissionsPage from './page';
 
 const navigationMocks = vi.hoisted(() => ({

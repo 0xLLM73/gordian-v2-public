@@ -1,14 +1,14 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
+import { useAction } from 'next-safe-action/hooks';
+import { useEffect, useState } from 'react';
 import { listContactsAction } from '@/app/actions/contacts';
 import { createDealAction } from '@/app/actions/deals';
 import { ContactCombobox } from '@/components/introductions/contact-combobox';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { useAction } from 'next-safe-action/hooks';
-import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
 
 interface Contact {
 	id: string;

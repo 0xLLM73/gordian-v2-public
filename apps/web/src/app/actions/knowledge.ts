@@ -1,13 +1,5 @@
 'use server';
 
-import { getKnowledgeEvidenceQualityStatsForNodes } from '@/lib/knowledge-evidence-quality';
-import {
-	LOCAL_WORKER_UNAVAILABLE_MESSAGE,
-	getInternalSecret,
-	isLocalWorkerConnectionError,
-	workspaceAction,
-} from '@/lib/safe-action';
-import { track } from '@/lib/track';
 import { deriveKeys, maskEntities, prefilterEntities, unwrapWrk, withKeys } from '@repo/crypto';
 import { getOpenAIApiKey } from '@repo/crypto/local-secrets';
 import {
@@ -42,13 +34,21 @@ import {
 	updateKnowledgeNode,
 } from '@repo/db';
 import {
-	type KnowledgeEmbeddingPurpose,
 	formatKnowledgeEmbeddingInput,
 	getKnowledgeEmbeddingRuntime,
 	getKnowledgeLlmRuntime,
 	isAiProcessingEnabled,
+	type KnowledgeEmbeddingPurpose,
 } from '@repo/shared';
 import { z } from 'zod';
+import { getKnowledgeEvidenceQualityStatsForNodes } from '@/lib/knowledge-evidence-quality';
+import {
+	getInternalSecret,
+	isLocalWorkerConnectionError,
+	LOCAL_WORKER_UNAVAILABLE_MESSAGE,
+	workspaceAction,
+} from '@/lib/safe-action';
+import { track } from '@/lib/track';
 
 const NODE_TYPES = ['topic', 'project', 'organization', 'technology', 'sector', 'concept'] as const;
 const ANALYSIS_MODES = ['incremental', 'evidence', 'full'] as const;

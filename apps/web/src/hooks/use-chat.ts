@@ -1,9 +1,9 @@
 'use client';
 
+import { useCallback, useRef, useState } from 'react';
 // Fallback for when SSE streaming is unavailable
 import { sendChatMessageAction } from '@/app/actions/chat';
 import type { ActionProposal } from '@/components/chat/action-card';
-import { useCallback, useRef, useState } from 'react';
 import { type ChatMessage, useChatContext, useChatMessages } from './use-chat-context';
 
 export type { ChatMessage } from './use-chat-context';

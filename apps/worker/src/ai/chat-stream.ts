@@ -1,16 +1,16 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import {
-	type SealedEnvelope,
 	deriveKeys,
 	maskEntities,
 	prefilterEntities,
+	type SealedEnvelope,
 	unwrapWrk,
 } from '@repo/crypto';
 import { getCommitmentsByContact, getDealsByContact } from '@repo/db';
 import { redactSensitive } from '@repo/shared';
 import { inferWithCache, streamInfer } from './cached-inference';
-import { CHAT_SYSTEM_KERNEL } from './chat';
 import type { ChatMessage } from './chat';
+import { CHAT_SYSTEM_KERNEL } from './chat';
 import { CHAT_TOOLS, TOOL_EXECUTORS } from './chat-tools';
 import { runLocalChat, shouldUseLocalChat } from './local-chat';
 import { MODEL_IDS, routeQuery } from './query-router';

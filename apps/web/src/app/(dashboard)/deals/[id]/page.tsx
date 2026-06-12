@@ -1,3 +1,17 @@
+import {
+	getContactsByIds,
+	getDeal,
+	listDealAiRuns,
+	listDealArtifacts,
+	listDealDecisionsWithEvidence,
+	listDealEvidenceLinks,
+	listDealParticipants,
+	listDealStageEvents,
+} from '@repo/db';
+import { getDealLocalAiStatus } from '@repo/shared';
+import Link from 'next/link';
+import { notFound } from 'next/navigation';
+import { Suspense } from 'react';
 import { DealActions } from '@/components/deals/deal-actions';
 import {
 	DealDecisionTrailPanel,
@@ -13,20 +27,6 @@ import { DealOverviewPanel } from '@/components/deals/deal-overview-panel';
 import { DealStageTimeline } from '@/components/deals/deal-stage-timeline';
 import { formatRelativeDate } from '@/lib/format';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
-import {
-	getContactsByIds,
-	getDeal,
-	listDealAiRuns,
-	listDealArtifacts,
-	listDealDecisionsWithEvidence,
-	listDealEvidenceLinks,
-	listDealParticipants,
-	listDealStageEvents,
-} from '@repo/db';
-import { getDealLocalAiStatus } from '@repo/shared';
-import Link from 'next/link';
-import { notFound } from 'next/navigation';
-import { Suspense } from 'react';
 
 const dealTypeLabels: Record<string, string> = {
 	investment: 'Investment',

@@ -1,8 +1,5 @@
 'use server';
 
-import { getOptionalWorkerInternalSecret } from '@/lib/runtime-env';
-import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
-import { track } from '@/lib/track';
 import {
 	createCorrectionDiff,
 	createGoldenExample,
@@ -17,6 +14,9 @@ import {
 } from '@repo/db';
 import { canRunCloudRationaleExtraction, commitmentStatusSchema } from '@repo/shared';
 import { z } from 'zod';
+import { getOptionalWorkerInternalSecret } from '@/lib/runtime-env';
+import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
+import { track } from '@/lib/track';
 
 const commitmentPeriodUnitSchema = z.enum(['days', 'weeks', 'months']);
 

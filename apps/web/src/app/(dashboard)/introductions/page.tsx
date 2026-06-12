@@ -1,3 +1,12 @@
+import {
+	getContactsByIds,
+	getDistinctEvents,
+	getMessagesByIds,
+	getPreferences,
+	listIntroductions,
+} from '@repo/db';
+import Link from 'next/link';
+import { Suspense } from 'react';
 import { ConnectionFinder } from '@/components/connections/connection-finder';
 import { ConnectionList } from '@/components/connections/connection-list';
 import { EventFilter } from '@/components/connections/event-filter';
@@ -13,15 +22,6 @@ import {
 } from '@/components/settings/intro-keywords-editor';
 import { cn } from '@/lib/utils';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
-import {
-	getContactsByIds,
-	getDistinctEvents,
-	getMessagesByIds,
-	getPreferences,
-	listIntroductions,
-} from '@repo/db';
-import Link from 'next/link';
-import { Suspense } from 'react';
 import { IntroductionFinder } from './introduction-finder';
 import { RelationshipScanStatusPanel } from './relationship-scan-status';
 

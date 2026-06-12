@@ -1,7 +1,7 @@
 'use client';
 
-import { upsertContactTagAction } from '@/app/actions/contact-tags';
 import { useState, useTransition } from 'react';
+import { upsertContactTagAction } from '@/app/actions/contact-tags';
 
 const RELATIONSHIP_OPTIONS = [
 	'friend',

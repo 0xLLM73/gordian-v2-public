@@ -1,10 +1,10 @@
 'use client';
 
+import type { UserPreferencesData } from '@repo/db';
+import { useState, useTransition } from 'react';
 import { updatePreferencesAction } from '@/app/actions/preferences';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import type { UserPreferencesData } from '@repo/db';
-import { useState, useTransition } from 'react';
 
 interface Props {
 	initial: UserPreferencesData;

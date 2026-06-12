@@ -1,8 +1,8 @@
 'use server';
 
-import { workspaceAction } from '@/lib/safe-action';
 import { createCommitment, dismissGhostingAlert } from '@repo/db';
 import { z } from 'zod';
+import { workspaceAction } from '@/lib/safe-action';
 
 /**
  * "Remind me" — creates a soft draft commitment for the ghosted contact.

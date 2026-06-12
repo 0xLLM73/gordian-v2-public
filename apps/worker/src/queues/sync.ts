@@ -1,26 +1,28 @@
 import type { SealedEnvelope } from '@repo/crypto';
 import { decrypt, decryptSessionKek, deriveKeys, encrypt, unwrapWrk } from '@repo/crypto';
-import { accounts, and, db, eq, workspaces } from '@repo/db';
 import {
+	accounts,
+	and,
 	contacts,
 	createContact,
+	db,
+	eq,
 	getActiveGoalsByType,
 	getCalibration,
 	getStaleContacts,
-	updateContact,
-	updateContactRecency,
-	updateGoalProgress,
-} from '@repo/db';
-import {
 	linkMessagesToContact,
 	linkMessagesToContactsByTelegramIds,
 	listMessageIdsByTelegramIds,
 	updateChatLastSync,
+	updateContact,
+	updateContactRecency,
+	updateGoalProgress,
 	updateMessageSenderMetadataByTelegramIds,
 	upsertChat,
 	upsertMessages,
+	workspaces,
 } from '@repo/db';
-import { type TelegramSyncScope, redactSensitive, resolveTelegramSyncScope } from '@repo/shared';
+import { redactSensitive, resolveTelegramSyncScope, type TelegramSyncScope } from '@repo/shared';
 import { Queue, Worker } from 'bullmq';
 import { connectUser, sendToUser } from '../gramjs/thread';
 import { trackWorkerEvent as trackAnalyticsEvent } from '../lib/track';

@@ -1,7 +1,7 @@
-import { OnboardingProvider } from '@/components/onboarding/onboarding-provider';
 import { render, screen } from '@testing-library/react';
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { OnboardingProvider } from '@/components/onboarding/onboarding-provider';
 import ConnectPage from './page';
 
 vi.hoisted(() => {

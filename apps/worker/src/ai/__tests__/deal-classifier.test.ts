@@ -12,10 +12,7 @@ import { classifyDealIntent } from '../deal-classifier';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────────
 
-function geminiReturns(result: {
-	isInvestmentDiscussion: boolean;
-	confidence: number;
-}) {
+function geminiReturns(result: { isInvestmentDiscussion: boolean; confidence: number }) {
 	mockInferWithGemini.mockResolvedValueOnce(JSON.stringify(result));
 }
 

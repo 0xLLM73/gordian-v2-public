@@ -1,9 +1,9 @@
 'use server';
 
-import { getPostHogServer } from '@/lib/posthog-server';
-import { workspaceAction } from '@/lib/safe-action';
 import { hasAnalyticsConsent, trackBehavior } from '@repo/db';
 import { z } from 'zod';
+import { getPostHogServer } from '@/lib/posthog-server';
+import { workspaceAction } from '@/lib/safe-action';
 
 /**
  * Generic fire-and-forget tracking action for client components.

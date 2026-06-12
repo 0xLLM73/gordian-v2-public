@@ -2,10 +2,10 @@
 
 // Client boundary: Canvas API is browser-only, react-force-graph-2d requires dynamic import with ssr:false
 
-import { getGraphDataAction } from '@/app/actions/knowledge';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
+import { getGraphDataAction } from '@/app/actions/knowledge';
 
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 

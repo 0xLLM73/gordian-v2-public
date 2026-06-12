@@ -2,8 +2,8 @@
 
 import { LOCAL_KG_MODEL_PRESETS, localKgEmbeddingFingerprintKey } from './lib/local-kg-models.mjs';
 import {
-	DEFAULT_ENV_PATH,
 	canConnectTcp,
+	DEFAULT_ENV_PATH,
 	endpointFromUrl,
 	envValue,
 	parseArgs,

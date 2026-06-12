@@ -3,9 +3,9 @@ import Redis from 'ioredis';
 import postgres from 'postgres';
 import { loadRootEnv } from '../../../scripts/lib/load-root-env.mjs';
 import {
-	LOCAL_REDIS_PURGE_PATTERNS,
 	assertLocalPurgeTargets,
 	isLegacyGrammySessionEntry,
+	LOCAL_REDIS_PURGE_PATTERNS,
 } from '../../../scripts/lib/local-runtime-safety.mjs';
 
 loadRootEnv();

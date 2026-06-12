@@ -1,9 +1,9 @@
-import { auth } from '@/lib/auth';
-import { checkRateLimit } from '@/lib/rate-limit';
-import { getUserWorkspaceId, getWorkspaceEnvelope } from '@/lib/workspace';
 import { getHealthScoresByWorkspace, getUserTelegramAccountIds, listContacts } from '@repo/db';
 import { headers } from 'next/headers';
 import { NextResponse } from 'next/server';
+import { auth } from '@/lib/auth';
+import { checkRateLimit } from '@/lib/rate-limit';
+import { getUserWorkspaceId, getWorkspaceEnvelope } from '@/lib/workspace';
 
 export async function GET(req: Request) {
 	const session = await auth.api.getSession({ headers: await headers() });

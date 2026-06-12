@@ -1,6 +1,9 @@
 'use client';
+
 // Needs interactivity: popover state, search input, keyboard navigation
 
+import { CheckIcon, ChevronsUpDownIcon } from 'lucide-react';
+import { useState } from 'react';
 import {
 	Command,
 	CommandEmpty,
@@ -11,8 +14,6 @@ import {
 } from '@/components/ui/command';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
-import { CheckIcon, ChevronsUpDownIcon } from 'lucide-react';
-import { useState } from 'react';
 
 interface Contact {
 	id: string;

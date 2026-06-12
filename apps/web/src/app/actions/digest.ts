@@ -1,8 +1,8 @@
 'use server';
 
-import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
 import { getCalibration, getLatestDigest, listDigests } from '@repo/db';
 import { z } from 'zod';
+import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
 
 export const getLatestDigestAction = workspaceAction
 	.schema(z.object({}))

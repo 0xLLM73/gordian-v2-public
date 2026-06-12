@@ -1,9 +1,9 @@
 'use client';
 
-import { OnboardingProvider } from '@/components/onboarding/onboarding-provider';
-import { StepIndicator } from '@/components/onboarding/step-indicator';
 import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
+import { OnboardingProvider } from '@/components/onboarding/onboarding-provider';
+import { StepIndicator } from '@/components/onboarding/step-indicator';
 
 const STEP_MAP: Record<
 	string,

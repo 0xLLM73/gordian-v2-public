@@ -1,6 +1,9 @@
 'use client';
+
 // Needs interactivity: AlertDialog, type-to-confirm input, async action, redirect
 
+import { useRouter } from 'next/navigation';
+import { useState, useTransition } from 'react';
 import { deleteAccountAction } from '@/app/actions/settings';
 import {
 	AlertDialog,
@@ -16,8 +19,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { authClient } from '@/lib/auth-client';
-import { useRouter } from 'next/navigation';
-import { useState, useTransition } from 'react';
 
 export function DeleteAccount() {
 	const [confirmText, setConfirmText] = useState('');

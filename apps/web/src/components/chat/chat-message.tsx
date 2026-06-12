@@ -1,5 +1,10 @@
 'use client';
 
+import { Check, Copy, TriangleAlert } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { useCallback, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import { toast } from 'sonner';
 import {
 	executeCommitmentAction,
 	executeDealCreateAction,
@@ -7,11 +12,6 @@ import {
 	executeGoalCreateAction,
 	executeTelegramSendAction,
 } from '@/app/actions/chat-actions';
-import { Check, Copy, TriangleAlert } from 'lucide-react';
-import { useRouter } from 'next/navigation';
-import { useCallback, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import { toast } from 'sonner';
 import { ActionCard, type ActionProposal } from './action-card';
 
 const TOOL_FRIENDLY_NAMES: Record<string, string> = {

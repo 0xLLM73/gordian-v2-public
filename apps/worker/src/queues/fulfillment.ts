@@ -1,5 +1,5 @@
-import { decrypt, deriveKeys, unwrapWrk } from '@repo/crypto';
 import type { SealedEnvelope } from '@repo/crypto';
+import { decrypt, deriveKeys, unwrapWrk } from '@repo/crypto';
 import {
 	getActiveGoalsByType,
 	getCommitmentsForFulfillmentCheck,

@@ -1,7 +1,5 @@
 'use server';
 
-import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
-import { track } from '@/lib/track';
 import {
 	deriveKeys,
 	generatePersonPseudonym,
@@ -20,6 +18,8 @@ import {
 	markDraftSent,
 } from '@repo/db';
 import { z } from 'zod';
+import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
+import { track } from '@/lib/track';
 
 export const generateDraftAction = workspaceAction
 	.schema(z.object({ contactId: z.string().uuid() }))

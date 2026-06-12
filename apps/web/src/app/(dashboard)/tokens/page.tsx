@@ -1,7 +1,7 @@
-import { RemoveWatchlistButton } from '@/components/tokens/remove-watchlist-button';
-import { getUserWorkspaceId, requireSession } from '@/lib/workspace';
 import { getTopMentionedTokens, getWatchlist } from '@repo/db';
 import { Suspense } from 'react';
+import { RemoveWatchlistButton } from '@/components/tokens/remove-watchlist-button';
+import { getUserWorkspaceId, requireSession } from '@/lib/workspace';
 import { AddToWatchlistForm } from './add-watchlist-form';
 
 export default async function TokensPage() {

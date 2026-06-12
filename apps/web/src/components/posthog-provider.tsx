@@ -1,7 +1,7 @@
 'use client';
 
-import { initPostHog, posthog } from '@/lib/posthog';
 import { useEffect } from 'react';
+import { initPostHog, posthog } from '@/lib/posthog';
 
 /**
  * Initializes PostHog client-side. Starts with opt_out_capturing_by_default.

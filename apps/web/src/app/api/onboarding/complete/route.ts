@@ -1,10 +1,10 @@
+import { upsertPreferences } from '@repo/db';
+import { headers } from 'next/headers';
+import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { track } from '@/lib/track';
 import { getUserWorkspaceId } from '@/lib/workspace';
-import { upsertPreferences } from '@repo/db';
-import { headers } from 'next/headers';
-import { NextResponse } from 'next/server';
 
 export async function POST(req: Request) {
 	const session = await auth.api.getSession({ headers: await headers() });

@@ -1,5 +1,4 @@
-import { InlineKeyboard } from 'grammy';
-import { Composer } from 'grammy';
+import { Composer, InlineKeyboard } from 'grammy';
 import type { BotContext } from '../context';
 
 /**

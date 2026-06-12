@@ -1,37 +1,84 @@
+export type { GoalRow } from '../schema/goals';
 export {
-	getContact,
-	getContactsByIds,
-	searchContactByName,
-	searchContactByPhone,
-	searchContactByEmail,
-	searchContactByUsername,
-	createContact,
-	updateContact,
-	listContacts,
-	listContactMaskingAliases,
-	canAccessContact,
-	canManageContact,
-	getAccessibleContact,
-	getAccessibleContacts,
-	getAccessibleContactTelegramId,
-	getUserTelegramAccountIds,
-	shareContact,
-	unshareContact,
-	getContactShares,
-	updateContactRecency,
-	getStaleContacts,
-	dismissGhostingAlert,
-} from './contacts';
-export type { ContactMaskingAlias, CreateContactInput, UpdateContactInput } from './contacts';
-
+	getCommitmentPipelineStats,
+	getEngagementMetrics,
+	getOnboardingFunnel,
+	trackAnalyticsEvent,
+} from './analytics';
+export type { AppendAuditLogInput, AuditLogFilters } from './audit-log';
 export {
-	getContactTag,
-	upsertContactTag,
-	listContactsByTag,
-	deleteContactTag,
-} from './contact-tags';
-export type { UpsertContactTagInput, ListContactsByTagFilters } from './contact-tags';
-
+	appendAuditLog,
+	createAuditLogger,
+	getAuditTrail,
+	queryAuditLogs,
+} from './audit-log';
+export { getBehaviorCounts, trackBehavior } from './behaviors';
+export type { LatestBrief, SaveBriefInput } from './briefs';
+export { getLatestBrief, saveBrief, updateBriefFeedback } from './briefs';
+export type { UpsertCalendarEventInput } from './calendar';
+export {
+	createCalendarConnection,
+	deleteCalendarConnection,
+	getCalendarConnection,
+	getEventCountByContact,
+	getUpcomingEvents,
+	listCalendarEvents,
+	matchAttendeeToContact,
+	updateCalendarLastSync,
+	updateCalendarTokens,
+	upsertCalendarEvent,
+} from './calendar';
+export type {
+	CalibrationCompletionStatus,
+	CalibrationContext,
+	CalibrationInput,
+	ConsentInput,
+	ContactSuggestion,
+	UserCalibration,
+	WhatMattersInput,
+} from './calibration';
+export {
+	getCalibration,
+	getCalibrationCompletionStatus,
+	getCalibrationForAI,
+	getMostActiveContacts,
+	getMostNeglectedContacts,
+	hasAnalyticsConsent,
+	hasUserAiAnalysisConsent,
+	hasWorkspaceAiAnalysisConsent,
+	saveConsent,
+	saveWhatMatters,
+	upsertCalibration,
+} from './calibration';
+export type { CreateCommitmentInput } from './commitments';
+export {
+	createCommitment,
+	getActiveCommitments,
+	getCommitmentBanditTrace,
+	getCommitmentForFeedback,
+	getCommitmentsByContact,
+	getCommitmentsByWorkspace,
+	getCommitmentsForFirstLook,
+	getCommitmentsForFulfillmentCheck,
+	markCommitmentFulfilled,
+	snoozeCommitment,
+	updateCommitmentStatus,
+	updateLastCheckedAt,
+} from './commitments';
+export {
+	createConnection,
+	getConnectionsByContact,
+	getDistinctEvents,
+	listConnections,
+	updateConnection,
+	updateConnectionStatus,
+} from './connections';
+export type {
+	ContactHealthFeedbackAction,
+	ContactHealthFeedbackReason,
+	ContactHealthFeedbackRow,
+	RecordContactHealthFeedbackInput,
+} from './contact-health-feedback';
 export {
 	CONTACT_HEALTH_FEEDBACK_ACTIONS,
 	CONTACT_HEALTH_FEEDBACK_REASONS,
@@ -39,23 +86,396 @@ export {
 	getLatestContactHealthFeedback,
 	recordContactHealthFeedback,
 } from './contact-health-feedback';
-export type {
-	ContactHealthFeedbackAction,
-	ContactHealthFeedbackReason,
-	ContactHealthFeedbackRow,
-	RecordContactHealthFeedbackInput,
-} from './contact-health-feedback';
-
+export type { UpsertContactStyleOverrideInput } from './contact-style-overrides';
 export {
-	createMemory,
-	getMemoriesByContact,
-	getUnembeddedMemories,
-	backfillMemoryMessageMetadata,
-	mergeMemoryMessageBackfillMetadata,
-	hybridSearch,
-	textSearch,
-	updateMemoryEmbedding,
-} from './memories';
+	getContactStyleOverride,
+	getContactStyleOverridesBatch,
+	updateDeviationSignals,
+	upsertContactStyleOverride,
+} from './contact-style-overrides';
+export type { ListContactsByTagFilters, UpsertContactTagInput } from './contact-tags';
+export {
+	deleteContactTag,
+	getContactTag,
+	listContactsByTag,
+	upsertContactTag,
+} from './contact-tags';
+export type { ContactMaskingAlias, CreateContactInput, UpdateContactInput } from './contacts';
+export {
+	canAccessContact,
+	canManageContact,
+	createContact,
+	dismissGhostingAlert,
+	getAccessibleContact,
+	getAccessibleContacts,
+	getAccessibleContactTelegramId,
+	getContact,
+	getContactShares,
+	getContactsByIds,
+	getStaleContacts,
+	getUserTelegramAccountIds,
+	listContactMaskingAliases,
+	listContacts,
+	searchContactByEmail,
+	searchContactByName,
+	searchContactByPhone,
+	searchContactByUsername,
+	shareContact,
+	unshareContact,
+	updateContact,
+	updateContactRecency,
+} from './contacts';
+export type { CreateCorrectionDiffInput } from './correction-diffs';
+export {
+	assignPatternToDiffs,
+	createCorrectionDiff,
+	getAllDiffEmbeddings,
+	getDiffsByGoldenId,
+	getUnclusteredDiffs,
+	getUnembeddedDiffs,
+	updateDiffEmbedding,
+} from './correction-diffs';
+export type {
+	DashboardAnalyticsStats,
+	DashboardStats,
+	RecentActivityItem,
+	UpcomingCommitment,
+} from './dashboard';
+export {
+	getDashboardAnalyticsStats,
+	getDashboardStats,
+	getRecentActivity,
+	getUpcomingCommitments,
+} from './dashboard';
+export type { DealAiRunStatus, DealAiRunType, SaveDealAiRunInput } from './deal-ai-runs';
+export {
+	listDealAiRuns,
+	saveDealAiRun,
+	updateDealAiRunStatus,
+} from './deal-ai-runs';
+export type { CreateDealArtifactInput } from './deal-artifacts';
+export { addDealArtifact, listDealArtifacts, removeDealArtifact } from './deal-artifacts';
+export type { CreateDealCandidateInput, DealCandidate } from './deal-candidates';
+export {
+	confirmCandidate,
+	createDealCandidate,
+	dismissCandidate,
+	isDuplicateCandidate,
+	listPendingCandidates,
+} from './deal-candidates';
+export type {
+	CreateDealDecisionInput,
+	CreateDealEvidenceLinkInput,
+	CreateDealStageEventInput,
+	DealDecisionWithEvidence,
+	DealEvidenceSourceType,
+} from './deal-cockpit';
+export {
+	addDealStageEvent,
+	createDealDecision,
+	getDealCockpitCounts,
+	linkDealEvidence,
+	listDealDecisionsWithEvidence,
+	listDealEvidenceLinks,
+	listDealStageEvents,
+} from './deal-cockpit';
+export type { CreateDealParticipantInput } from './deal-participants';
+export {
+	addDealParticipant,
+	listDealParticipants,
+	removeDealParticipant,
+	updateDealParticipant,
+} from './deal-participants';
+export type {
+	CreateDealInput,
+	DealConfidenceBadge,
+	DealConfidenceResult,
+	DealSortOption,
+	StageVelocityStats,
+	UpdateDealInput,
+} from './deals';
+export {
+	computeDealConfidence,
+	createDeal,
+	DEAL_SORT_OPTIONS,
+	deleteDeal,
+	getDeal,
+	getDealStageCounts,
+	getDealsByContact,
+	getStageVelocityStats,
+	listDeals,
+	updateDeal,
+} from './deals';
+export type { CreateDecisionInput, CreateEdgeInput, GraphSearchResult } from './decisions';
+export {
+	createDecision,
+	createEdge,
+	decayStaleEdges,
+	findDecisionByEntityId,
+	findEdgesByTargetDecision,
+	findRecentDecision,
+	findSimilarDecisions,
+	getDecisionsByWorkspace,
+	graphragSearch,
+	updateEdgeWeight,
+} from './decisions';
+export { deleteAccountData, deleteUserAccountOnly } from './delete-account';
+export type { CreateDigestInput } from './digests';
+export {
+	createDigestPlaceholder,
+	failDigest,
+	finalizeDigest,
+	getLatestDigest,
+	listDigests,
+} from './digests';
+export {
+	createDraftLog,
+	getDraftLog,
+	getDraftStats,
+	getPendingDrafts,
+	markDraftDiscarded,
+	markDraftSent,
+} from './drafts';
+export {
+	clearFlagCache,
+	deleteFeatureFlag,
+	isFeatureEnabled,
+	listFeatureFlags,
+	setFeatureFlag,
+} from './feature-flags';
+export type {
+	AppendFollowUpPlanActivityInput,
+	ClaimReadyFollowUpPlanStepInput,
+	CreateFollowUpPlanInput,
+	CreateFollowUpPlanTemplateInput,
+	FollowUpPlanActivityType,
+	FollowUpPlanDraftStatus,
+	FollowUpPlanSendStatus,
+	FollowUpPlanTemplate,
+	FollowUpPlanWorkerHealth,
+	FollowUpPlanWorkerHealthStatus,
+	FollowUpPlanWorkerHeartbeatStatus,
+	InsertFollowUpPlanDraftRevisionInput,
+	InsertFollowUpPlanSendRecordInput,
+	MarkStepPendingReviewOptions,
+	RecordFollowUpPlanStepProcessingFailureInput,
+	RecordFollowUpPlanWorkerHeartbeatInput,
+	RescheduleFollowUpPlanStepInput,
+} from './follow-up-plans';
+export {
+	activateFollowUpPlan,
+	advanceStep,
+	appendFollowUpPlanActivity,
+	approveStep,
+	autoPauseOnReply,
+	cancelFollowUpPlan,
+	claimReadyFollowUpPlanStep,
+	createFollowUpPlan,
+	createFollowUpPlanDraftRevision,
+	createFollowUpPlanTemplate,
+	createFollowUpPlanTemplateFromPlan,
+	createFollowUpPlanTemplateVersion,
+	editAndApproveStep,
+	FOLLOW_UP_PLAN_ACTIVITY_TYPES,
+	FOLLOW_UP_PLAN_DRAFT_STATUSES,
+	FOLLOW_UP_PLAN_READY_STEP_BATCH_SIZE,
+	FOLLOW_UP_PLAN_SEND_STATUSES,
+	FOLLOW_UP_PLAN_STEP_PROCESSING_LEASE_MS,
+	FOLLOW_UP_PLAN_TEMPLATES,
+	FOLLOW_UP_PLAN_WORKER_HEARTBEAT_STALE_MS,
+	FOLLOW_UP_PLAN_WORKER_HEARTBEAT_STATUSES,
+	FOLLOW_UP_PLAN_WORKER_ID,
+	getFollowUpPlan,
+	getFollowUpPlanSteps,
+	getFollowUpPlanWorkerHealth,
+	getReadySteps,
+	listFollowUpPlanActivity,
+	listFollowUpPlanDraftRevisions,
+	listFollowUpPlanSendRecords,
+	listFollowUpPlans,
+	listFollowUpPlanTemplates,
+	markStepPendingReview,
+	pauseFollowUpPlan,
+	recordFollowUpPlanStepCopied,
+	recordFollowUpPlanStepProcessingFailure,
+	recordFollowUpPlanTelegramOpened,
+	recordFollowUpPlanWorkerHeartbeat,
+	rejectStep,
+	requestFollowUpPlanStepRegeneration,
+	rescheduleFollowUpPlanStep,
+	resumeFollowUpPlan,
+	seedBuiltInFollowUpPlanTemplates,
+	skipStep,
+} from './follow-up-plans';
+export type { CreateGoalActionInput, GoalAction } from './goal-actions';
+export {
+	completeGoalAction,
+	createGoalAction,
+	deleteGoalAction,
+	listGoalActions,
+	updateGoalAction,
+} from './goal-actions';
+export type {
+	CreateGoalInput,
+	GoalAnalytics,
+	GoalProgressSource,
+	GoalTypeStats,
+	PaceDistribution,
+	UpdateGoalInput,
+} from './goals';
+export {
+	confirmGoalProposal,
+	createGoal,
+	createGoalProposal,
+	deleteGoal,
+	dismissGoalProposal,
+	getActiveGoalsByType,
+	getGoal,
+	getGoalAnalytics,
+	isDuplicateGoal,
+	listGoalProgressEvents,
+	listGoals,
+	listProposedGoals,
+	updateGoal,
+	updateGoalProgress,
+	updateGoalStatus,
+} from './goals';
+export type {
+	BanditBucketedStats,
+	BanditStats,
+	CreateGoldenExampleInput,
+	RecordBanditTrialInput,
+} from './golden-dataset';
+export {
+	createGoldenExample,
+	finalizeBanditReward,
+	findSimilarExamples,
+	getBanditStats,
+	getBanditStatsBucketed,
+	getGoldenLibrary,
+	getReviewQueueStats,
+	hashInputContext,
+	isContaminated,
+	listPendingExamples,
+	promoteToGold,
+	recordBanditTrial,
+	rejectExample,
+} from './golden-dataset';
+export type {
+	GetDecliningContactsOptions,
+	GetHealthScoresOptions,
+	UpsertHealthScoreInput,
+} from './health-scores';
+export {
+	getDecliningContacts,
+	getHealthScore,
+	getHealthScoresByContactIds,
+	getHealthScoresByWorkspace,
+	upsertHealthScore,
+} from './health-scores';
+export {
+	createIntroduction,
+	getIntroducerLeaderboard,
+	getIntroductionsByContact,
+	getIntroductionsByIntroducer,
+	listIntroductions,
+	updateIntroduction,
+	updateIntroductionStatus,
+} from './introductions';
+export type {
+	InvestorProfile,
+	ListInvestorProfilesOptions,
+	UpsertInvestorProfileData,
+} from './investor-profiles';
+export {
+	getInvestorProfile,
+	getTopInvestors,
+	listInvestorProfiles,
+	upsertInvestorProfile,
+} from './investor-profiles';
+export type { CreateInviteInput, InviteWithWorkspace } from './invites';
+export {
+	acceptInvite,
+	createInvite,
+	createWorkspace,
+	getInviteByToken,
+	listInvites,
+} from './invites';
+export type {
+	CreateKnowledgeEvidenceInput,
+	CreateKnowledgeNodeInput,
+	GraphSearchNode,
+	KnowledgeAnalysisContactCandidate,
+	KnowledgeContact,
+	KnowledgeContactEvidenceInput,
+	KnowledgeContactWithEvidence,
+	KnowledgeEvidence,
+	KnowledgeEvidenceKind,
+	KnowledgeExtractionLogEntry,
+	KnowledgeLink,
+	KnowledgeLinkEvidenceInput,
+	KnowledgeLinkType,
+	KnowledgeNeighbor,
+	KnowledgeNode,
+	KnowledgeNodePublic,
+	KnowledgeSearchContactItem,
+	KnowledgeSearchEvidenceItem,
+	KnowledgeSearchResult,
+	KnowledgeSearchResultWithEvidence,
+	LegacyKnowledgeEvidenceContactGap,
+	LegacyKnowledgeEvidenceNodeGap,
+	LegacyKnowledgeEvidenceNodeTypeSummary,
+	LegacyKnowledgeEvidenceReport,
+	LegacyKnowledgeEvidenceWorkspaceSummary,
+	ListKnowledgeNodesOptions,
+	ProvenanceResult,
+	RepairKnowledgeEvidenceCountsResult,
+	SearchKnowledgeNodesWithEvidenceOptions,
+	UpdateKnowledgeNodeInput,
+} from './knowledge';
+export {
+	createKnowledgeEvidence,
+	createKnowledgeLink,
+	createKnowledgeNode,
+	DEFAULT_KNOWLEDGE_MESSAGE_RECALL_LIMIT,
+	DEFAULT_KNOWLEDGE_MESSAGE_RECALL_MIN_SCORE,
+	DEFAULT_KNOWLEDGE_MESSAGE_RECALL_NODE_LIMIT,
+	DEFAULT_KNOWLEDGE_SEARCH_MIN_SIMILARITY,
+	deleteKnowledgeNode,
+	findNodeByAlias,
+	findNodeByNameAnyType,
+	getContactsNeedingExtraction,
+	getExtractionLog,
+	getGraphData,
+	getKnowledgeAnalysisContactCandidates,
+	getKnowledgeNeighbors,
+	getKnowledgeNode,
+	getKnowledgeNodeEvidenceStats,
+	getLegacyKnowledgeEvidenceReport,
+	getSharedKnowledge,
+	incrementNodeMentionCount,
+	inferSimilarityLinks,
+	knowledgeGraphSearch,
+	linkContactToKnowledge,
+	listContactIdsByKnowledge,
+	listContactsByKnowledge,
+	listContactsWithEvidenceForKnowledgeNode,
+	listEvidenceForKnowledgeContact,
+	listEvidenceForKnowledgeLink,
+	listEvidenceForKnowledgeNode,
+	listEvidenceForKnowledgeNodes,
+	listKnowledgeByContact,
+	listKnowledgeNodes,
+	mergeKnowledgeNodes,
+	normalizeKnowledgeSearchQuery,
+	provenanceSearch,
+	repairKnowledgeEvidenceCounts,
+	searchKnowledgeNodes,
+	searchKnowledgeNodesWithEvidence,
+	updateKnowledgeBackfillProgress,
+	updateKnowledgeNode,
+	upsertExtractionLog,
+} from './knowledge';
 export type {
 	CreateMemoryInput,
 	HybridSearchResult,
@@ -67,137 +487,22 @@ export type {
 	MemoryMessageBackfillWorkspaceSummary,
 	UnembeddedMemory,
 } from './memories';
-
 export {
-	createCommitment,
-	getCommitmentsByContact,
-	updateCommitmentStatus,
-	getActiveCommitments,
-	getCommitmentsByWorkspace,
-	getCommitmentsForFulfillmentCheck,
-	markCommitmentFulfilled,
-	updateLastCheckedAt,
-	getCommitmentForFeedback,
-	getCommitmentBanditTrace,
-	getCommitmentsForFirstLook,
-	snoozeCommitment,
-} from './commitments';
-export type { CreateCommitmentInput } from './commitments';
-
-export {
-	createDeal,
-	listDeals,
-	getDeal,
-	updateDeal,
-	getDealsByContact,
-	getDealStageCounts,
-	getStageVelocityStats,
-	computeDealConfidence,
-	deleteDeal,
-	DEAL_SORT_OPTIONS,
-} from './deals';
-export type {
-	CreateDealInput,
-	DealConfidenceBadge,
-	DealConfidenceResult,
-	DealSortOption,
-	StageVelocityStats,
-	UpdateDealInput,
-} from './deals';
-
-export {
-	addDealStageEvent,
-	listDealStageEvents,
-	createDealDecision,
-	linkDealEvidence,
-	listDealEvidenceLinks,
-	listDealDecisionsWithEvidence,
-	getDealCockpitCounts,
-} from './deal-cockpit';
-export type {
-	CreateDealDecisionInput,
-	CreateDealEvidenceLinkInput,
-	CreateDealStageEventInput,
-	DealDecisionWithEvidence,
-	DealEvidenceSourceType,
-} from './deal-cockpit';
-
-export {
-	saveDealAiRun,
-	listDealAiRuns,
-	updateDealAiRunStatus,
-} from './deal-ai-runs';
-export type { DealAiRunStatus, DealAiRunType, SaveDealAiRunInput } from './deal-ai-runs';
-
-export {
-	createDecision,
-	createEdge,
-	graphragSearch,
-	getDecisionsByWorkspace,
-	findRecentDecision,
-	findSimilarDecisions,
-	findDecisionByEntityId,
-	updateEdgeWeight,
-	findEdgesByTargetDecision,
-	decayStaleEdges,
-} from './decisions';
-export type { CreateDecisionInput, CreateEdgeInput, GraphSearchResult } from './decisions';
-
-export {
-	createGoldenExample,
-	findSimilarExamples,
-	getGoldenLibrary,
-	recordBanditTrial,
-	finalizeBanditReward,
-	getBanditStats,
-	getBanditStatsBucketed,
-	hashInputContext,
-	listPendingExamples,
-	promoteToGold,
-	rejectExample,
-	isContaminated,
-	getReviewQueueStats,
-} from './golden-dataset';
-export type {
-	CreateGoldenExampleInput,
-	RecordBanditTrialInput,
-	BanditStats,
-	BanditBucketedStats,
-} from './golden-dataset';
-
-export {
-	upsertChat,
-	updateChatLastSync,
-	getChatByTelegramId,
-	getChatsByIds,
-	listChats,
-	upsertMessages,
-	linkMessagesToContact,
-	linkMessagesToContactsByTelegramIds,
-	getMessageContactCoverageReport,
-	getMessageNullContactReasonReport,
-	repairMessagesToSenderContacts,
-	repairPrivateMessagesToPeerContacts,
-	updateMessageSenderMetadataByTelegramIds,
-	listMessageIdsByTelegramIds,
-	getMessagesByChat,
-	getMessagesByTelegramIds,
-	getMessagesByContact,
-	getMessagesByIds,
-	getNullContactSenderMetadataGap,
-	getRecentMessages,
-	getMessageCount,
-	getMessageTimeRangeStats,
-	getLastMessageDate,
-	getLatestMessageTimestamp,
-	getMessagesByTimeRange,
-} from './messages';
+	backfillMemoryMessageMetadata,
+	createMemory,
+	getMemoriesByContact,
+	getUnembeddedMemories,
+	hybridSearch,
+	mergeMemoryMessageBackfillMetadata,
+	textSearch,
+	updateMemoryEmbedding,
+} from './memories';
 export type {
 	MessageContactCoverageByChatType,
 	MessageContactCoverageReport,
+	MessageIdentity,
 	MessageNullContactReasonReport,
 	MessageNullContactReasonRow,
-	MessageIdentity,
 	MessageSenderMetadataLink,
 	PrivatePeerContactRepairResult,
 	SenderMetadataContactRepairResult,
@@ -205,35 +510,80 @@ export type {
 	UpsertChatInput,
 	UpsertMessageInput,
 } from './messages';
-
 export {
-	TELEGRAM_IMPORT_ACTIVE_STATUSES,
-	TELEGRAM_IMPORT_CHAT_TERMINAL_STATUSES,
-	TELEGRAM_IMPORT_TERMINAL_STATUSES,
-	createTelegramImportRun,
-	failTelegramImportRunChat,
-	findActiveTelegramImportRun,
-	getLatestTelegramImportProgress,
-	getLatestTelegramImportProgressWithHistory,
-	getLatestTelegramImportRun,
-	listChatIdsForTelegramImportRun,
-	listContactIdsForTelegramImportRun,
-	getOldestTelegramMessageId,
-	getTelegramChatImportState,
-	getTelegramImportRun,
-	getTelegramImportRunChat,
-	hasCurrentTelegramConsent,
-	hasOpenTelegramImportChats,
-	listQueuedTelegramImportRunChats,
-	recordTelegramImportPage,
-	requestTelegramImportCancel,
-	requestTelegramImportPause,
-	resumeTelegramImportRun,
-	updateTelegramImportDiscoveryCounts,
-	updateTelegramImportRunChatStatus,
-	updateTelegramImportRunStatus,
-	upsertTelegramImportRunChat,
-} from './telegram-imports';
+	getChatByTelegramId,
+	getChatsByIds,
+	getLastMessageDate,
+	getLatestMessageTimestamp,
+	getMessageContactCoverageReport,
+	getMessageCount,
+	getMessageNullContactReasonReport,
+	getMessagesByChat,
+	getMessagesByContact,
+	getMessagesByIds,
+	getMessagesByTelegramIds,
+	getMessagesByTimeRange,
+	getMessageTimeRangeStats,
+	getNullContactSenderMetadataGap,
+	getRecentMessages,
+	linkMessagesToContact,
+	linkMessagesToContactsByTelegramIds,
+	listChats,
+	listMessageIdsByTelegramIds,
+	repairMessagesToSenderContacts,
+	repairPrivateMessagesToPeerContacts,
+	updateChatLastSync,
+	updateMessageSenderMetadataByTelegramIds,
+	upsertChat,
+	upsertMessages,
+} from './messages';
+export type {
+	CreateOutcomeInput,
+	Outcome,
+	OutcomeResult,
+	OutcomeStats,
+	OutcomeType,
+} from './outcomes';
+export {
+	createOutcome,
+	getOutcomeStats,
+	hasRecentOutcome,
+	listOutcomes,
+	searchOutcomes,
+} from './outcomes';
+export type {
+	CreateRecommendationItem,
+	Recommendation,
+	RecommendationType,
+} from './recommendations';
+export {
+	actOnRecommendation,
+	createRecommendations,
+	dismissRecommendation,
+	expireOldRecommendations,
+	getPendingRecommendations,
+} from './recommendations';
+export type { CreateRelationshipInput, GetAllRelationshipsOptions } from './relationships';
+export {
+	createRelationship,
+	deriveGroupChatRelationships,
+	getAllRelationships,
+	getRelationshipsForContact,
+	updateRelationshipStrength,
+} from './relationships';
+export type { UnifiedSearchResult } from './search';
+export { unifiedSearch } from './search';
+export type { CacheHit } from './semantic-cache';
+export { checkCache, cleanupExpiredCache, invalidateCache, storeCache } from './semantic-cache';
+export type { CreateSemanticPatternInput } from './semantic-patterns';
+export {
+	createSemanticPattern,
+	findSimilarPatterns as findSimilarSemanticPatterns,
+	getTopPatterns,
+	reinforcePattern,
+} from './semantic-patterns';
+export type { UpsertSummaryInput } from './summaries';
+export { getLatestSummary, markSummaryStale, upsertSummary } from './summaries';
 export type {
 	CreateTelegramImportRunInput,
 	TelegramChatImportState,
@@ -244,449 +594,56 @@ export type {
 	TelegramImportRunChat,
 	TelegramImportRunStatus,
 } from './telegram-imports';
-
 export {
-	createRelationship,
-	getRelationshipsForContact,
-	getAllRelationships,
-	updateRelationshipStrength,
-	deriveGroupChatRelationships,
-} from './relationships';
-export type { CreateRelationshipInput, GetAllRelationshipsOptions } from './relationships';
-
-export { getLatestSummary, upsertSummary, markSummaryStale } from './summaries';
-export type { UpsertSummaryInput } from './summaries';
-
+	createTelegramImportRun,
+	failTelegramImportRunChat,
+	findActiveTelegramImportRun,
+	getLatestTelegramImportProgress,
+	getLatestTelegramImportProgressWithHistory,
+	getLatestTelegramImportRun,
+	getOldestTelegramMessageId,
+	getTelegramChatImportState,
+	getTelegramImportRun,
+	getTelegramImportRunChat,
+	hasCurrentTelegramConsent,
+	hasOpenTelegramImportChats,
+	listChatIdsForTelegramImportRun,
+	listContactIdsForTelegramImportRun,
+	listQueuedTelegramImportRunChats,
+	recordTelegramImportPage,
+	requestTelegramImportCancel,
+	requestTelegramImportPause,
+	resumeTelegramImportRun,
+	TELEGRAM_IMPORT_ACTIVE_STATUSES,
+	TELEGRAM_IMPORT_CHAT_TERMINAL_STATUSES,
+	TELEGRAM_IMPORT_TERMINAL_STATUSES,
+	updateTelegramImportDiscoveryCounts,
+	updateTelegramImportRunChatStatus,
+	updateTelegramImportRunStatus,
+	upsertTelegramImportRunChat,
+} from './telegram-imports';
+export type { CreateTokenMentionInput } from './tokens';
+export {
+	addToWatchlist,
+	createTokenMention,
+	getTokenMentionsByContact,
+	getTopMentionedTokens,
+	getWatchlist,
+	incrementMentionCount,
+	removeFromWatchlist,
+	updateWatchlistPrice,
+} from './tokens';
+export type { UpsertPreferencesInput, UserPreferencesData } from './user-preferences';
 export {
 	getPreferences,
-	upsertPreferences,
-	getWorkspaceIntroKeywords,
 	getWorkspaceConnectionKeywords,
+	getWorkspaceIntroKeywords,
+	upsertPreferences,
 } from './user-preferences';
-export type { UserPreferencesData, UpsertPreferencesInput } from './user-preferences';
-
+export type { UpsertVoiceProfileInput } from './voice-profiles';
 export {
-	createDigestPlaceholder,
-	finalizeDigest,
-	failDigest,
-	getLatestDigest,
-	listDigests,
-} from './digests';
-export type { CreateDigestInput } from './digests';
-
-export { unifiedSearch } from './search';
-export type { UnifiedSearchResult } from './search';
-
-export {
-	getDashboardAnalyticsStats,
-	getDashboardStats,
-	getUpcomingCommitments,
-	getRecentActivity,
-} from './dashboard';
-export type {
-	DashboardAnalyticsStats,
-	DashboardStats,
-	UpcomingCommitment,
-	RecentActivityItem,
-} from './dashboard';
-
-export {
-	upsertHealthScore,
-	getHealthScore,
-	getHealthScoresByContactIds,
-	getHealthScoresByWorkspace,
-	getDecliningContacts,
-} from './health-scores';
-export type {
-	UpsertHealthScoreInput,
-	GetHealthScoresOptions,
-	GetDecliningContactsOptions,
-} from './health-scores';
-
-export {
-	createDraftLog,
-	getDraftLog,
-	markDraftSent,
-	markDraftDiscarded,
-	getPendingDrafts,
-	getDraftStats,
-} from './drafts';
-
-export {
-	createIntroduction,
-	updateIntroduction,
-	updateIntroductionStatus,
-	listIntroductions,
-	getIntroductionsByIntroducer,
-	getIntroductionsByContact,
-	getIntroducerLeaderboard,
-} from './introductions';
-
-export {
-	createGoal,
-	listGoals,
-	getGoal,
-	updateGoal,
-	updateGoalProgress,
-	updateGoalStatus,
-	getActiveGoalsByType,
-	listGoalProgressEvents,
-	deleteGoal,
-	getGoalAnalytics,
-	isDuplicateGoal,
-	createGoalProposal,
-	confirmGoalProposal,
-	dismissGoalProposal,
-	listProposedGoals,
-} from './goals';
-export type {
-	CreateGoalInput,
-	UpdateGoalInput,
-	GoalProgressSource,
-	GoalAnalytics,
-	GoalTypeStats,
-	PaceDistribution,
-} from './goals';
-export type { GoalRow } from '../schema/goals';
-
-export { trackBehavior, getBehaviorCounts } from './behaviors';
-
-export {
-	trackAnalyticsEvent,
-	getOnboardingFunnel,
-	getCommitmentPipelineStats,
-	getEngagementMetrics,
-} from './analytics';
-
-export {
-	createTokenMention,
-	getTopMentionedTokens,
-	getTokenMentionsByContact,
-	addToWatchlist,
-	getWatchlist,
-	updateWatchlistPrice,
-	removeFromWatchlist,
-	incrementMentionCount,
-} from './tokens';
-export type { CreateTokenMentionInput } from './tokens';
-
-export {
-	createFollowUpPlan,
-	activateFollowUpPlan,
-	pauseFollowUpPlan,
-	resumeFollowUpPlan,
-	cancelFollowUpPlan,
-	seedBuiltInFollowUpPlanTemplates,
-	listFollowUpPlanTemplates,
-	createFollowUpPlanTemplate,
-	createFollowUpPlanTemplateVersion,
-	createFollowUpPlanTemplateFromPlan,
-	FOLLOW_UP_PLAN_READY_STEP_BATCH_SIZE,
-	getReadySteps,
-	claimReadyFollowUpPlanStep,
-	recordFollowUpPlanStepProcessingFailure,
-	markStepPendingReview,
-	rescheduleFollowUpPlanStep,
-	requestFollowUpPlanStepRegeneration,
-	advanceStep,
-	skipStep,
-	listFollowUpPlans,
-	getFollowUpPlan,
-	getFollowUpPlanSteps,
-	listFollowUpPlanActivity,
-	listFollowUpPlanSendRecords,
-	listFollowUpPlanDraftRevisions,
-	appendFollowUpPlanActivity,
-	createFollowUpPlanDraftRevision,
-	recordFollowUpPlanStepCopied,
-	recordFollowUpPlanTelegramOpened,
-	recordFollowUpPlanWorkerHeartbeat,
-	getFollowUpPlanWorkerHealth,
-	autoPauseOnReply,
-	approveStep,
-	editAndApproveStep,
-	rejectStep,
-	FOLLOW_UP_PLAN_ACTIVITY_TYPES,
-	FOLLOW_UP_PLAN_DRAFT_STATUSES,
-	FOLLOW_UP_PLAN_SEND_STATUSES,
-	FOLLOW_UP_PLAN_WORKER_HEARTBEAT_STATUSES,
-	FOLLOW_UP_PLAN_WORKER_HEARTBEAT_STALE_MS,
-	FOLLOW_UP_PLAN_WORKER_ID,
-	FOLLOW_UP_PLAN_STEP_PROCESSING_LEASE_MS,
-	FOLLOW_UP_PLAN_TEMPLATES,
-} from './follow-up-plans';
-export type {
-	AppendFollowUpPlanActivityInput,
-	ClaimReadyFollowUpPlanStepInput,
-	CreateFollowUpPlanInput,
-	CreateFollowUpPlanTemplateInput,
-	FollowUpPlanActivityType,
-	FollowUpPlanDraftStatus,
-	FollowUpPlanSendStatus,
-	FollowUpPlanTemplate,
-	FollowUpPlanWorkerHeartbeatStatus,
-	FollowUpPlanWorkerHealth,
-	FollowUpPlanWorkerHealthStatus,
-	InsertFollowUpPlanDraftRevisionInput,
-	InsertFollowUpPlanSendRecordInput,
-	MarkStepPendingReviewOptions,
-	RecordFollowUpPlanStepProcessingFailureInput,
-	RecordFollowUpPlanWorkerHeartbeatInput,
-	RescheduleFollowUpPlanStepInput,
-} from './follow-up-plans';
-
-export {
-	addDealParticipant,
-	listDealParticipants,
-	removeDealParticipant,
-	updateDealParticipant,
-} from './deal-participants';
-export type { CreateDealParticipantInput } from './deal-participants';
-
-export { addDealArtifact, listDealArtifacts, removeDealArtifact } from './deal-artifacts';
-export type { CreateDealArtifactInput } from './deal-artifacts';
-
-export {
-	createCalendarConnection,
-	getCalendarConnection,
-	updateCalendarTokens,
-	updateCalendarLastSync,
-	deleteCalendarConnection,
-	upsertCalendarEvent,
-	matchAttendeeToContact,
-	listCalendarEvents,
-	getUpcomingEvents,
-	getEventCountByContact,
-} from './calendar';
-export type { UpsertCalendarEventInput } from './calendar';
-
-export {
-	isFeatureEnabled,
-	setFeatureFlag,
-	listFeatureFlags,
-	deleteFeatureFlag,
-	clearFlagCache,
-} from './feature-flags';
-
-export {
-	appendAuditLog,
-	queryAuditLogs,
-	getAuditTrail,
-	createAuditLogger,
-} from './audit-log';
-export type { AppendAuditLogInput, AuditLogFilters } from './audit-log';
-
-export {
-	getCalibration,
-	getCalibrationCompletionStatus,
-	upsertCalibration,
-	getCalibrationForAI,
-	saveWhatMatters,
-	saveConsent,
-	hasAnalyticsConsent,
-	hasWorkspaceAiAnalysisConsent,
-	hasUserAiAnalysisConsent,
-	getMostActiveContacts,
-	getMostNeglectedContacts,
-} from './calibration';
-export type {
-	CalibrationInput,
-	CalibrationCompletionStatus,
-	UserCalibration,
-	CalibrationContext,
-	WhatMattersInput,
-	ConsentInput,
-	ContactSuggestion,
-} from './calibration';
-
-export {
-	createKnowledgeNode,
-	updateKnowledgeNode,
-	incrementNodeMentionCount,
-	getKnowledgeNode,
-	listKnowledgeNodes,
-	getKnowledgeNodeEvidenceStats,
-	normalizeKnowledgeSearchQuery,
-	DEFAULT_KNOWLEDGE_MESSAGE_RECALL_LIMIT,
-	DEFAULT_KNOWLEDGE_MESSAGE_RECALL_MIN_SCORE,
-	DEFAULT_KNOWLEDGE_MESSAGE_RECALL_NODE_LIMIT,
-	DEFAULT_KNOWLEDGE_SEARCH_MIN_SIMILARITY,
-	searchKnowledgeNodes,
-	searchKnowledgeNodesWithEvidence,
-	getLegacyKnowledgeEvidenceReport,
-	repairKnowledgeEvidenceCounts,
-	createKnowledgeEvidence,
-	listEvidenceForKnowledgeNode,
-	listEvidenceForKnowledgeNodes,
-	listEvidenceForKnowledgeContact,
-	listEvidenceForKnowledgeLink,
-	linkContactToKnowledge,
-	listContactsWithEvidenceForKnowledgeNode,
-	listContactsByKnowledge,
-	listContactIdsByKnowledge,
-	listKnowledgeByContact,
-	mergeKnowledgeNodes,
-	deleteKnowledgeNode,
-	findNodeByNameAnyType,
-	findNodeByAlias,
-	createKnowledgeLink,
-	inferSimilarityLinks,
-	getKnowledgeNeighbors,
-	getSharedKnowledge,
-	knowledgeGraphSearch,
-	provenanceSearch,
-	getGraphData,
-	upsertExtractionLog,
-	updateKnowledgeBackfillProgress,
-	getExtractionLog,
-	getContactsNeedingExtraction,
-	getKnowledgeAnalysisContactCandidates,
-} from './knowledge';
-export type {
-	KnowledgeNode,
-	KnowledgeNodePublic,
-	KnowledgeSearchResult,
-	KnowledgeSearchResultWithEvidence,
-	KnowledgeSearchEvidenceItem,
-	KnowledgeSearchContactItem,
-	SearchKnowledgeNodesWithEvidenceOptions,
-	KnowledgeContact,
-	KnowledgeEvidence,
-	KnowledgeEvidenceKind,
-	CreateKnowledgeEvidenceInput,
-	KnowledgeContactEvidenceInput,
-	KnowledgeLinkEvidenceInput,
-	KnowledgeContactWithEvidence,
-	LegacyKnowledgeEvidenceReport,
-	LegacyKnowledgeEvidenceWorkspaceSummary,
-	LegacyKnowledgeEvidenceNodeTypeSummary,
-	LegacyKnowledgeEvidenceNodeGap,
-	LegacyKnowledgeEvidenceContactGap,
-	RepairKnowledgeEvidenceCountsResult,
-	KnowledgeExtractionLogEntry,
-	KnowledgeAnalysisContactCandidate,
-	CreateKnowledgeNodeInput,
-	UpdateKnowledgeNodeInput,
-	ListKnowledgeNodesOptions,
-	KnowledgeLink,
-	KnowledgeLinkType,
-	KnowledgeNeighbor,
-	GraphSearchNode,
-	ProvenanceResult,
-} from './knowledge';
-export {
-	createRecommendations,
-	getPendingRecommendations,
-	actOnRecommendation,
-	dismissRecommendation,
-	expireOldRecommendations,
-} from './recommendations';
-export type {
-	Recommendation,
-	RecommendationType,
-	CreateRecommendationItem,
-} from './recommendations';
-export {
-	upsertInvestorProfile,
-	getInvestorProfile,
-	listInvestorProfiles,
-	getTopInvestors,
-} from './investor-profiles';
-export type {
-	InvestorProfile,
-	UpsertInvestorProfileData,
-	ListInvestorProfilesOptions,
-} from './investor-profiles';
-export {
-	createOutcome,
-	listOutcomes,
-	searchOutcomes,
-	getOutcomeStats,
-	hasRecentOutcome,
-} from './outcomes';
-export type {
-	Outcome,
-	OutcomeType,
-	OutcomeResult,
-	CreateOutcomeInput,
-	OutcomeStats,
-} from './outcomes';
-export { saveBrief, getLatestBrief, updateBriefFeedback } from './briefs';
-export type { SaveBriefInput, LatestBrief } from './briefs';
-
-export {
-	upsertVoiceProfile,
 	getVoiceProfile,
 	markCalibrationComplete,
+	upsertVoiceProfile,
 } from './voice-profiles';
-export type { UpsertVoiceProfileInput } from './voice-profiles';
-
-export {
-	upsertContactStyleOverride,
-	getContactStyleOverride,
-	getContactStyleOverridesBatch,
-	updateDeviationSignals,
-} from './contact-style-overrides';
-export type { UpsertContactStyleOverrideInput } from './contact-style-overrides';
-
-export {
-	createCorrectionDiff,
-	getUnembeddedDiffs,
-	updateDiffEmbedding,
-	getUnclusteredDiffs,
-	getAllDiffEmbeddings,
-	assignPatternToDiffs,
-	getDiffsByGoldenId,
-} from './correction-diffs';
-export type { CreateCorrectionDiffInput } from './correction-diffs';
-
-export {
-	createSemanticPattern,
-	getTopPatterns,
-	findSimilarPatterns as findSimilarSemanticPatterns,
-	reinforcePattern,
-} from './semantic-patterns';
-export type { CreateSemanticPatternInput } from './semantic-patterns';
-
-export {
-	createConnection,
-	updateConnectionStatus,
-	listConnections,
-	getConnectionsByContact,
-	updateConnection,
-	getDistinctEvents,
-} from './connections';
-
-export {
-	createInvite,
-	getInviteByToken,
-	acceptInvite,
-	listInvites,
-	createWorkspace,
-} from './invites';
-export type { CreateInviteInput, InviteWithWorkspace } from './invites';
-
 export { isWorkspaceMember, isWorkspaceOwner } from './workspace-access';
-
-export { checkCache, storeCache, invalidateCache, cleanupExpiredCache } from './semantic-cache';
-export type { CacheHit } from './semantic-cache';
-
-export { deleteAccountData, deleteUserAccountOnly } from './delete-account';
-
-export {
-	createDealCandidate,
-	listPendingCandidates,
-	confirmCandidate,
-	dismissCandidate,
-	isDuplicateCandidate,
-} from './deal-candidates';
-export type { DealCandidate, CreateDealCandidateInput } from './deal-candidates';
-
-export {
-	createGoalAction,
-	listGoalActions,
-	updateGoalAction,
-	completeGoalAction,
-	deleteGoalAction,
-} from './goal-actions';
-export type { GoalAction, CreateGoalActionInput } from './goal-actions';

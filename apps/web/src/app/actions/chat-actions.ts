@@ -1,7 +1,5 @@
 'use server';
 
-import { isRuntimeEnvEnabled } from '@/lib/runtime-env';
-import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
 import {
 	createCommitment,
 	createDeal,
@@ -10,6 +8,8 @@ import {
 	updateDeal,
 } from '@repo/db';
 import { z } from 'zod';
+import { isRuntimeEnvEnabled } from '@/lib/runtime-env';
+import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
 
 export const executeCommitmentAction = workspaceAction
 	.schema(

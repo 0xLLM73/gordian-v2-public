@@ -1,6 +1,5 @@
 'use server';
 
-import { workspaceAction } from '@/lib/safe-action';
 import {
 	addToWatchlist as dalAddToWatchlist,
 	getTopMentionedTokens as dalGetTopMentions,
@@ -8,6 +7,7 @@ import {
 	removeFromWatchlist as dalRemoveFromWatchlist,
 } from '@repo/db';
 import { z } from 'zod';
+import { workspaceAction } from '@/lib/safe-action';
 
 export const getWatchlistAction = workspaceAction.schema(z.object({})).action(async ({ ctx }) => {
 	return dalGetWatchlist(ctx.workspaceId);

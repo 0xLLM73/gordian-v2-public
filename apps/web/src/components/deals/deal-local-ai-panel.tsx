@@ -1,9 +1,9 @@
 'use client';
 
-import { generateDealLocalAiAction, updateDealAiRunStatusAction } from '@/app/actions/deals';
 import type { DealLocalAiStatus } from '@repo/shared';
 import { Bot, Check, FileText, Lightbulb, MessageSquare, ShieldCheck, X } from 'lucide-react';
 import { useState, useTransition } from 'react';
+import { generateDealLocalAiAction, updateDealAiRunStatusAction } from '@/app/actions/deals';
 
 export interface SerializableDealAiRun {
 	id: string;

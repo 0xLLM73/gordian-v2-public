@@ -1,4 +1,4 @@
-import { type SealedEnvelope, getCurrentKeys, maskEntities, withKeys } from '@repo/crypto';
+import { getCurrentKeys, maskEntities, type SealedEnvelope, withKeys } from '@repo/crypto';
 import {
 	createGoalAction,
 	db,
@@ -14,8 +14,8 @@ import {
 import { Queue, Worker } from 'bullmq';
 import { generateEmbedding } from '../ai/embeddings';
 import {
-	type DecompositionContext,
 	computePaceScore,
+	type DecompositionContext,
 	decomposeGoal,
 	needsReplanning,
 } from '../ai/goal-decomposition';

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { type Locator, type Page, expect } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 import { db, deals, eq } from '@repo/db';
 
 export function deterministicSeedUuid(name: string): string {

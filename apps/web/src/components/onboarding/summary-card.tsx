@@ -1,9 +1,9 @@
 'use client';
 
-import { getOnboardingSummaryAction } from '@/app/actions/calibration';
 import { Loader2 } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
+import { getOnboardingSummaryAction } from '@/app/actions/calibration';
 
 const ROLE_LABELS: Record<string, string> = {
 	vc_investor: 'a VC / Investor',

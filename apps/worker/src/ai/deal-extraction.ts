@@ -11,7 +11,7 @@
  */
 
 import type { SealedEnvelope } from '@repo/crypto';
-import { type DealCandidate, createDealCandidate, isDuplicateCandidate } from '@repo/db';
+import { createDealCandidate, type DealCandidate, isDuplicateCandidate } from '@repo/db';
 import { inferWithGemini } from './gemini-inference';
 
 // ─── Types ──────────────────────────────────────────────────────────────────────

@@ -1,11 +1,11 @@
 // 'use client' — needs event handlers for 👍/👎 feedback buttons and submitted state
 'use client';
 
-import { submitBriefFeedbackAction } from '@/app/actions/brief';
 import type { LatestBrief } from '@repo/db';
 import { useState, useTransition } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { toast } from 'sonner';
+import { submitBriefFeedbackAction } from '@/app/actions/brief';
 
 interface MorningBriefCardProps {
 	brief: LatestBrief | null;

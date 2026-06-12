@@ -1,8 +1,8 @@
+import type { getFollowUpPlanWorkerHealth } from '@repo/db';
 import type {
 	FollowUpPlanReadiness,
 	FollowUpPlanReadinessTone,
 } from '@/lib/follow-up-plans-readiness-types';
-import type { getFollowUpPlanWorkerHealth } from '@repo/db';
 
 type FollowUpPlanWorkerHealth = Awaited<ReturnType<typeof getFollowUpPlanWorkerHealth>>;
 

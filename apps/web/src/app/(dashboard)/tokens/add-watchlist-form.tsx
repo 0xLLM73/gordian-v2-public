@@ -1,8 +1,8 @@
 'use client';
 
-import { addToWatchlistAction } from '@/app/actions/tokens';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { addToWatchlistAction } from '@/app/actions/tokens';
 
 export function AddToWatchlistForm() {
 	const router = useRouter();

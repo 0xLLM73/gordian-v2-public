@@ -1,8 +1,8 @@
+import Link from 'next/link';
+import type { ReactNode } from 'react';
 import { DEAL_STAGE_COLORS } from '@/lib/colors';
 import { formatCurrency } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import Link from 'next/link';
-import type { ReactNode } from 'react';
 
 const stageLabels: Record<string, string> = {
 	discovery: 'Discovery',

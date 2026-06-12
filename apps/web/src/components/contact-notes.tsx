@@ -1,8 +1,8 @@
 'use client';
 
-import { updateContactAction } from '@/app/actions/contacts';
 import { useAction } from 'next-safe-action/hooks';
 import { useState } from 'react';
+import { updateContactAction } from '@/app/actions/contacts';
 
 export function ContactNotes({
 	contactId,

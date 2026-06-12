@@ -14,8 +14,10 @@
  */
 import 'dotenv/config';
 import { createRequire } from 'node:module';
+
 const require = createRequire(import.meta.url);
 const postgres = require('../packages/db/node_modules/postgres');
+
 import { generateEmbedding } from '../apps/worker/src/ai/embeddings.ts';
 import { prefilterEntities } from '../apps/worker/src/ai/prefilter.ts';
 import { deriveKeys, maskEntities, unwrapWrk } from '../packages/crypto/src/index.ts';

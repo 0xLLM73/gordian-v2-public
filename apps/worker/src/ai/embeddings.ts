@@ -10,10 +10,10 @@
 
 import { getOpenAIApiKey } from '@repo/crypto/local-secrets';
 import {
-	type KnowledgeEmbeddingPurpose,
 	assertAiProcessingEnabled,
 	formatKnowledgeEmbeddingInput,
 	getKnowledgeEmbeddingRuntime,
+	type KnowledgeEmbeddingPurpose,
 } from '@repo/shared';
 import { fetchLocalModel } from './local-model-request';
 

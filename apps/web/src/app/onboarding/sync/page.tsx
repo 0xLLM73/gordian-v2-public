@@ -1,5 +1,8 @@
 'use client';
 
+import { TELEGRAM_CONSENT_VERSION } from '@repo/shared';
+import { useRouter } from 'next/navigation';
+import { useEffect, useRef, useState, useTransition } from 'react';
 import { trackEventAction } from '@/app/actions/analytics';
 import { saveConsentAction } from '@/app/actions/calibration';
 import { disconnectTelegramAction } from '@/app/actions/settings';
@@ -11,17 +14,14 @@ import { Button } from '@/components/ui/button';
 import { useAbandonTracking } from '@/hooks/use-abandon-tracking';
 import { useOnboardingSync } from '@/hooks/use-onboarding-sync';
 import { useStepTracking } from '@/hooks/use-step-tracking';
-import { TELEGRAM_CONSENT_VERSION } from '@repo/shared';
-import { useRouter } from 'next/navigation';
-import { useEffect, useRef, useState, useTransition } from 'react';
 import {
 	AI_SYNC_ENABLED,
-	SYNC_OPTIONS,
-	TELEGRAM_LINKING_ENABLED,
 	getAiProcessingImportDescription,
 	getSyncScopeSafetyDetails,
 	getSyncStartedDescription,
 	resolveAiProcessingForSync,
+	SYNC_OPTIONS,
+	TELEGRAM_LINKING_ENABLED,
 } from './sync-settings';
 
 const MIN_CONTACTS_TO_ADVANCE = 10;

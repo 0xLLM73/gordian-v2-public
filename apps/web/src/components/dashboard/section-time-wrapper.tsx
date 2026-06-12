@@ -1,8 +1,9 @@
 'use client';
+
 // 'use client' — needs ref + IntersectionObserver for section visibility time tracking
 
-import { useSectionTimeTracking } from '@/hooks/use-dashboard-tracking';
 import type { DashboardSection } from '@repo/shared';
+import { useSectionTimeTracking } from '@/hooks/use-dashboard-tracking';
 
 export function SectionTimeWrapper({
 	section,

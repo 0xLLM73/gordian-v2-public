@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-	LATENCY_TARGETS,
 	classifyIntent,
 	computeQuestionDensity,
 	getLatencyTarget,
+	LATENCY_TARGETS,
 } from '../intent-classifier';
 
 describe('classifyIntent', () => {

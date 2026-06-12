@@ -1,11 +1,11 @@
 'use client';
 
+import { Loader2, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 // Needs client boundary: event handlers (keydown, submit), controlled textarea state, auto-scroll effect
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { useChatPanel } from '@/hooks/use-chat';
-import { Loader2, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
 import { ChatMessage } from './chat-message';
 
 const TOOL_LABELS: Record<string, string> = {

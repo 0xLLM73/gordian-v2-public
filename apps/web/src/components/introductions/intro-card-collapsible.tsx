@@ -1,11 +1,12 @@
 'use client';
+
 // Needs interactivity: click-to-expand progressive disclosure, action buttons
 
-import { INTRO_CONTEXT_COLORS, INTRO_STATUS_COLORS } from '@/lib/colors';
-import { cn } from '@/lib/utils';
 import { ChevronDown } from 'lucide-react';
 import Link from 'next/link';
 import { useState } from 'react';
+import { INTRO_CONTEXT_COLORS, INTRO_STATUS_COLORS } from '@/lib/colors';
+import { cn } from '@/lib/utils';
 import { IntroActions } from './intro-actions';
 
 export interface IntroSourceEvidence {

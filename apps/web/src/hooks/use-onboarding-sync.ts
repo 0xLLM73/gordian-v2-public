@@ -1,8 +1,8 @@
 'use client';
 
-import { getRealtimeTokenAction } from '@/app/actions/realtime';
 import { createClient } from '@supabase/supabase-js';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { getRealtimeTokenAction } from '@/app/actions/realtime';
 
 interface SyncProgress {
 	contacts: number;

@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 import { pathToFileURL } from 'node:url';
-import { getLegacyKnowledgeEvidenceReport } from '../packages/db/src/dal/knowledge';
 import type { LegacyKnowledgeEvidenceReport } from '../packages/db/src/dal/knowledge';
+import { getLegacyKnowledgeEvidenceReport } from '../packages/db/src/dal/knowledge';
 import { loadRootEnv } from './lib/load-root-env.mjs';
 
 loadRootEnv();

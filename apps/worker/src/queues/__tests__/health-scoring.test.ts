@@ -303,6 +303,7 @@ describe('buildHealthScoringInsight', () => {
 
 // Capture the processor at import time (before any clearAllMocks)
 import { Worker } from 'bullmq';
+
 const workerCalls = (Worker as unknown as ReturnType<typeof vi.fn>).mock.calls;
 const hsCall = workerCalls.find((c: unknown[]) => c[0] === 'health-scoring');
 const workerProcessor = hsCall?.[1] as (job: {

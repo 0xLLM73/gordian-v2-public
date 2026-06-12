@@ -1,8 +1,8 @@
 'use client';
 
-import { trackEventAction } from '@/app/actions/analytics';
 import type { OnboardingStep } from '@repo/shared';
 import { useCallback, useEffect, useRef } from 'react';
+import { trackEventAction } from '@/app/actions/analytics';
 
 /**
  * Tracks onboarding step timing: fires `step_started` on mount,

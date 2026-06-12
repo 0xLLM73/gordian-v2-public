@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { type SealedEnvelope, computeBlindIndex, deriveKeys, keyStore } from '@repo/crypto';
+import { computeBlindIndex, deriveKeys, keyStore, type SealedEnvelope } from '@repo/crypto';
 import { sql as drizzleSql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';

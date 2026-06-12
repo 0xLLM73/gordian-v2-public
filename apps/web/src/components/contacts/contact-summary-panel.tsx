@@ -1,7 +1,7 @@
 'use client';
 
-import { getSummaryAction } from '@/app/actions/summaries';
 import { useState, useTransition } from 'react';
+import { getSummaryAction } from '@/app/actions/summaries';
 
 interface SummaryData {
 	summary: string | null;

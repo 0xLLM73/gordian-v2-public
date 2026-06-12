@@ -1,13 +1,13 @@
 'use client';
 
+import { useAction } from 'next-safe-action/hooks';
+import { useCallback, useEffect, useState } from 'react';
 import {
 	getReviewQueueStatsAction,
 	listPendingExamplesAction,
 	promoteToGoldAction,
 	rejectExampleAction,
 } from '@/app/actions/golden-dataset';
-import { useAction } from 'next-safe-action/hooks';
-import { useCallback, useEffect, useState } from 'react';
 
 const PAGE_SIZE = 20;
 

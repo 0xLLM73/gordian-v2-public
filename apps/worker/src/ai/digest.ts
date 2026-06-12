@@ -1,12 +1,12 @@
 import type { Tool } from '@anthropic-ai/sdk/resources/messages';
-import { maskEntities } from '@repo/crypto';
 import type { SealedEnvelope } from '@repo/crypto';
+import { maskEntities } from '@repo/crypto';
 import {
 	getActiveCommitments,
 	getChatsByIds,
 	getContactsByIds,
-	getMessageTimeRangeStats,
 	getMessagesByTimeRange,
+	getMessageTimeRangeStats,
 	listDeals,
 } from '@repo/db';
 import { type DigestLlmRuntime, getDigestLlmRuntime } from '@repo/shared';

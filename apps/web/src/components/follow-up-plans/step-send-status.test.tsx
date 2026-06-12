@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { StepSendStatus, getFollowUpStepSendStatus } from './step-send-status';
+import { getFollowUpStepSendStatus, StepSendStatus } from './step-send-status';
 
 describe('StepSendStatus', () => {
 	beforeEach(() => {

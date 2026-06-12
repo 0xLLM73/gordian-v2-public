@@ -1,13 +1,13 @@
 'use client';
+import type { KnowledgeNodePublic } from '@repo/db';
+import { BrainCircuit, Database, Loader2, Search as SearchIcon, ShieldCheck } from 'lucide-react';
+import Link from 'next/link';
+import * as React from 'react';
 import { listGoalsAction } from '@/app/actions/goals';
 import { listKnowledgeNodesAction } from '@/app/actions/knowledge';
 import { searchAction } from '@/app/actions/search';
 import { GOAL_STATUS_COLORS, KNOWLEDGE_TYPE_COLORS } from '@/lib/colors';
 import { getContactInitial } from '@/lib/contact-initial';
-import type { KnowledgeNodePublic } from '@repo/db';
-import { BrainCircuit, Database, Loader2, Search as SearchIcon, ShieldCheck } from 'lucide-react';
-import Link from 'next/link';
-import * as React from 'react';
 
 interface SearchMeta {
 	queryLength: number;

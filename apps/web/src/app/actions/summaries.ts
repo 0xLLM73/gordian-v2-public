@@ -1,8 +1,8 @@
 'use server';
 
-import { workspaceAction } from '@/lib/safe-action';
 import { getLatestSummary } from '@repo/db';
 import { z } from 'zod';
+import { workspaceAction } from '@/lib/safe-action';
 
 export const getSummaryAction = workspaceAction
 	.schema(

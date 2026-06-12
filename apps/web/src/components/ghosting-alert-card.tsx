@@ -1,6 +1,9 @@
 'use client';
+
 // Needs interactivity: remind/dismiss buttons, acted state, viewport tracking
 
+import { useEffect, useRef, useState, useTransition } from 'react';
+import { toast } from 'sonner';
 import { trackEventAction } from '@/app/actions/analytics';
 import { ghostingDismissAction, ghostingRemindAction } from '@/app/actions/ghosting';
 import { Badge } from '@/components/ui/badge';
@@ -8,8 +11,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useDashboardTracking } from '@/hooks/use-dashboard-tracking';
 import { HEALTH_BADGE_COLORS } from '@/lib/colors';
 import { cn } from '@/lib/utils';
-import { useEffect, useRef, useState, useTransition } from 'react';
-import { toast } from 'sonner';
 
 export interface GhostingContact {
 	id: string;

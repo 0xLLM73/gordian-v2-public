@@ -1,10 +1,10 @@
 // 'use client' — needs useState for collapsible toggle interaction
 'use client';
 
-import { formatCurrency } from '@/lib/format';
-import { cn } from '@/lib/utils';
 import type { DashboardStats } from '@repo/db';
 import { useState } from 'react';
+import { formatCurrency } from '@/lib/format';
+import { cn } from '@/lib/utils';
 
 export function StatsBar({ stats }: { stats: DashboardStats }) {
 	const [expanded, setExpanded] = useState(false);

@@ -1,7 +1,7 @@
 'use client';
 
-import { updateBriefScheduleAction } from '@/app/actions/settings';
 import { useEffect, useRef, useState, useTransition } from 'react';
+import { updateBriefScheduleAction } from '@/app/actions/settings';
 
 const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
 type BriefDay = (typeof DAYS)[number];

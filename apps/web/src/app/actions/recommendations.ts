@@ -1,8 +1,8 @@
 'use server';
 
-import { workspaceAction } from '@/lib/safe-action';
 import { actOnRecommendation, dismissRecommendation, getPendingRecommendations } from '@repo/db';
 import { z } from 'zod';
+import { workspaceAction } from '@/lib/safe-action';
 
 /**
  * Fetch top 3 pending recommendations for the workspace.

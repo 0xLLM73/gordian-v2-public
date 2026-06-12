@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { type FullConfig, chromium } from '@playwright/test';
+import { chromium, type FullConfig } from '@playwright/test';
 
 // Load app and repo-root env files so seeded demo credentials work from pnpm commands.
 const envLocalPaths = [

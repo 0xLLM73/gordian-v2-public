@@ -1,12 +1,12 @@
 'use client';
 
-import { updateDealAction } from '@/app/actions/deals';
-import { DEAL_STAGE_BORDER_COLORS } from '@/lib/colors';
-import { formatCurrency } from '@/lib/format';
 import type { StageVelocityStats } from '@repo/db';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useState } from 'react';
+import { updateDealAction } from '@/app/actions/deals';
+import { DEAL_STAGE_BORDER_COLORS } from '@/lib/colors';
+import { formatCurrency } from '@/lib/format';
 import { DealStageMoveMenu } from './deal-stage-move-menu';
 import { type GhostCandidate, GhostCard } from './ghost-card';
 

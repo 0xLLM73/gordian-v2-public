@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-	SYNC_OPTIONS,
 	getAiProcessingImportDescription,
 	getAiSyncMode,
 	getSyncScopeSafetyDetails,
 	getSyncStartedDescription,
 	resolveAiProcessingForSync,
+	SYNC_OPTIONS,
 } from '@/app/onboarding/sync/sync-settings';
 
 describe('resolveAiProcessingForSync', () => {

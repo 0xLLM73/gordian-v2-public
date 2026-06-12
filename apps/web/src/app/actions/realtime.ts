@@ -1,8 +1,8 @@
 'use server';
 
-import { workspaceAction } from '@/lib/safe-action';
 import { SignJWT } from 'jose';
 import { z } from 'zod';
+import { workspaceAction } from '@/lib/safe-action';
 
 /**
  * Mint a Supabase-compatible JWT for Realtime channel authorization.

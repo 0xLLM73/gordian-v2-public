@@ -1,9 +1,9 @@
 'use client';
 
-import { GuidedActionCard } from '@/components/onboarding/guided-action-card';
-import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { GuidedActionCard } from '@/components/onboarding/guided-action-card';
+import { Button } from '@/components/ui/button';
 
 interface Stats {
 	contacts: number;

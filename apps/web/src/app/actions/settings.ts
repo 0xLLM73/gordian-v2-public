@@ -1,7 +1,5 @@
 'use server';
 
-import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
-import { isWorkspaceOwner } from '@/lib/workspace-authz';
 import { deleteSessionKek } from '@repo/crypto';
 import {
 	accounts,
@@ -13,6 +11,8 @@ import {
 	upsertPreferences,
 } from '@repo/db';
 import { z } from 'zod';
+import { getInternalSecret, workspaceAction } from '@/lib/safe-action';
+import { isWorkspaceOwner } from '@/lib/workspace-authz';
 
 const BRIEF_DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
 

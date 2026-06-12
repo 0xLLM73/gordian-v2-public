@@ -1,7 +1,7 @@
-import { DealStageBadge } from '@/components/deals/deal-row';
-import { formatCurrency } from '@/lib/format';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
+import { DealStageBadge } from '@/components/deals/deal-row';
+import { formatCurrency } from '@/lib/format';
 
 interface DealDetailHeaderProps {
 	title: string;

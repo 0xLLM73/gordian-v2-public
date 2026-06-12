@@ -10,8 +10,8 @@
  * for a summary), but is not used today.
  */
 
-import { getCurrentKeys, maskEntities, withKeys } from '@repo/crypto';
 import type { SealedEnvelope } from '@repo/crypto';
+import { getCurrentKeys, maskEntities, withKeys } from '@repo/crypto';
 import { searchOutcomes } from '@repo/db';
 import { generateEmbedding } from './embeddings';
 import { prefilterEntities } from './prefilter';

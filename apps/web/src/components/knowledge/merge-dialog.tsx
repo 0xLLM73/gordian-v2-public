@@ -2,6 +2,9 @@
 
 // Client boundary: needs useAction for merge server action + AlertDialog interactivity
 
+import { useRouter } from 'next/navigation';
+import { useAction } from 'next-safe-action/hooks';
+import { toast } from 'sonner';
 import { mergeKnowledgeNodesAction } from '@/app/actions/knowledge';
 import {
 	AlertDialog,
@@ -15,9 +18,6 @@ import {
 	AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { KNOWLEDGE_TYPE_COLORS } from '@/lib/colors';
-import { useAction } from 'next-safe-action/hooks';
-import { useRouter } from 'next/navigation';
-import { toast } from 'sonner';
 
 interface NodePreview {
 	id: string;
@@ -26,13 +26,7 @@ interface NodePreview {
 	mentionCount: number | null;
 }
 
-export function MergeDialog({
-	survivor,
-	merged,
-}: {
-	survivor: NodePreview;
-	merged: NodePreview;
-}) {
+export function MergeDialog({ survivor, merged }: { survivor: NodePreview; merged: NodePreview }) {
 	const router = useRouter();
 
 	const { execute, isExecuting } = useAction(mergeKnowledgeNodesAction, {

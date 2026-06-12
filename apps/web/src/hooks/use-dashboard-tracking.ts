@@ -1,8 +1,8 @@
 'use client';
 
-import { trackEventAction } from '@/app/actions/analytics';
 import type { ActNowAction, ActNowItemType, DashboardSection } from '@repo/shared';
 import { useCallback, useEffect, useRef } from 'react';
+import { trackEventAction } from '@/app/actions/analytics';
 
 function fireTrack(event: string, properties?: Record<string, unknown>) {
 	void trackEventAction({ event, properties }).catch(() => {});
@@ -10,11 +10,7 @@ function fireTrack(event: string, properties?: Record<string, unknown>) {
 
 export function useDashboardTracking() {
 	const trackActNowView = useCallback(
-		(counts: {
-			overdueCount: number;
-			pendingDraftCount: number;
-			followUpCount: number;
-		}) => {
+		(counts: { overdueCount: number; pendingDraftCount: number; followUpCount: number }) => {
 			fireTrack('dashboard.act_now_view', {
 				overdue_count: counts.overdueCount,
 				pending_draft_count: counts.pendingDraftCount,
@@ -46,11 +42,7 @@ export function useDashboardTracking() {
 	);
 
 	const trackNewIntelView = useCallback(
-		(counts: {
-			newContactCount: number;
-			trendingTopicCount: number;
-			introCount: number;
-		}) => {
+		(counts: { newContactCount: number; trendingTopicCount: number; introCount: number }) => {
 			fireTrack('dashboard.new_intel_view', {
 				new_contact_count: counts.newContactCount,
 				trending_topic_count: counts.trendingTopicCount,

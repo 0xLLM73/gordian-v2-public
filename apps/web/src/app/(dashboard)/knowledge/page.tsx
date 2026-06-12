@@ -1,7 +1,3 @@
-import { KnowledgeBrowser } from '@/app/(dashboard)/knowledge/knowledge-browser';
-import { LocalAiStatusPanel } from '@/components/local-ai-status-panel';
-import { getKnowledgeEvidenceQualityStatsForNodes } from '@/lib/knowledge-evidence-quality';
-import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
 import {
 	getContactsByIds,
 	getKnowledgeNodeEvidenceStats,
@@ -10,6 +6,10 @@ import {
 	listKnowledgeNodes,
 } from '@repo/db';
 import { Suspense } from 'react';
+import { KnowledgeBrowser } from '@/app/(dashboard)/knowledge/knowledge-browser';
+import { LocalAiStatusPanel } from '@/components/local-ai-status-panel';
+import { getKnowledgeEvidenceQualityStatsForNodes } from '@/lib/knowledge-evidence-quality';
+import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
 
 export const metadata = { title: 'Knowledge' };
 

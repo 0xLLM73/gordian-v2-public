@@ -1,6 +1,6 @@
-import { getUserWorkspaceId, requireSession } from '@/lib/workspace';
 import { isFeatureEnabled } from '@repo/db';
 import { notFound } from 'next/navigation';
+import { getUserWorkspaceId, requireSession } from '@/lib/workspace';
 
 /**
  * Call at the top of a page's server component to gate it behind a feature flag.

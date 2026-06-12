@@ -1,3 +1,5 @@
+import { type GoalRow, getContactsByIds, listGoalActions, listGoals } from '@repo/db';
+import { Suspense } from 'react';
 import { CreateGoalForm } from '@/components/goals/create-goal-form';
 import {
 	normalizeGoalSortFilter,
@@ -12,8 +14,6 @@ import { GoalProgressHistory } from '@/components/goals/goal-progress-history';
 import { GoalsFilter } from '@/components/goals/goals-filter';
 import { GOAL_STATUS_COLORS, GOAL_TYPE_COLORS } from '@/lib/colors';
 import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
-import { type GoalRow, getContactsByIds, listGoalActions, listGoals } from '@repo/db';
-import { Suspense } from 'react';
 
 export default async function GoalsPage({
 	searchParams,
@@ -59,7 +59,12 @@ async function GoalsList({
 	status,
 	type,
 	sort,
-}: { workspaceId: string; status?: string; type?: string; sort?: string }) {
+}: {
+	workspaceId: string;
+	status?: string;
+	type?: string;
+	sort?: string;
+}) {
 	const envelope = await getWorkspaceEnvelope(workspaceId);
 	if (!envelope) return <EmptyState />;
 	const goalsList = await listGoals(

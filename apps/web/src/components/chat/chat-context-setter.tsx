@@ -1,9 +1,9 @@
 'use client';
 
+import { useEffect, useMemo } from 'react';
 // Needs client boundary: useEffect for mount/unmount lifecycle to set/reset chat context
 import type { ChatContext } from '@/hooks/use-chat-context';
 import { useSetChatContext } from '@/hooks/use-chat-context';
-import { useEffect, useMemo } from 'react';
 
 type ChatContextSetterProps = Omit<ChatContext, 'page'> & { page: string };
 

@@ -7,12 +7,12 @@ import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 import { writeKeychainSecret } from './lib/keychain-secret-writer.mjs';
 import {
-	LOCAL_REDIS_PURGE_PATTERNS,
 	isLegacyGrammySessionEntry,
+	LOCAL_REDIS_PURGE_PATTERNS,
 } from './lib/local-runtime-safety.mjs';
 import {
-	DEFAULT_ENV_PATH,
 	classifyDoctor,
+	DEFAULT_ENV_PATH,
 	envValue,
 	getGordianKeychainHelperPath,
 	getTelegramApiCredentialProvider,

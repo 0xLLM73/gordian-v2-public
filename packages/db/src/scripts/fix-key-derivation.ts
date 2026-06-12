@@ -12,8 +12,9 @@
  * Usage:
  *   DATABASE_URL="$DIRECT_URL" npx tsx packages/db/src/scripts/fix-key-derivation.ts
  */
-import { computeBlindIndex, decrypt, deriveKeys, encrypt, unwrapWrk } from '@repo/crypto';
+
 import type { SealedEnvelope } from '@repo/crypto';
+import { computeBlindIndex, decrypt, deriveKeys, encrypt, unwrapWrk } from '@repo/crypto';
 import { sql } from 'drizzle-orm';
 import { db } from '../client';
 import { workspaces } from '../schema/workspaces';

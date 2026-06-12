@@ -17,7 +17,7 @@ services:
       retries: 20
 
   redis:
-    image: redis:7.4.9-alpine3.21
+    image: redis:8.0.6-alpine3.21
     command:
       [
         "redis-server",

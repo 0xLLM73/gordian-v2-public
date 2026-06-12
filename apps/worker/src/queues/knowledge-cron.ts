@@ -17,18 +17,17 @@ import {
 	upsertExtractionLog,
 } from '@repo/db';
 import {
-	type KnowledgeEmbeddingMode,
-	type KnowledgeLlmMode,
 	getKnowledgeEmbeddingRuntime,
 	getKnowledgeLlmRuntime,
 	isKnowledgeLlmEnabled,
+	type KnowledgeEmbeddingMode,
+	type KnowledgeLlmMode,
 	redactSensitive,
 } from '@repo/shared';
 import { Queue, Worker } from 'bullmq';
 
 import { BatchRelationshipExtractor } from '../ai/batch-relationship';
-import { keywordPreFilter } from '../ai/knowledge-extraction';
-import { extractKnowledgeForContact } from '../ai/knowledge-extraction';
+import { extractKnowledgeForContact, keywordPreFilter } from '../ai/knowledge-extraction';
 import { withRLS } from '../middleware/rls';
 import { connection } from '../redis';
 

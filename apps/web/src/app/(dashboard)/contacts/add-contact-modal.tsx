@@ -1,8 +1,8 @@
 'use client';
 
-import { createContactAction } from '@/app/actions/contacts';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { createContactAction } from '@/app/actions/contacts';
 
 export function AddContactButton() {
 	const [isOpen, setIsOpen] = useState(false);

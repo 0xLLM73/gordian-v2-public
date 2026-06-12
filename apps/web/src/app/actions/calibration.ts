@@ -1,6 +1,5 @@
 'use server';
 
-import { workspaceAction } from '@/lib/safe-action';
 import {
 	getCalibration,
 	getDashboardStats,
@@ -12,11 +11,12 @@ import {
 	upsertCalibration,
 } from '@repo/db';
 import {
-	TELEGRAM_CONSENT_VERSION,
 	calibrationInputSchema,
 	isAiAnalysisAvailable,
+	TELEGRAM_CONSENT_VERSION,
 } from '@repo/shared';
 import { z } from 'zod';
+import { workspaceAction } from '@/lib/safe-action';
 
 export const getCalibrationAction = workspaceAction.schema(z.object({})).action(async ({ ctx }) => {
 	const calibration = await getCalibration(ctx.session.user.id, ctx.workspaceId, ctx.envelope);

@@ -1,5 +1,5 @@
-import { _resetForTesting as resetRateLimit } from '@/lib/rate-limit';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { _resetForTesting as resetRateLimit } from '@/lib/rate-limit';
 
 vi.mock('next/headers', () => ({
 	headers: vi.fn(() => Promise.resolve(new Headers())),

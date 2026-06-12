@@ -1,6 +1,11 @@
 'use client';
+
 // Client boundary: manages expand/collapse state, fetches actions on demand, handles complete/skip transitions
 
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useCallback, useState, useTransition } from 'react';
+import { toast } from 'sonner';
 import {
 	completeGoalActionAction,
 	listGoalActionsAction,
@@ -12,10 +17,6 @@ import {
 	GOAL_DOMAIN_TAG_COLORS,
 	GOAL_EFFORT_COLORS,
 } from '@/lib/colors';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useCallback, useState, useTransition } from 'react';
-import { toast } from 'sonner';
 
 interface GoalActionItem {
 	id: string;

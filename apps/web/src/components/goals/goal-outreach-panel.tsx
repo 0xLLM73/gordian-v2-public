@@ -1,10 +1,11 @@
 'use client';
+
 // Client boundary: fetches outreach suggestions on demand, manages expand/collapse
 
-import { getOutreachSuggestionsAction } from '@/app/actions/goal-outreach';
-import { HEALTH_BADGE_COLORS } from '@/lib/colors';
 import Link from 'next/link';
 import { useCallback, useState, useTransition } from 'react';
+import { getOutreachSuggestionsAction } from '@/app/actions/goal-outreach';
+import { HEALTH_BADGE_COLORS } from '@/lib/colors';
 
 interface OutreachSuggestion {
 	actionId: string;

@@ -1,7 +1,7 @@
 'use client';
 
-import { getSummaryAction } from '@/app/actions/summaries';
 import { useEffect, useState, useTransition } from 'react';
+import { getSummaryAction } from '@/app/actions/summaries';
 
 interface SummaryData {
 	id: string;
@@ -12,11 +12,7 @@ interface SummaryData {
 	messageCount: number;
 }
 
-export function ContactSummaryPanel({
-	contactId,
-}: {
-	contactId: string;
-}) {
+export function ContactSummaryPanel({ contactId }: { contactId: string }) {
 	const [summary, setSummary] = useState<SummaryData | null>(null);
 	const [_isPending, startTransition] = useTransition();
 	const [loaded, setLoaded] = useState(false);

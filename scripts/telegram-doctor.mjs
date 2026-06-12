@@ -3,9 +3,9 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import {
-	DEFAULT_ENV_PATH,
 	canConnectTcp,
 	classifyDoctor,
+	DEFAULT_ENV_PATH,
 	endpointFromUrl,
 	envValue,
 	getTelegramApiCredentialProvider,

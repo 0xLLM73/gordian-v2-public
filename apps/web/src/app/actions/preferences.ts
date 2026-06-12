@@ -1,11 +1,11 @@
 'use server';
 
-import { workspaceAction } from '@/lib/safe-action';
 import {
 	getPreferences as dalGetPreferences,
 	upsertPreferences as dalUpsertPreferences,
 } from '@repo/db';
 import { z } from 'zod';
+import { workspaceAction } from '@/lib/safe-action';
 
 export const getPreferencesAction = workspaceAction.schema(z.object({})).action(async ({ ctx }) => {
 	return dalGetPreferences(ctx.workspaceId, ctx.session.user.id);

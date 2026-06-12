@@ -1,14 +1,14 @@
 'use client';
 
+import { TELEGRAM_CONSENT_VERSION } from '@repo/shared';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 import { OnboardingCard } from '@/components/onboarding/onboarding-card';
 import { useOnboarding } from '@/components/onboarding/onboarding-provider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import { TELEGRAM_CONSENT_VERSION } from '@repo/shared';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useState } from 'react';
 
 const CONSENT_ITEMS = [
 	{

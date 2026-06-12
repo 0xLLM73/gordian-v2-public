@@ -1,5 +1,3 @@
-import { getContactInitial } from '@/lib/contact-initial';
-import { formatRelativeDate } from '@/lib/format';
 import {
 	classifyKnowledgeEvidenceQuality,
 	evidenceSupportsKnowledgeTopic,
@@ -7,6 +5,8 @@ import {
 } from '@repo/shared';
 import Link from 'next/link';
 import React from 'react';
+import { getContactInitial } from '@/lib/contact-initial';
+import { formatRelativeDate } from '@/lib/format';
 
 export interface TopicEvidenceItem {
 	id: string;

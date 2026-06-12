@@ -1,9 +1,9 @@
-import { CommitmentActions } from '@/components/commitment-actions';
-import { COMMITMENT_STATUS_COLORS } from '@/lib/colors';
-import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
 import { getCommitmentsByWorkspace } from '@repo/db';
 import { canRunCloudCommitmentIntelligence, isLocalOnlyMode } from '@repo/shared';
 import { Suspense } from 'react';
+import { CommitmentActions } from '@/components/commitment-actions';
+import { COMMITMENT_STATUS_COLORS } from '@/lib/colors';
+import { getUserWorkspaceId, getWorkspaceEnvelope, requireSession } from '@/lib/workspace';
 import { CommitmentFinder } from './commitment-finder';
 import { CommitmentsFilter } from './commitments-filter';
 import { type CommitmentStatusFilter, normalizeCommitmentStatusFilter } from './status-filter';

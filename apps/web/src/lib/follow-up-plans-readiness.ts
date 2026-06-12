@@ -1,10 +1,10 @@
 import {
-	TELEGRAM_IMPORT_ACTIVE_STATUSES,
 	getLatestTelegramImportProgressWithHistory,
 	getUserTelegramAccountIds,
 	hasCurrentTelegramConsent,
+	TELEGRAM_IMPORT_ACTIVE_STATUSES,
 } from '@repo/db';
-import { TELEGRAM_CONSENT_VERSION, getChatLlmRuntime } from '@repo/shared';
+import { getChatLlmRuntime, TELEGRAM_CONSENT_VERSION } from '@repo/shared';
 import type { FollowUpPlanReadiness } from './follow-up-plans-readiness-types';
 import { isRuntimeEnvEnabled } from './runtime-env';
 

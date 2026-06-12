@@ -1,5 +1,7 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
+import { useEffect, useRef, useState } from 'react';
 import { trackEventAction } from '@/app/actions/analytics';
 import { CommitmentsCard } from '@/components/onboarding/commitments-card';
 import { DashboardPreviewCard } from '@/components/onboarding/dashboard-preview-card';
@@ -10,8 +12,6 @@ import { SummaryCard } from '@/components/onboarding/summary-card';
 import { Button } from '@/components/ui/button';
 import { useAbandonTracking } from '@/hooks/use-abandon-tracking';
 import { useStepTracking } from '@/hooks/use-step-tracking';
-import { useRouter } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
 
 export default function FirstLookPage() {
 	const router = useRouter();
