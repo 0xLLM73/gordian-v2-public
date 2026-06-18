@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: pgvector/pgvector:0.8.2-pg16-trixie
+    image: pgvector/pgvector:0.8.3-pg16-trixie
     environment:
       POSTGRES_DB: gordian_dev
       POSTGRES_USER: postgres
