@@ -97,8 +97,8 @@ importers:
         specifier: ^16.2.9
         version: 16.2.9(@babel/core@7.29.7)(@opentelemetry/api@1.9.0)(@playwright/test@1.60.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       next-safe-action:
-        specifier: ^8.5.4
-        version: 8.5.4(next@16.2.9(@babel/core@7.29.7)(@opentelemetry/api@1.9.0)(@playwright/test@1.60.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+        specifier: ^8.5.5
+        version: 8.5.5(next@16.2.9(@babel/core@7.29.7)(@opentelemetry/api@1.9.0)(@playwright/test@1.60.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       next-themes:
         specifier: ^0.4.6
         version: 0.4.6(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -4013,8 +4013,8 @@ packages:
     resolution: {integrity: sha512-8Ofs/AUQh8MaEcrlq5xOX0CQ9ypTF5dl78mjlMNfOK08fzpgTHQRQPBxcPlEtIw0yRpws+Zo/3r+5WRby7u3Gg==}
     engines: {node: '>= 0.6'}
 
-  next-safe-action@8.5.4:
-    resolution: {integrity: sha512-qToci1W9ro3my5VeVZ3tnNyGrxiB8187QLm4E0kl5JyAocgODkxOygJB6RwxvGLFqf5JbuCLnq6EwonhRA54NQ==}
+  next-safe-action@8.5.5:
+    resolution: {integrity: sha512-y6h2w5VFVsy4+LqbEI1xW0coUu1uWH+1xXXlXn8ZTXMVusT392jQq98cpATZEYaG2kFet2tlcOn8U/H4BL5rTQ==}
     engines: {node: '>=18.17'}
     peerDependencies:
       next: '>= 14.0.0'
@@ -8745,7 +8745,7 @@ snapshots:
 
   negotiator@1.0.0: {}
 
-  next-safe-action@8.5.4(next@16.2.9(@babel/core@7.29.7)(@opentelemetry/api@1.9.0)(@playwright/test@1.60.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react@19.2.7):
+  next-safe-action@8.5.5(next@16.2.9(@babel/core@7.29.7)(@opentelemetry/api@1.9.0)(@playwright/test@1.60.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react@19.2.7):
     dependencies:
       next: 16.2.9(@babel/core@7.29.7)(@opentelemetry/api@1.9.0)(@playwright/test@1.60.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       react: 19.2.7
