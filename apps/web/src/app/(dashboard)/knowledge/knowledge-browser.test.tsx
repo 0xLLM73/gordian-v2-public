@@ -9,6 +9,7 @@ const mockGetKnowledgeRelationshipExplanationsAction = vi.hoisted(() => vi.fn())
 const mockRunLocalKnowledgeAnalysisAction = vi.hoisted(() => vi.fn());
 const mockRunLocalKnowledgeInferenceAction = vi.hoisted(() => vi.fn());
 const mockCreateManualKnowledgeNodeAction = vi.hoisted(() => vi.fn());
+const mockListKnowledgeNodesAction = vi.hoisted(() => vi.fn());
 const mockReviewKnowledgeNodeAction = vi.hoisted(() => vi.fn());
 const mockSearchKnowledgeNodesWithEvidenceAction = vi.hoisted(() => vi.fn());
 
@@ -17,7 +18,7 @@ vi.mock('@/app/actions/knowledge', () => ({
 	getKnowledgeAnalysisEstimateAction: mockGetKnowledgeAnalysisEstimateAction,
 	getKnowledgeAnalysisProgressAction: mockGetKnowledgeAnalysisProgressAction,
 	getKnowledgeRelationshipExplanationsAction: mockGetKnowledgeRelationshipExplanationsAction,
-	listKnowledgeNodesAction: vi.fn(),
+	listKnowledgeNodesAction: mockListKnowledgeNodesAction,
 	reviewKnowledgeNodeAction: mockReviewKnowledgeNodeAction,
 	runLocalKnowledgeAnalysisAction: mockRunLocalKnowledgeAnalysisAction,
 	runLocalKnowledgeInferenceAction: mockRunLocalKnowledgeInferenceAction,
@@ -43,6 +44,7 @@ vi.mock('next/link', () => ({
 describe('KnowledgeBrowser evidence-aware search cards', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockListKnowledgeNodesAction.mockResolvedValue({});
 		mockGetKnowledgeAnalysisEstimateAction.mockResolvedValue({
 			data: {
 				canRun: true,
@@ -80,11 +82,15 @@ describe('KnowledgeBrowser evidence-aware search cards', () => {
 		});
 		mockRunLocalKnowledgeInferenceAction.mockResolvedValue({
 			data: {
-				coOccurrenceLinks: 2,
+				candidateRelationships: 3,
+				coOccurrenceCandidates: 2,
+				coOccurrenceLinks: 0,
+				confirmedLinks: 0,
 				nodesProcessed: 2,
-				similarityLinks: 1,
+				similarityCandidates: 1,
+				similarityLinks: 0,
 				status: 'complete',
-				totalLinks: 3,
+				totalLinks: 0,
 			},
 		});
 		mockCreateManualKnowledgeNodeAction.mockResolvedValue({
@@ -112,9 +118,13 @@ describe('KnowledgeBrowser evidence-aware search cards', () => {
 				inference: {
 					status: 'complete',
 					nodesProcessed: 8,
-					coOccurrenceLinks: 4,
-					similarityLinks: 15,
-					totalLinks: 19,
+					candidateRelationships: 19,
+					coOccurrenceCandidates: 4,
+					coOccurrenceLinks: 0,
+					confirmedLinks: 0,
+					similarityCandidates: 15,
+					similarityLinks: 0,
+					totalLinks: 0,
 				},
 				node: {
 					id: 'node-manual',
@@ -175,8 +185,8 @@ describe('KnowledgeBrowser evidence-aware search cards', () => {
 				answer: {
 					title: 'Helium is the strongest local match for "helium".',
 					summary:
-						'1 topic matched with 1 connected contact and 1 source evidence row. Top match confidence is 87%.',
-					support: ['1 contact connected', '1 evidence row stored'],
+						'1 topic matched with 1 connected contact, 1 source evidence row, and 1 retrievable evidence chunk. Top match confidence is 87%.',
+					support: ['1 contact connected', '1 evidence row stored', '1 chunk indexed'],
 					suggestedAction:
 						'Open the top topic to inspect the supporting contacts and source snippets.',
 				},
@@ -196,7 +206,13 @@ describe('KnowledgeBrowser evidence-aware search cards', () => {
 						matchReasons: ['semantic similarity'],
 						messageHitCount: 1,
 						messageMatchedEvidenceIds: ['evidence-1'],
+						evidenceChunkRecallScore: 0.89,
+						evidenceChunkHitCount: 1,
+						evidenceChunkMatchedChunkIds: ['chunk-1'],
+						evidenceChunkMatchedAt: new Date('2026-05-02T12:00:00Z'),
+						evidenceChunkRecallReasons: ['evidence_chunk_semantic'],
 						evidenceCount: 1,
+						evidenceChunkCount: 1,
 						aggregateEvidenceCount: 1,
 						connectedContactCount: 1,
 						connectedContactsWithEvidence: 1,
@@ -211,6 +227,23 @@ describe('KnowledgeBrowser evidence-aware search cards', () => {
 								claimLabel: 'explicit',
 								confidence: 0.91,
 								snippet: 'Alice said she is tracking Helium hotspots.',
+								occurredAt: new Date('2026-05-02T12:00:00Z'),
+								createdAt: new Date('2026-05-02T12:00:00Z'),
+							},
+						],
+						evidenceChunks: [
+							{
+								id: 'chunk-1',
+								knowledgeEvidenceId: 'evidence-1',
+								contactId: 'contact-1',
+								messageId: 'message-1',
+								chunkKind: 'evidence_window',
+								maskedText: 'Alice said she is tracking [TOPIC] hotspots.',
+								similarity: 0.89,
+								embeddingFingerprint:
+									'openai:cloud:custom:text-embedding-3-small:512:kg-embedding-format-v1',
+								maskingPolicyVersion: 'mask-v1',
+								chunkingPolicyVersion: 'evidence-window-v1',
 								occurredAt: new Date('2026-05-02T12:00:00Z'),
 								createdAt: new Date('2026-05-02T12:00:00Z'),
 							},
@@ -258,6 +291,16 @@ describe('KnowledgeBrowser evidence-aware search cards', () => {
 					nullContactMessagesWithUserSenderMetadata: 0,
 					totalMessages: 100,
 				},
+				relationshipCandidateSummary: {
+					total: 3,
+					reviewOnly: 2,
+					eligible: 1,
+					promoted: 0,
+					rejected: 0,
+					heuristic: 2,
+					direct: 1,
+					latestSeenAt: new Date('2026-05-17T00:00:00.000Z'),
+				},
 			}),
 		);
 
@@ -276,6 +319,11 @@ describe('KnowledgeBrowser evidence-aware search cards', () => {
 		expect(screen.getByText('20%')).toBeTruthy();
 		expect(screen.getByText('Needs attribution')).toBeTruthy();
 		expect(screen.getByText('25')).toBeTruthy();
+		expect(screen.getByText('Relationship review queue')).toBeTruthy();
+		expect(screen.getByText(/3 candidates waiting for evidence-gated promotion/i)).toBeTruthy();
+		expect(screen.getByText('2 review-only')).toBeTruthy();
+		expect(screen.getByText('1 eligible')).toBeTruthy();
+		expect(screen.getByText('2 heuristic')).toBeTruthy();
 
 		fireEvent.click(screen.getByRole('button', { name: /Full rebuild/i }));
 		await waitFor(() =>
@@ -313,10 +361,14 @@ describe('KnowledgeBrowser evidence-aware search cards', () => {
 		expect(screen.getByText('Contacts 2/2')).toBeTruthy();
 		expect(screen.getByText('Local LLM 1/2 estimated')).toBeTruthy();
 
-		fireEvent.click(screen.getByRole('button', { name: 'Build relationships' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Find candidates' }));
 		await waitFor(() => expect(mockRunLocalKnowledgeInferenceAction).toHaveBeenCalledWith({}));
 		await waitFor(() =>
-			expect(screen.getByText('Relationships: 3 links from 2 nodes')).toBeTruthy(),
+			expect(
+				screen.getByText(
+					'Relationship candidates: 3 review candidates; 0 confirmed links from 2 nodes',
+				),
+			).toBeTruthy(),
 		);
 	});
 
@@ -369,7 +421,7 @@ describe('KnowledgeBrowser evidence-aware search cards', () => {
 
 		await screen.findByText('Consent required');
 		expect(screen.getByRole('button', { name: 'Run analysis' })).toHaveProperty('disabled', true);
-		expect(screen.getByRole('button', { name: 'Build relationships' })).toHaveProperty(
+		expect(screen.getByRole('button', { name: 'Find candidates' })).toHaveProperty(
 			'disabled',
 			true,
 		);
@@ -410,7 +462,7 @@ describe('KnowledgeBrowser evidence-aware search cards', () => {
 		expect(screen.getByText(/2 new evidence rows/)).toBeTruthy();
 		expect(screen.getAllByText(/7 total evidence rows/).length).toBeGreaterThan(0);
 		expect(screen.getByText(/3 contacts, 6 messages/)).toBeTruthy();
-		expect(screen.getAllByText(/19 links/).length).toBeGreaterThan(0);
+		expect(screen.getAllByText(/19 review candidates/).length).toBeGreaterThan(0);
 		expect(screen.getByText('Evidence')).toBeTruthy();
 		expect(screen.getByText('Relationships')).toBeTruthy();
 	});
@@ -482,7 +534,67 @@ describe('KnowledgeBrowser evidence-aware search cards', () => {
 			expect(screen.getByText('Helium is the strongest local match for "helium".')).toBeTruthy(),
 		);
 		expect(screen.getByText('1 contact connected')).toBeTruthy();
+		expect(screen.getByText('1 chunk indexed')).toBeTruthy();
+		expect(screen.getByText('Matched in evidence chunks')).toBeTruthy();
+		expect(screen.getByText('1 evidence chunk')).toBeTruthy();
+		expect(screen.getByText('1 chunk match')).toBeTruthy();
+		expect(screen.getByText('Alice said she is tracking [TOPIC] hotspots.')).toBeTruthy();
 		expect(screen.getByText('Alice said she is tracking Helium hotspots.')).toBeTruthy();
+	});
+
+	it('replaces stale cards when an empty-query type tab loads server-filtered nodes', async () => {
+		mockListKnowledgeNodesAction.mockResolvedValueOnce({
+			data: [
+				{
+					id: 'node-org',
+					type: 'organization',
+					name: 'openai',
+					displayName: 'OpenAI',
+					description: 'AI research lab',
+					mentionCount: 2,
+					lastSeenAt: null,
+					evidenceCount: 1,
+				},
+			],
+		});
+
+		render(
+			React.createElement(KnowledgeBrowser, {
+				initialNodes: [
+					{
+						id: 'node-1',
+						type: 'topic',
+						name: 'helium',
+						displayName: 'Helium',
+						description: 'DePIN wireless network',
+						mentionCount: 3,
+						lastSeenAt: null,
+					},
+					{
+						id: 'node-2',
+						type: 'project',
+						name: 'akash',
+						displayName: 'Akash',
+						description: null,
+						mentionCount: 1,
+						lastSeenAt: null,
+					},
+				],
+			}),
+		);
+
+		fireEvent.click(screen.getByRole('button', { name: 'Organizations' }));
+
+		await waitFor(() =>
+			expect(mockListKnowledgeNodesAction).toHaveBeenCalledWith({
+				type: 'organization',
+				limit: 50,
+				offset: 0,
+			}),
+		);
+		await waitFor(() => expect(screen.getByText('OpenAI')).toBeTruthy());
+		expect(screen.queryByText('Helium')).toBeNull();
+		expect(screen.queryByText('Akash')).toBeNull();
 	});
 
 	it('saves review corrections from a knowledge card', async () => {

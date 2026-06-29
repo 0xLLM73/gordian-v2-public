@@ -1,7 +1,7 @@
 export type EnvLike = Record<string, string | undefined>;
 
 export type KnowledgeEmbeddingProvider = 'openai' | 'local';
-export type KnowledgeEmbeddingPreset = 'custom' | 'nomic' | 'qwen';
+export type KnowledgeEmbeddingPreset = 'custom' | 'gemma' | 'nomic' | 'qwen';
 export type KnowledgeEmbeddingMode = 'cloud' | 'local';
 export type KnowledgeEmbeddingPurpose = 'document' | 'query' | 'dedup';
 export type KnowledgeLlmProvider = 'auto' | 'gemini' | 'local' | 'disabled';
@@ -12,7 +12,7 @@ export const DEFAULT_OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small';
 export const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 export const DEFAULT_LOCAL_AI_BASE_URL = 'http://localhost:11434/v1';
 export const DEFAULT_LOCAL_EMBEDDING_MODEL = 'nomic-embed-text';
-export const DEFAULT_LOCAL_LLM_MODEL = 'llama3.1:8b';
+export const DEFAULT_LOCAL_LLM_MODEL = 'gemma4:12b-it-q4_K_M';
 export const KNOWLEDGE_EMBEDDING_FORMAT_VERSION = 'kg-embedding-format-v1';
 export const QWEN_KNOWLEDGE_QUERY_INSTRUCTION =
 	'Retrieve relevant knowledge graph entities and contacts.';
@@ -130,9 +130,11 @@ function parseEmbeddingProvider(value?: string): KnowledgeEmbeddingProvider {
 
 function parseEmbeddingPreset(value?: string): KnowledgeEmbeddingPreset {
 	if (!value) return 'custom';
-	if (value === 'custom' || value === 'nomic' || value === 'qwen') return value;
+	if (value === 'custom' || value === 'gemma' || value === 'nomic' || value === 'qwen') {
+		return value;
+	}
 	throw new Error(
-		`Invalid KNOWLEDGE_EMBEDDING_PRESET="${value}". Expected custom, nomic, or qwen.`,
+		`Invalid KNOWLEDGE_EMBEDDING_PRESET="${value}". Expected custom, gemma, nomic, or qwen.`,
 	);
 }
 
@@ -157,6 +159,7 @@ function embeddingLabel(params: {
 	model: string;
 }): string {
 	if (params.provider !== 'local') return 'OpenAI cloud embeddings';
+	if (params.preset === 'gemma') return 'Qwen local embeddings for Gemma LLMs';
 	if (params.preset === 'nomic') return 'Nomic local embeddings';
 	if (params.preset === 'qwen') return 'Qwen local embeddings';
 	return `${params.model} local embeddings`;
@@ -240,6 +243,10 @@ export function formatKnowledgeEmbeddingInput(
 	}
 
 	if (preset === 'qwen' && options.purpose === 'query') {
+		return `Instruct: ${QWEN_KNOWLEDGE_QUERY_INSTRUCTION}\nQuery: ${text}`;
+	}
+
+	if (preset === 'gemma' && options.purpose === 'query') {
 		return `Instruct: ${QWEN_KNOWLEDGE_QUERY_INSTRUCTION}\nQuery: ${text}`;
 	}
 

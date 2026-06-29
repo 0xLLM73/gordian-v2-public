@@ -69,15 +69,18 @@ Keychain and keeps `OPENAI_API_KEY` blank in `.env.local`. ChatGPT OAuth is not
 a supported general API credential path for this app today; use a restricted
 OpenAI API key created for the local install.
 
-For local knowledge graph AI, use `pnpm local-ai:setup:nomic` or the Qwen
-vector-only preset with `pnpm local-ai:setup:qwen`, then verify with
-`pnpm kg:local:smoke`. Local mode
-avoids third-party KG embedding/extraction providers, but it does not make raw
-message text public-safe: keep masking enabled, trust the local model server as
-part of the local machine, and do not expose the local OpenAI-compatible
-endpoint to the network without authentication. KG embedding vectors must remain
-512-dimensional to match the database schema. If the embedding preset/model
-changes, re-embed the KG before trusting semantic search quality.
+For local knowledge graph AI, use `pnpm local-ai:setup:nomic`, the Qwen
+vector-only preset with `pnpm local-ai:setup:qwen`, or the Gemma non-embedding
+LLM preset with `pnpm local-ai:setup:gemma`, then verify with
+`pnpm kg:local:smoke`. Use `pnpm local-ai:benchmark` when comparing Qwen and
+Gemma across non-embedding features. Local mode avoids third-party KG
+embedding/extraction providers, but it does not make raw message text
+public-safe: keep masking enabled, trust the local model server as part of the
+local machine, and do not expose the local OpenAI-compatible endpoint to the
+network without authentication. KG embedding vectors must remain 512-dimensional
+to match the database schema. If the embedding preset/model changes, re-embed
+the KG before trusting semantic search quality. The Gemma preset keeps Qwen
+embeddings, so it does not require re-embedding on its own.
 
 Deal cockpit AI is local-first and review-first. `/deals/[id]` may save local
 deal briefs, risk explanations, next-action suggestions, follow-up drafts, and

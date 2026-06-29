@@ -5,7 +5,11 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { OnboardingCard } from '@/components/onboarding/onboarding-card';
-import { useOnboarding } from '@/components/onboarding/onboarding-provider';
+import {
+	type TelegramCodeDeliveryMethod,
+	type TelegramCodeDeliveryState,
+	useOnboarding,
+} from '@/components/onboarding/onboarding-provider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
@@ -33,6 +37,18 @@ const CONSENT_ITEMS = [
 	},
 ];
 const TELEGRAM_LINKING_ENABLED = process.env.NEXT_PUBLIC_TELEGRAM_LINKING_ENABLED === 'true';
+const TELEGRAM_CODE_DELIVERY_METHODS = new Set<TelegramCodeDeliveryMethod>([
+	'app',
+	'sms',
+	'call',
+	'flash_call',
+	'missed_call',
+	'email',
+	'fragment_sms',
+	'firebase_sms',
+	'email_setup',
+	'unknown',
+]);
 
 const KEY_CUSTODY_ITEMS = [
 	{
@@ -47,10 +63,45 @@ const KEY_CUSTODY_ITEMS = [
 	},
 ];
 
+function normalizeCodeLength(value: unknown): number {
+	const numeric = Number(value);
+	return Number.isInteger(numeric) && numeric >= 1 && numeric <= 8 ? numeric : 5;
+}
+
+function normalizeDeliveryMethod(value: unknown): TelegramCodeDeliveryMethod {
+	return typeof value === 'string' &&
+		TELEGRAM_CODE_DELIVERY_METHODS.has(value as TelegramCodeDeliveryMethod)
+		? (value as TelegramCodeDeliveryMethod)
+		: 'unknown';
+}
+
+function normalizeCodeDelivery(raw: unknown): TelegramCodeDeliveryState {
+	const delivery = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+	const expiresInSeconds = Number(delivery.expiresInSeconds);
+	const nextMethod = normalizeDeliveryMethod(delivery.nextMethod);
+
+	return {
+		method: normalizeDeliveryMethod(delivery.method),
+		codeLength: normalizeCodeLength(delivery.codeLength),
+		expiresInSeconds:
+			Number.isFinite(expiresInSeconds) && expiresInSeconds > 0
+				? Math.min(Math.trunc(expiresInSeconds), 300)
+				: 300,
+		sentAt: Date.now(),
+		...(nextMethod !== 'unknown' ? { nextMethod } : {}),
+	};
+}
+
 export default function ConnectPage() {
 	const router = useRouter();
-	const { phone, setPhone, setNormalizedPhone, consentAcknowledged, setConsentAcknowledged } =
-		useOnboarding();
+	const {
+		phone,
+		setPhone,
+		setNormalizedPhone,
+		setTelegramCodeDelivery,
+		consentAcknowledged,
+		setConsentAcknowledged,
+	} = useOnboarding();
 	const [error, setError] = useState<string | null>(null);
 	const [pending, setPending] = useState(false);
 	const [consentOpen, setConsentOpen] = useState(false);
@@ -104,12 +155,18 @@ export default function ConnectPage() {
 				body: JSON.stringify({ phone: np, consentVersion: TELEGRAM_CONSENT_VERSION }),
 			});
 
-			const data = (await res.json()) as { success?: boolean; error?: string; message?: string };
+			const data = (await res.json()) as {
+				success?: boolean;
+				error?: string;
+				message?: string;
+				delivery?: unknown;
+			};
 
 			if (!res.ok || data.error) {
 				throw new Error(data.error || data.message || 'Failed to send code');
 			}
 
+			setTelegramCodeDelivery(normalizeCodeDelivery(data.delivery));
 			router.push('/onboarding/verify');
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Something went wrong');

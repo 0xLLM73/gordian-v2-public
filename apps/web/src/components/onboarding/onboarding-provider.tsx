@@ -7,9 +7,30 @@ import {
 } from '@repo/shared';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useState } from 'react';
 
+export type TelegramCodeDeliveryMethod =
+	| 'app'
+	| 'sms'
+	| 'call'
+	| 'flash_call'
+	| 'missed_call'
+	| 'email'
+	| 'fragment_sms'
+	| 'firebase_sms'
+	| 'email_setup'
+	| 'unknown';
+
+export interface TelegramCodeDeliveryState {
+	method: TelegramCodeDeliveryMethod;
+	codeLength: number;
+	expiresInSeconds: number;
+	sentAt: number;
+	nextMethod?: TelegramCodeDeliveryMethod;
+}
+
 interface OnboardingState {
 	phone: string;
 	normalizedPhone: string;
+	telegramCodeDelivery: TelegramCodeDeliveryState | null;
 	consentAcknowledged: boolean;
 	workspaceId: string | null;
 	syncScope: TelegramSyncScope;
@@ -20,6 +41,7 @@ interface OnboardingContextValue extends OnboardingState {
 	hydrated: boolean;
 	setPhone: (phone: string) => void;
 	setNormalizedPhone: (phone: string) => void;
+	setTelegramCodeDelivery: (delivery: TelegramCodeDeliveryState | null) => void;
 	setConsentAcknowledged: (acknowledged: boolean) => void;
 	setWorkspaceId: (id: string) => void;
 	setSyncScope: (scope: TelegramSyncScope) => void;
@@ -39,6 +61,23 @@ function loadState(): Partial<OnboardingState> {
 		const parsed = JSON.parse(raw) as Partial<OnboardingState>;
 		if (parsed.syncScope && !TELEGRAM_SYNC_SCOPES.includes(parsed.syncScope as TelegramSyncScope)) {
 			parsed.syncScope = DEFAULT_TELEGRAM_SYNC_SCOPE;
+		}
+		if (parsed.telegramCodeDelivery) {
+			const delivery = parsed.telegramCodeDelivery;
+			const codeLength = Number(delivery.codeLength);
+			const expiresInSeconds = Number(delivery.expiresInSeconds);
+			const sentAt = Number(delivery.sentAt);
+			if (
+				!Number.isInteger(codeLength) ||
+				codeLength < 1 ||
+				codeLength > 8 ||
+				!Number.isFinite(expiresInSeconds) ||
+				expiresInSeconds <= 0 ||
+				!Number.isFinite(sentAt) ||
+				sentAt <= 0
+			) {
+				parsed.telegramCodeDelivery = null;
+			}
 		}
 		if (typeof parsed.enableAiProcessing !== 'boolean') {
 			parsed.enableAiProcessing = false;
@@ -62,6 +101,7 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
 	const [state, setState] = useState<OnboardingState>({
 		phone: '',
 		normalizedPhone: '',
+		telegramCodeDelivery: null,
 		consentAcknowledged: false,
 		workspaceId: null,
 		syncScope: DEFAULT_TELEGRAM_SYNC_SCOPE,
@@ -87,6 +127,11 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
 		(normalizedPhone: string) => setState((prev) => ({ ...prev, normalizedPhone })),
 		[],
 	);
+	const setTelegramCodeDelivery = useCallback(
+		(telegramCodeDelivery: TelegramCodeDeliveryState | null) =>
+			setState((prev) => ({ ...prev, telegramCodeDelivery })),
+		[],
+	);
 	const setConsentAcknowledged = useCallback(
 		(consentAcknowledged: boolean) => setState((prev) => ({ ...prev, consentAcknowledged })),
 		[],
@@ -110,6 +155,7 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
 		setState({
 			phone: '',
 			normalizedPhone: '',
+			telegramCodeDelivery: null,
 			consentAcknowledged: false,
 			workspaceId: null,
 			syncScope: DEFAULT_TELEGRAM_SYNC_SCOPE,
@@ -124,6 +170,7 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
 				hydrated,
 				setPhone,
 				setNormalizedPhone,
+				setTelegramCodeDelivery,
 				setConsentAcknowledged,
 				setWorkspaceId,
 				setSyncScope,

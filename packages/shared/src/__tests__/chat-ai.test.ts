@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getChatLlmRuntime, getDigestLlmRuntime } from '../chat-ai';
+import { DEFAULT_LOCAL_CHAT_LLM_MODEL, getChatLlmRuntime, getDigestLlmRuntime } from '../chat-ai';
 
 describe('chat AI runtime config', () => {
 	it('defaults to cloud chat when no local chat config exists', () => {
@@ -28,6 +28,15 @@ describe('chat AI runtime config', () => {
 			label: 'Qwen local chat',
 			source: 'chat',
 		});
+	});
+
+	it('uses Gemma as the default explicit local chat model', () => {
+		expect(DEFAULT_LOCAL_CHAT_LLM_MODEL).toBe('gemma4:12b-it-q4_K_M');
+		expect(
+			getChatLlmRuntime({
+				CHAT_LLM_PROVIDER: 'local',
+			}).model,
+		).toBe(DEFAULT_LOCAL_CHAT_LLM_MODEL);
 	});
 
 	it('preserves local chat behavior by falling back to commitment Qwen config', () => {

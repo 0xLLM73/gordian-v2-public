@@ -1,5 +1,6 @@
 import {
 	getChatLlmRuntime,
+	getCommitmentLlmRuntime,
 	getDigestLlmRuntime,
 	getKnowledgeEmbeddingFingerprintWarning,
 	getKnowledgeEmbeddingRuntime,
@@ -70,6 +71,7 @@ function safeItems(): LocalAiStatus {
 	try {
 		const embedding = getKnowledgeEmbeddingRuntime(process.env);
 		const knowledge = getKnowledgeLlmRuntime(process.env);
+		const commitment = getCommitmentLlmRuntime(process.env);
 		const chat = getChatLlmRuntime(process.env);
 		const digest = getDigestLlmRuntime(process.env);
 		const fingerprintWarning = getKnowledgeEmbeddingFingerprintWarning(process.env);
@@ -92,6 +94,18 @@ function safeItems(): LocalAiStatus {
 						: knowledge.mode === 'local'
 							? 'Local JSON extraction'
 							: 'Cloud JSON extraction',
+			},
+			{
+				label: 'Commitment extraction',
+				status: commitment.mode,
+				mode: commitment.label,
+				model: commitment.model ?? 'cloud default',
+				detail:
+					commitment.mode === 'disabled'
+						? 'Extraction disabled'
+						: commitment.mode === 'local'
+							? 'Using COMMITMENT_LLM_*'
+							: 'Using cloud fallback',
 			},
 			{
 				label: 'Digest generation',
@@ -162,7 +176,14 @@ export function LocalAiStatusPanel() {
 				<span className="font-medium">Privacy posture:</span> {postureSummary}
 			</div>
 
-			<div className="grid gap-3 md:grid-cols-4">
+			<div className="mb-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-800">
+				<span className="font-medium">Runtime readiness:</span> This panel shows configured model
+				roles. Live analysis still requires Ollama to be reachable, the listed models to be
+				installed, 512-dimensional embeddings to pass smoke, and KG JSON extraction to return valid
+				structured output.
+			</div>
+
+			<div className="grid gap-3 md:grid-cols-5">
 				{items.map((item) => (
 					<div key={item.label} className="rounded-md border border-border bg-background p-3">
 						<div className="mb-2 flex items-center justify-between gap-2">

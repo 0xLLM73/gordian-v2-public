@@ -106,13 +106,18 @@ through workspace invites. This command must remain local-only; it is not a
 replacement for invite-only application signup.
 
 If the public demo is intended to run without hosted AI provider accounts, use
-the documented Nomic path, or Qwen when you only need to prove local KG vectors:
+the documented Nomic path, Qwen when you only need to prove local KG vectors, or
+Gemma when you want to compare larger non-embedding local LLM behavior while
+keeping Qwen embeddings:
 
 ```bash
 pnpm local-ai:setup:nomic
 # or
 pnpm local-ai:setup:qwen
+# or
+pnpm local-ai:setup:gemma
 pnpm kg:local:smoke
+pnpm local-ai:benchmark
 ```
 
 `pnpm audit:open-source` scans the tracked and unignored public tree, verifies

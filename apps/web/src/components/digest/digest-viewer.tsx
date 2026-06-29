@@ -429,7 +429,7 @@ function SourceCoverage({ coverage }: { coverage: DigestSections['source_coverag
 			</p>
 			{coverage.batch_count && coverage.batch_count > 1 ? (
 				<p className="mt-1">
-					Local Qwen summarized {coverage.batch_messages ?? coverage.prompt_messages ?? 0} excerpts{' '}
+					Local model summarized {coverage.batch_messages ?? coverage.prompt_messages ?? 0} excerpts{' '}
 					into {coverage.batch_count} batches. Strategy: {coverage.batch_strategy}.
 				</p>
 			) : null}

@@ -498,7 +498,7 @@ describe('generateDigest', () => {
 		const finalMessages = finalBody.messages as Array<{ role: string; content: string }>;
 		expect(firstBatchMessages[1].content).toContain('batch 1 of 2');
 		expect(firstBatchMessages[1].content).toContain('[MASKED]message');
-		expect(finalMessages[1].content).toContain('Local Qwen batch summaries');
+		expect(finalMessages[1].content).toContain('Local model batch summaries');
 		expect(finalMessages[1].content).toContain('Batch one summary');
 		expect(finalMessages[1].content).toContain('Batch two summary');
 		expect(finalMessages[1].content).not.toContain('[MASKED]message');
@@ -507,7 +507,7 @@ describe('generateDigest', () => {
 			source_coverage: {
 				batch_count: 2,
 				batch_messages: 66,
-				batch_strategy: 'local-qwen-map-reduce:2x~60',
+				batch_strategy: 'local-model-map-reduce:2x~60',
 				prompt_messages: 66,
 				total_messages: 66,
 			},

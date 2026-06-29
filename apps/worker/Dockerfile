@@ -1,6 +1,6 @@
 # CRITICAL: Use Debian slim, NOT Alpine
 # GramJS client.connect() hangs indefinitely on Alpine (musl libc bug)
-FROM node:26.3.0-slim AS base
+FROM node:26.4.0-slim AS base
 RUN corepack enable
 RUN npm install -g turbo@2.9.18
 

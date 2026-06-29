@@ -9,7 +9,7 @@ export type DigestLlmMode = 'cloud' | 'local';
 export type DigestLlmApi = ChatLlmApi;
 export type DigestLlmConfigSource = 'digest' | 'chat-fallback' | 'commitment-fallback' | 'default';
 
-export const DEFAULT_LOCAL_CHAT_LLM_MODEL = 'qwen3.5:4b';
+export const DEFAULT_LOCAL_CHAT_LLM_MODEL = 'gemma4:12b-it-q4_K_M';
 export const DEFAULT_LOCAL_CHAT_LLM_BASE_URL = 'http://localhost:11434';
 
 export interface ChatLlmRuntime {

@@ -121,6 +121,9 @@ export async function runFixtureSearch(
 		executeQueue.push(memoryHits);
 		if (recallRows.length > 0) selectQueue.push(recallRows);
 	}
+	if (input.useEmbedding) {
+		selectQueue.push([]);
+	}
 
 	const finalNodeIds = new Set<string>();
 	for (const row of exactRows) finalNodeIds.add(row.id);
@@ -135,6 +138,7 @@ export async function runFixtureSearch(
 		selectQueue.push(
 			fixture.contactRowsForNodes(workspaceId, ids),
 			fixture.evidenceRowsForNodes(workspaceId, ids),
+			[],
 		);
 	}
 

@@ -779,7 +779,7 @@ function buildDigestUserPrompt(params: {
 	contextInstruction?: string;
 }): string {
 	const batchCoverageLines = params.sourceCoverage.batch_count
-		? `- Local Qwen batch summaries: ${params.sourceCoverage.batch_count}
+		? `- Local model batch summaries: ${params.sourceCoverage.batch_count}
 - Message excerpts summarized in batches: ${
 				params.sourceCoverage.batch_messages ?? params.sourceCoverage.prompt_messages
 			}
@@ -1074,8 +1074,8 @@ export async function generateDigest(
 				);
 				sourceCoverage.batch_count = batchSummaries.length;
 				sourceCoverage.batch_messages = promptMessageCount;
-				sourceCoverage.batch_strategy = `local-qwen-map-reduce:${batchSummaries.length}x~${DIGEST_BATCH_MESSAGE_COUNT}`;
-				contextHeading = 'Local Qwen batch summaries';
+				sourceCoverage.batch_strategy = `local-model-map-reduce:${batchSummaries.length}x~${DIGEST_BATCH_MESSAGE_COUNT}`;
+				contextHeading = 'Local model batch summaries';
 				contextBody = formatBatchSummariesForPrompt(batchSummaries);
 				contextInstruction =
 					'The batch summaries are compressed evidence from the representative message excerpts. Do not treat them as additional messages beyond the source coverage counts.';
@@ -1117,7 +1117,7 @@ export async function generateDigest(
 		};
 	}
 
-	// 8. Call cloud inference only when digest is not configured for local Qwen.
+	// 8. Call cloud inference only when digest is not configured for a local model.
 	const userPrompt = buildDigestUserPrompt({
 		periodLabel,
 		focusInstruction,

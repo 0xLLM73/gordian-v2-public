@@ -1,30 +1,140 @@
 'use client';
 
+import { TELEGRAM_CONSENT_VERSION } from '@repo/shared';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { OnboardingCard } from '@/components/onboarding/onboarding-card';
-import { useOnboarding } from '@/components/onboarding/onboarding-provider';
+import {
+	type TelegramCodeDeliveryMethod,
+	type TelegramCodeDeliveryState,
+	useOnboarding,
+} from '@/components/onboarding/onboarding-provider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 
 type Step = 'code' | '2fa' | 'success';
 const TELEGRAM_LINKING_ENABLED = process.env.NEXT_PUBLIC_TELEGRAM_LINKING_ENABLED === 'true';
+const DEFAULT_CODE_LENGTH = 5;
+const TELEGRAM_CODE_DELIVERY_METHODS = new Set<TelegramCodeDeliveryMethod>([
+	'app',
+	'sms',
+	'call',
+	'flash_call',
+	'missed_call',
+	'email',
+	'fragment_sms',
+	'firebase_sms',
+	'email_setup',
+	'unknown',
+]);
 
 function isAlreadyLinkedError(error: string | null) {
 	return Boolean(error?.toLowerCase().includes('already linked'));
 }
 
+function normalizeCodeLength(value: unknown): number {
+	const numeric = Number(value);
+	return Number.isInteger(numeric) && numeric >= 1 && numeric <= 8 ? numeric : DEFAULT_CODE_LENGTH;
+}
+
+function normalizeDeliveryMethod(value: unknown): TelegramCodeDeliveryMethod {
+	return typeof value === 'string' &&
+		TELEGRAM_CODE_DELIVERY_METHODS.has(value as TelegramCodeDeliveryMethod)
+		? (value as TelegramCodeDeliveryMethod)
+		: 'unknown';
+}
+
+function normalizeCodeDelivery(raw: unknown): TelegramCodeDeliveryState {
+	const delivery = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+	const expiresInSeconds = Number(delivery.expiresInSeconds);
+	const nextMethod = normalizeDeliveryMethod(delivery.nextMethod);
+
+	return {
+		method: normalizeDeliveryMethod(delivery.method),
+		codeLength: normalizeCodeLength(delivery.codeLength),
+		expiresInSeconds:
+			Number.isFinite(expiresInSeconds) && expiresInSeconds > 0
+				? Math.min(Math.trunc(expiresInSeconds), 300)
+				: 300,
+		sentAt: Date.now(),
+		...(nextMethod !== 'unknown' ? { nextMethod } : {}),
+	};
+}
+
+function deliveryLabel(method: TelegramCodeDeliveryMethod): string {
+	switch (method) {
+		case 'app':
+			return 'Telegram app';
+		case 'sms':
+		case 'fragment_sms':
+		case 'firebase_sms':
+			return 'SMS';
+		case 'call':
+			return 'phone call';
+		case 'flash_call':
+			return 'flash call';
+		case 'missed_call':
+			return 'missed call';
+		case 'email':
+			return 'email';
+		case 'email_setup':
+			return 'email setup';
+		default:
+			return 'Telegram';
+	}
+}
+
+function deliveryDetail(delivery: TelegramCodeDeliveryState | null): string {
+	if (!delivery) {
+		return 'Telegram accepted the login request. If no code appears, request a new one below.';
+	}
+	const codeDescription = `${delivery.codeLength}-digit code`;
+	switch (delivery.method) {
+		case 'app':
+			return `Telegram sent a ${codeDescription} inside your Telegram app. Check any device where this account is already signed in.`;
+		case 'sms':
+		case 'fragment_sms':
+		case 'firebase_sms':
+			return `Telegram sent a ${codeDescription} by SMS. Delivery can lag if Telegram recently sent another login code.`;
+		case 'call':
+			return `Telegram will provide a ${codeDescription} by phone call.`;
+		case 'flash_call':
+		case 'missed_call':
+			return 'Telegram is using a call-based login check. Follow the instructions from Telegram on your phone.';
+		case 'email':
+			return `Telegram sent a ${codeDescription} by email for this login.`;
+		case 'email_setup':
+			return 'Telegram requires email setup before this login can continue.';
+		default:
+			return `Telegram accepted the request for a ${codeDescription}. If no code appears, request a new one below.`;
+	}
+}
+
+function formatSeconds(seconds: number): string {
+	if (seconds < 60) return `${seconds}s`;
+	return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
+}
+
 export default function VerifyPage() {
 	const router = useRouter();
-	const { normalizedPhone, setWorkspaceId, hydrated } = useOnboarding();
+	const {
+		normalizedPhone,
+		telegramCodeDelivery,
+		setTelegramCodeDelivery,
+		setWorkspaceId,
+		hydrated,
+	} = useOnboarding();
 	const [step, setStep] = useState<Step>('code');
-	const digitKeys = ['d0', 'd1', 'd2', 'd3', 'd4'] as const;
-	const [digits, setDigits] = useState(['', '', '', '', '']);
+	const codeLength = telegramCodeDelivery?.codeLength ?? DEFAULT_CODE_LENGTH;
+	const digitKeys = Array.from({ length: codeLength }, (_, i) => `d${i}`);
+	const [digits, setDigits] = useState(() => Array.from({ length: DEFAULT_CODE_LENGTH }, () => ''));
 	const [password, setPassword] = useState('');
 	const [error, setError] = useState<string | null>(null);
 	const [pending, setPending] = useState(false);
+	const [resendPending, setResendPending] = useState(false);
+	const [secondsRemaining, setSecondsRemaining] = useState<number | null>(null);
 	const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
 	// Redirect if no phone number (user navigated directly)
@@ -36,8 +146,71 @@ export default function VerifyPage() {
 		}
 	}, [hydrated, normalizedPhone, router]);
 
+	useEffect(() => {
+		setDigits((prev) => Array.from({ length: codeLength }, (_, i) => prev[i] ?? ''));
+		inputRefs.current = inputRefs.current.slice(0, codeLength);
+	}, [codeLength]);
+
+	useEffect(() => {
+		if (!telegramCodeDelivery) {
+			setSecondsRemaining(null);
+			return;
+		}
+
+		const delivery = telegramCodeDelivery;
+		function updateRemaining() {
+			const expiresAt = delivery.sentAt + delivery.expiresInSeconds * 1000;
+			setSecondsRemaining(Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000)));
+		}
+
+		updateRemaining();
+		const interval = window.setInterval(updateRemaining, 1000);
+		return () => window.clearInterval(interval);
+	}, [telegramCodeDelivery]);
+
+	const handleResendCode = useCallback(async () => {
+		setError(null);
+		setResendPending(true);
+
+		try {
+			const res = await fetch('/api/auth/telegram/send-code', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					phone: normalizedPhone,
+					consentVersion: TELEGRAM_CONSENT_VERSION,
+				}),
+			});
+			const body = (await res.json().catch(() => ({}))) as {
+				error?: string;
+				message?: string;
+				delivery?: unknown;
+			};
+
+			if (!res.ok || body.error) {
+				throw new Error(body.error || body.message || 'Failed to send a new code');
+			}
+
+			const nextDelivery = normalizeCodeDelivery(body.delivery);
+			setTelegramCodeDelivery(nextDelivery);
+			setDigits(Array.from({ length: nextDelivery.codeLength }, () => ''));
+			setPassword('');
+			setStep('code');
+			window.setTimeout(() => inputRefs.current[0]?.focus(), 0);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Failed to send a new code');
+		} finally {
+			setResendPending(false);
+		}
+	}, [normalizedPhone, setTelegramCodeDelivery]);
+
 	const handleVerify = useCallback(
 		async (code: string, pwd?: string) => {
+			if (secondsRemaining === 0 && !pwd) {
+				setError('Verification code expired. Send a new code.');
+				return;
+			}
+
 			setError(null);
 			setPending(true);
 
@@ -57,12 +230,20 @@ export default function VerifyPage() {
 					message?: string;
 					workspaceId?: string | null;
 					requires2FA?: boolean;
+					authExpired?: boolean;
+					codeInvalid?: boolean;
 				};
 
 				// 2FA detection: Better Auth's ctx.json ignores custom status codes,
 				// so check the body field instead of res.status === 202
 				if (res.status === 202 || body.requires2FA) {
 					setStep('2fa');
+					setPending(false);
+					return;
+				}
+
+				if (body.authExpired || body.codeInvalid) {
+					setError(body.error || body.message || 'Verification failed');
 					setPending(false);
 					return;
 				}
@@ -115,7 +296,7 @@ export default function VerifyPage() {
 				setPending(false);
 			}
 		},
-		[normalizedPhone, setWorkspaceId],
+		[normalizedPhone, secondsRemaining, setWorkspaceId],
 	);
 
 	function handleDigitChange(index: number, value: string) {
@@ -125,12 +306,12 @@ export default function VerifyPage() {
 		next[index] = digit;
 		setDigits(next);
 
-		if (digit && index < 4) {
+		if (digit && index < codeLength - 1) {
 			inputRefs.current[index + 1]?.focus();
 		}
 
-		// Auto-submit when all 5 digits are entered
-		if (digit && index === 4 && next.every((d) => d !== '')) {
+		// Auto-submit when all expected digits are entered.
+		if (digit && index === codeLength - 1 && next.every((d) => d !== '')) {
 			handleVerify(next.join(''));
 		}
 	}
@@ -143,7 +324,7 @@ export default function VerifyPage() {
 
 	function handleDigitPaste(e: React.ClipboardEvent) {
 		e.preventDefault();
-		const text = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 5);
+		const text = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, codeLength);
 		if (!text) return;
 
 		const next = [...digits];
@@ -152,10 +333,10 @@ export default function VerifyPage() {
 		}
 		setDigits(next);
 
-		if (text.length === 5) {
+		if (text.length === codeLength) {
 			handleVerify(next.join(''));
 		} else {
-			inputRefs.current[Math.min(text.length, 4)]?.focus();
+			inputRefs.current[Math.min(text.length, codeLength - 1)]?.focus();
 		}
 	}
 
@@ -177,6 +358,8 @@ export default function VerifyPage() {
 
 	if (!hydrated || !normalizedPhone) return null;
 	const alreadyLinked = isAlreadyLinkedError(error);
+	const codeExpired = secondsRemaining === 0;
+	const deliveryName = deliveryLabel(telegramCodeDelivery?.method ?? 'unknown');
 
 	return (
 		<OnboardingCard>
@@ -184,9 +367,27 @@ export default function VerifyPage() {
 				<div>
 					<h1 className="text-2xl font-bold text-foreground">Enter verification code</h1>
 					<p className="mt-2 text-sm text-muted-foreground">
-						We sent a code to your Telegram app for{' '}
+						Telegram accepted a login code request for{' '}
 						<span className="font-medium text-foreground">{normalizedPhone}</span>
 					</p>
+					<div className="mt-4 rounded-lg border border-primary/20 bg-primary/5 p-4">
+						<p className="text-sm font-medium text-foreground">Delivery method: {deliveryName}</p>
+						<p className="mt-1 text-sm text-muted-foreground">
+							{deliveryDetail(telegramCodeDelivery)}
+						</p>
+						{secondsRemaining !== null && (
+							<p
+								className={cn(
+									'mt-2 text-xs font-medium',
+									codeExpired ? 'text-destructive' : 'text-muted-foreground',
+								)}
+							>
+								{codeExpired
+									? 'This login code has expired.'
+									: `Code expires in ${formatSeconds(secondsRemaining)}.`}
+							</p>
+						)}
+					</div>
 					<div className="mt-4 rounded-lg border border-border bg-muted/40 p-4">
 						<p className="text-sm font-medium text-foreground">What this code does</p>
 						<p className="mt-1 text-sm text-muted-foreground">
@@ -223,7 +424,10 @@ export default function VerifyPage() {
 						</div>
 					)}
 
-					<div className="mt-6 flex items-center justify-center gap-3" onPaste={handleDigitPaste}>
+					<div
+						className="mt-6 flex flex-wrap items-center justify-center gap-3"
+						onPaste={handleDigitPaste}
+					>
 						{digits.map((digit, i) => (
 							<input
 								key={digitKeys[i]}
@@ -237,7 +441,7 @@ export default function VerifyPage() {
 								value={digit}
 								onChange={(e) => handleDigitChange(i, e.target.value)}
 								onKeyDown={(e) => handleDigitKeyDown(i, e)}
-								disabled={pending}
+								disabled={pending || resendPending || codeExpired}
 								className={cn(
 									'h-14 w-12 rounded-lg border bg-card text-center text-2xl font-bold text-foreground outline-none transition-all',
 									'focus:border-primary focus:ring-2 focus:ring-primary/20',
@@ -246,6 +450,20 @@ export default function VerifyPage() {
 								)}
 							/>
 						))}
+					</div>
+
+					<div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+						<Button
+							type="button"
+							variant="outline"
+							onClick={handleResendCode}
+							disabled={pending || resendPending}
+						>
+							{resendPending ? 'Sending...' : codeExpired ? 'Send new code' : 'Resend code'}
+						</Button>
+						<Button asChild type="button" variant="ghost">
+							<Link href="/onboarding/connect">Use a different phone</Link>
+						</Button>
 					</div>
 
 					{pending && (

@@ -1,6 +1,7 @@
 import {
 	getContactsByIds,
 	getKnowledgeNodeEvidenceStats,
+	getKnowledgeRelationshipCandidateStats,
 	getMessageContactCoverageReport,
 	listContactIdsByKnowledge,
 	listKnowledgeNodes,
@@ -54,6 +55,7 @@ async function KnowledgeBrowserSection({ workspaceId }: { workspaceId: string })
 		envelope,
 	);
 	const messageCoverage = await getMessageContactCoverageReport(workspaceId);
+	const relationshipCandidateSummary = await getKnowledgeRelationshipCandidateStats(workspaceId);
 
 	// Enrich with contact previews (same logic as listKnowledgeNodesAction)
 	const contactIdsByNode = await Promise.all(
@@ -107,7 +109,13 @@ async function KnowledgeBrowserSection({ workspaceId }: { workspaceId: string })
 		};
 	});
 
-	return <KnowledgeBrowser initialNodes={enrichedNodes} messageCoverage={messageCoverage} />;
+	return (
+		<KnowledgeBrowser
+			initialNodes={enrichedNodes}
+			messageCoverage={messageCoverage}
+			relationshipCandidateSummary={relationshipCandidateSummary}
+		/>
+	);
 }
 
 function KnowledgeSkeleton() {

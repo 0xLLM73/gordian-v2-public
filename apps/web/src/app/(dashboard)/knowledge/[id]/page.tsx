@@ -1,9 +1,14 @@
-import type { KnowledgeNeighbor, KnowledgeNode } from '@repo/db';
+import type {
+	KnowledgeNeighbor,
+	KnowledgeNode,
+	KnowledgeRelationshipCandidateWithNode,
+} from '@repo/db';
 import {
 	getKnowledgeNeighbors,
 	getKnowledgeNode,
 	getSharedKnowledge,
 	listContactsWithEvidenceForKnowledgeNode,
+	listKnowledgeRelationshipCandidatesForNode,
 	searchKnowledgeNodes,
 } from '@repo/db';
 import Link from 'next/link';
@@ -27,6 +32,22 @@ function LinkTypeBadge({ type }: { type: string }) {
 function EdgeClaimBadge({ linkType, weight }: { linkType: string; weight?: number | null }) {
 	const label = linkType === 'related_to' && (weight ?? 0) < 0.15 ? 'weak inferred' : 'inferred';
 	return <span className="rounded bg-blue-50 px-2 py-0.5 text-xs text-blue-700">{label}</span>;
+}
+
+function CandidateStatusBadge({ status }: { status: string }) {
+	const colorClass =
+		status === 'eligible'
+			? 'bg-emerald-50 text-emerald-700'
+			: status === 'rejected'
+				? 'bg-red-50 text-red-700'
+				: status === 'promoted'
+					? 'bg-blue-50 text-blue-700'
+					: 'bg-amber-50 text-amber-700';
+	return (
+		<span className={`rounded px-2 py-0.5 text-xs font-medium ${colorClass}`}>
+			{status.replace(/_/g, ' ')}
+		</span>
+	);
 }
 
 function TypeBadge({ type }: { type: string }) {
@@ -108,6 +129,51 @@ function RelatedEntitiesSection({ neighbors }: { neighbors: KnowledgeNeighbor[] 
 	);
 }
 
+function RelationshipCandidatesSection({
+	candidates,
+}: {
+	candidates: KnowledgeRelationshipCandidateWithNode[];
+}) {
+	if (candidates.length === 0) return null;
+
+	return (
+		<div className="rounded-lg border border-amber-200 bg-amber-50 p-6">
+			<h2 className="mb-2 text-lg font-semibold text-foreground">Relationship Candidates</h2>
+			<p className="mb-4 text-sm text-amber-900">
+				These candidate edges are visible for review, but they are not confirmed graph links until
+				direct source evidence passes promotion checks.
+			</p>
+			<ul className="space-y-2">
+				{candidates.map((item) => (
+					<li key={item.candidate.id} className="rounded-md bg-white/70 p-3">
+						<Link
+							href={`/knowledge/${item.node.id}`}
+							className="flex flex-wrap items-center gap-2 text-sm"
+						>
+							<span className="text-muted-foreground">
+								{item.direction === 'outbound' ? '->' : '<-'}
+							</span>
+							<span className="font-medium text-foreground">{item.node.displayName}</span>
+							<TypeBadge type={item.node.type} />
+							<LinkTypeBadge type={item.candidate.linkType} />
+							<CandidateStatusBadge status={item.candidate.promotionStatus} />
+						</Link>
+						<div className="mt-2 flex flex-wrap gap-2 text-xs text-amber-900">
+							<span>{item.candidate.evidenceKind.replace(/_/g, ' ')}</span>
+							{typeof item.candidate.confidence === 'number' ? (
+								<span>{Math.round(item.candidate.confidence * 100)}% confidence</span>
+							) : null}
+						</div>
+						{item.candidate.promotionReason ? (
+							<p className="mt-2 text-xs text-amber-900">{item.candidate.promotionReason}</p>
+						) : null}
+					</li>
+				))}
+			</ul>
+		</div>
+	);
+}
+
 function SharedKnowledgeSection({
 	sharedByContact,
 }: {
@@ -171,10 +237,14 @@ export default async function KnowledgeNodePage({
 	const node = await getKnowledgeNode(workspaceId, id, envelope);
 	if (!node) notFound();
 
-	// Fetch linked contacts and neighbors in parallel
-	const [contactRows, neighbors] = await Promise.all([
+	// Fetch linked contacts, confirmed neighbors, and review-only relationship candidates in parallel
+	const [contactRows, neighbors, relationshipCandidates] = await Promise.all([
 		listContactsWithEvidenceForKnowledgeNode(node.id, workspaceId, envelope),
 		getKnowledgeNeighbors(node.id, workspaceId, envelope),
+		listKnowledgeRelationshipCandidatesForNode(workspaceId, node.id, envelope, {
+			limit: 8,
+			status: 'review_only',
+		}),
 	]);
 
 	// SEC-006: Project only UI-needed fields — never serialize phone/email/notes/blind indexes into the page payload
@@ -254,6 +324,7 @@ export default async function KnowledgeNodePage({
 
 			{/* Related Entities (Phase 32) */}
 			<RelatedEntitiesSection neighbors={neighbors} />
+			<RelationshipCandidatesSection candidates={relationshipCandidates} />
 
 			{/* Shared Context (Phase 32) — visible when viewing from a contact context */}
 			{fromContactId ? <SharedKnowledgeSection sharedByContact={sharedByContact} /> : null}

@@ -1,5 +1,9 @@
 import { accounts, and, db, eq, getCalibration, getPreferences, isFeatureEnabled } from '@repo/db';
-import { isAiAnalysisAvailable } from '@repo/shared';
+import {
+	getCommitmentLlmRuntime,
+	getKnowledgeLlmRuntime,
+	isAiAnalysisAvailable,
+} from '@repo/shared';
 import Link from 'next/link';
 import { Suspense } from 'react';
 import { PreferencesForm } from '@/components/preferences-form';
@@ -525,6 +529,12 @@ async function FeatureAutomationStatusSection({
 	const localAiEnabled = envEnabled('NEXT_PUBLIC_LOCAL_AI_PROCESSING_ENABLED');
 	const chatProvider = process.env.CHAT_LLM_PROVIDER?.trim() || 'cloud';
 	const commitmentProvider = process.env.COMMITMENT_LLM_PROVIDER?.trim() || 'cloud';
+	const commitmentRuntime = getCommitmentLlmRuntime(process.env);
+	const knowledgeRuntime = getKnowledgeLlmRuntime(process.env);
+	const localAnalysisModelDetail = [
+		`commitments: ${commitmentRuntime.model ?? commitmentRuntime.label}`,
+		`knowledge: ${knowledgeRuntime.model ?? knowledgeRuntime.label}`,
+	].join(', ');
 	const kgEmbeddingProvider = process.env.KNOWLEDGE_EMBEDDING_PROVIDER?.trim() || 'openai';
 	const kgEmbeddingModel =
 		process.env.KNOWLEDGE_EMBEDDING_MODEL?.trim() || 'text-embedding-3-small';
@@ -558,7 +568,7 @@ async function FeatureAutomationStatusSection({
 					feature: 'Post-import local analysis',
 					status: 'Automatic after import',
 					mode: 'Auto',
-					detail: `New contact-linked import messages are buffered for local analysis using ${commitmentProvider === 'local' ? 'Qwen' : commitmentProvider} and ${kgEmbeddingProvider} ${kgEmbeddingModel} (${kgEmbeddingDimensions}d).`,
+					detail: `New contact-linked import messages are buffered for local analysis using ${localAnalysisModelDetail} with ${kgEmbeddingProvider} ${kgEmbeddingModel} (${kgEmbeddingDimensions}d) embeddings.`,
 					tone: 'ok',
 				}
 			: aiBlockedStatus(

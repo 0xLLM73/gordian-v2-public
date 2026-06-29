@@ -98,6 +98,17 @@ interface KnowledgeMessageCoverage {
 	chatsWithNullContactMessages: number;
 }
 
+interface KnowledgeRelationshipCandidateSummary {
+	total: number;
+	reviewOnly: number;
+	eligible: number;
+	promoted: number;
+	rejected: number;
+	heuristic: number;
+	direct: number;
+	latestSeenAt: Date | string | null;
+}
+
 interface KnowledgeAnalysisProgress {
 	stage?: 'queued' | 'contacts' | 'llm' | 'complete';
 	percent?: number;
@@ -120,7 +131,11 @@ interface KnowledgeAnalysisProgress {
 interface KnowledgeInferenceRunResult {
 	status?: string;
 	nodesProcessed?: number;
+	candidateRelationships?: number;
+	coOccurrenceCandidates?: number;
 	coOccurrenceLinks?: number;
+	confirmedLinks?: number;
+	similarityCandidates?: number;
 	similarityLinks?: number;
 	totalLinks?: number;
 	skippedReason?: string | null;
@@ -188,7 +203,13 @@ interface EnrichedNode {
 	messageMatchedEvidenceIds?: string[];
 	messageMatchedAt?: Date | string | null;
 	messageRecallReasons?: string[];
+	evidenceChunkRecallScore?: number | null;
+	evidenceChunkHitCount?: number;
+	evidenceChunkMatchedChunkIds?: string[];
+	evidenceChunkMatchedAt?: Date | string | null;
+	evidenceChunkRecallReasons?: string[];
 	evidenceCount?: number;
+	evidenceChunkCount?: number;
 	distinctEvidenceMessages?: number;
 	distinctEvidenceContacts?: number;
 	aggregateEvidenceCount?: number;
@@ -203,6 +224,7 @@ interface EnrichedNode {
 	connectedContactsWithEvidence?: number;
 	contacts?: SearchContactPreview[];
 	evidence?: SearchEvidencePreview[];
+	evidenceChunks?: SearchEvidenceChunkPreview[];
 	opacity?: number;
 }
 
@@ -225,6 +247,21 @@ interface SearchEvidencePreview {
 	claimLabel: string;
 	confidence?: number | null;
 	snippet?: string | null;
+	occurredAt?: Date | string | null;
+	createdAt?: Date | string | null;
+}
+
+interface SearchEvidenceChunkPreview {
+	id: string;
+	knowledgeEvidenceId: string;
+	contactId?: string | null;
+	messageId?: string | null;
+	chunkKind: string;
+	maskedText: string;
+	similarity?: number | null;
+	embeddingFingerprint: string;
+	maskingPolicyVersion: string;
+	chunkingPolicyVersion: string;
 	occurredAt?: Date | string | null;
 	createdAt?: Date | string | null;
 }
@@ -259,12 +296,22 @@ function formatCoveragePercent(part: number | undefined, total: number | undefin
 	return `${Math.round(((part ?? 0) / total) * 100)}%`;
 }
 
+function relationshipBuildLabel(result: KnowledgeInferenceRunResult): string {
+	const confirmedLinks = result.confirmedLinks ?? result.totalLinks ?? 0;
+	const candidates =
+		result.candidateRelationships ??
+		(result.coOccurrenceCandidates ?? 0) + (result.similarityCandidates ?? 0);
+	return `${formatCount(candidates, 'review candidate')}; ${formatCount(confirmedLinks, 'confirmed link')}`;
+}
+
 export function KnowledgeBrowser({
 	initialNodes,
 	messageCoverage,
+	relationshipCandidateSummary,
 }: {
 	initialNodes: EnrichedNode[];
 	messageCoverage?: KnowledgeMessageCoverage;
+	relationshipCandidateSummary?: KnowledgeRelationshipCandidateSummary;
 }) {
 	const [nodes, setNodes] = useState<EnrichedNode[]>(initialNodes);
 	const [activeType, setActiveType] = useState<NodeType | 'all'>('all');
@@ -340,7 +387,13 @@ export function KnowledgeBrowser({
 								messageMatchedEvidenceIds: resultNode.messageMatchedEvidenceIds,
 								messageMatchedAt: resultNode.messageMatchedAt,
 								messageRecallReasons: resultNode.messageRecallReasons,
+								evidenceChunkRecallScore: resultNode.evidenceChunkRecallScore,
+								evidenceChunkHitCount: resultNode.evidenceChunkHitCount,
+								evidenceChunkMatchedChunkIds: resultNode.evidenceChunkMatchedChunkIds,
+								evidenceChunkMatchedAt: resultNode.evidenceChunkMatchedAt,
+								evidenceChunkRecallReasons: resultNode.evidenceChunkRecallReasons,
 								evidenceCount: resultNode.evidenceCount,
+								evidenceChunkCount: resultNode.evidenceChunkCount,
 								aggregateEvidenceCount: resultNode.aggregateEvidenceCount,
 								directEvidenceRows: resultNode.directEvidenceRows,
 								directEvidenceMessages: resultNode.directEvidenceMessages,
@@ -353,6 +406,7 @@ export function KnowledgeBrowser({
 								connectedContactsWithEvidence: resultNode.connectedContactsWithEvidence,
 								contacts: resultNode.contacts,
 								evidence: resultNode.evidence,
+								evidenceChunks: resultNode.evidenceChunks,
 							})),
 						);
 					}
@@ -453,7 +507,7 @@ export function KnowledgeBrowser({
 			} else {
 				const error =
 					(result?.data as KnowledgeInferenceRunResult | undefined)?.error ??
-					'Unable to build relationships';
+					'Unable to find relationship candidates';
 				setInferenceError(error);
 			}
 			setIsInferenceRunning(false);
@@ -625,6 +679,7 @@ export function KnowledgeBrowser({
 				inferenceResult={inferenceResult}
 				inferenceError={inferenceError}
 				messageCoverage={messageCoverage}
+				relationshipCandidateSummary={relationshipCandidateSummary}
 			/>
 			<ManualKnowledgeNodePanel
 				type={manualType}
@@ -817,6 +872,7 @@ function LocalKnowledgeAnalysisPanel({
 	inferenceResult,
 	inferenceError,
 	messageCoverage,
+	relationshipCandidateSummary,
 }: {
 	nodes: EnrichedNode[];
 	mode: AnalysisMode;
@@ -838,6 +894,7 @@ function LocalKnowledgeAnalysisPanel({
 	inferenceResult: KnowledgeInferenceRunResult | null;
 	inferenceError: string | null;
 	messageCoverage?: KnowledgeMessageCoverage;
+	relationshipCandidateSummary?: KnowledgeRelationshipCandidateSummary;
 }) {
 	const evidenceRows = nodes.reduce((sum, node) => {
 		if (typeof node.evidenceCount === 'number') return sum + node.evidenceCount;
@@ -894,6 +951,8 @@ function LocalKnowledgeAnalysisPanel({
 	const progressContactTotal = progress?.expectedContacts ?? contactsEstimated;
 	const progressLlmTotal = progress?.expectedLlmRequests ?? llmRequestsEstimated;
 	const hasAiConsent = estimate?.hasConsent !== false;
+	const hasRelationshipCandidateSummary =
+		relationshipCandidateSummary && relationshipCandidateSummary.total > 0;
 	const coverageStats = messageCoverage
 		? [
 				{
@@ -1004,7 +1063,7 @@ function LocalKnowledgeAnalysisPanel({
 						) : (
 							<Network className="h-4 w-4" />
 						)}
-						{isInferenceRunning ? 'Building' : 'Build relationships'}
+						{isInferenceRunning ? 'Finding' : 'Find candidates'}
 					</button>
 				</div>
 			</div>
@@ -1022,7 +1081,7 @@ function LocalKnowledgeAnalysisPanel({
 				{error ? <span>{error}</span> : null}
 				{inferenceResult ? (
 					<span>
-						Relationships: {inferenceResult.totalLinks ?? 0} links from{' '}
+						Relationship candidates: {relationshipBuildLabel(inferenceResult)} from{' '}
 						{inferenceResult.nodesProcessed ?? 0} nodes
 					</span>
 				) : null}
@@ -1050,6 +1109,42 @@ function LocalKnowledgeAnalysisPanel({
 				</div>
 			) : null}
 
+			{hasRelationshipCandidateSummary ? (
+				<div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950">
+					<div className="flex flex-wrap items-center justify-between gap-2">
+						<div>
+							<div className="font-medium">Relationship review queue</div>
+							<div className="mt-0.5 text-amber-900">
+								{formatCount(relationshipCandidateSummary.total, 'candidate')} waiting for
+								evidence-gated promotion
+							</div>
+						</div>
+						{relationshipCandidateSummary.latestSeenAt ? (
+							<div className="text-amber-900">
+								Updated {formatStableUtcDateTime(relationshipCandidateSummary.latestSeenAt)}
+							</div>
+						) : null}
+					</div>
+					<div className="mt-2 flex flex-wrap gap-2">
+						<span className="rounded bg-white/70 px-2 py-0.5">
+							{formatCompactCount(relationshipCandidateSummary.reviewOnly)} review-only
+						</span>
+						<span className="rounded bg-white/70 px-2 py-0.5">
+							{formatCompactCount(relationshipCandidateSummary.eligible)} eligible
+						</span>
+						<span className="rounded bg-white/70 px-2 py-0.5">
+							{formatCompactCount(relationshipCandidateSummary.promoted)} promoted
+						</span>
+						<span className="rounded bg-white/70 px-2 py-0.5">
+							{formatCompactCount(relationshipCandidateSummary.heuristic)} heuristic
+						</span>
+						<span className="rounded bg-white/70 px-2 py-0.5">
+							{formatCompactCount(relationshipCandidateSummary.direct)} direct evidence
+						</span>
+					</div>
+				</div>
+			) : null}
+
 			{progress ? (
 				<div className="mt-3 rounded-md border border-border bg-muted/30 p-3">
 					<div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -1064,7 +1159,6 @@ function LocalKnowledgeAnalysisPanel({
 						aria-valuemin={0}
 						aria-valuemax={100}
 						aria-valuenow={progressPercent}
-						tabIndex={0}
 					>
 						<div
 							className="h-full rounded-full bg-primary transition-all"
@@ -1242,7 +1336,7 @@ function ManualBuildProgress({
 			label: 'Relationships',
 			done: inferenceDone,
 			detail: inferenceDone
-				? `${result?.inference?.totalLinks ?? 0} links`
+				? relationshipBuildLabel(result?.inference ?? {})
 				: buildQueued
 					? 'Queued after evidence'
 					: isPending
@@ -1307,7 +1401,7 @@ function manualKnowledgeBuildSummary(result: ManualKnowledgeNodeResult): string 
 		const contacts = result.manualEvidence?.contactsScanned ?? result.analysis?.contactsProcessed;
 		const newEvidence = result.manualEvidence?.evidenceCreated ?? result.analysis?.embeddingMatches;
 		const totalEvidence = result.manualEvidence?.totalEvidenceRows;
-		const links = result.inference?.totalLinks;
+		const links = result.inference ? relationshipBuildLabel(result.inference) : null;
 		if (typeof contacts === 'number') parts.push(`scanned ${formatCount(contacts, 'contact')}`);
 		if (typeof newEvidence === 'number') {
 			parts.push(`${formatCount(newEvidence, 'new evidence row')}`);
@@ -1315,7 +1409,7 @@ function manualKnowledgeBuildSummary(result: ManualKnowledgeNodeResult): string 
 		if (typeof totalEvidence === 'number') {
 			parts.push(`${formatCount(totalEvidence, 'total evidence row')}`);
 		}
-		if (typeof links === 'number') parts.push(`${formatCount(links, 'link')}`);
+		if (links) parts.push(links);
 		return parts.join('; ');
 	}
 	if (result.buildQueued) return 'local evidence build queued';
@@ -1342,6 +1436,12 @@ function manualEvidenceDetail(result: ManualKnowledgeNodeResult | null): string 
 
 function formatCount(value: number, singular: string, plural = `${singular}s`): string {
 	return `${value} ${value === 1 ? singular : plural}`;
+}
+
+function formatStableUtcDateTime(value: Date | string): string {
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return 'unknown time';
+	return `${date.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
 }
 
 function coerceDate(value?: Date | string | null): Date | null {
@@ -1452,23 +1552,30 @@ function KnowledgeCard({
 	const contactCount = node.contactCount ?? 0;
 	const previews = node.contactPreviews ?? [];
 	const evidence = node.evidence ?? [];
+	const evidenceChunks = node.evidenceChunks ?? [];
 	const contacts = node.contacts ?? [];
 	const qualitySignals = qualitySignalsForNode(node);
 	const latestEvidenceAt = coerceDate(node.latestEvidenceAt);
 	const messageMatchedAt = coerceDate(node.messageMatchedAt);
+	const evidenceChunkMatchedAt = coerceDate(node.evidenceChunkMatchedAt);
 	const messageHitCount = node.messageHitCount ?? 0;
+	const evidenceChunkHitCount = node.evidenceChunkHitCount ?? 0;
 	const directSourceMessageCount = node.directEvidenceMessages ?? 0;
 	const directEvidenceRows = node.directEvidenceRows ?? 0;
 	const directEvidenceContacts = node.directEvidenceContacts ?? 0;
 	const rawSourceMessageCount = node.distinctEvidenceMessages ?? 0;
 	const rawEvidenceRows = node.evidenceCount ?? 0;
+	const rawEvidenceChunkCount = node.evidenceChunkCount ?? evidenceChunks.length;
 	const possibleEvidenceRows = node.possibleEvidenceRows ?? 0;
 	const weakEvidenceRows = node.weakEvidenceRows ?? 0;
 	const messageMatchedEvidenceIds = new Set(node.messageMatchedEvidenceIds ?? []);
+	const evidenceChunkMatchedChunkIds = new Set(node.evidenceChunkMatchedChunkIds ?? []);
 	const hasSearchEvidenceFields =
 		typeof node.matchScore === 'number' ||
 		evidence.length > 0 ||
+		evidenceChunks.length > 0 ||
 		contacts.length > 0 ||
+		typeof node.evidenceChunkCount === 'number' ||
 		typeof node.aggregateEvidenceCount === 'number';
 
 	return (
@@ -1500,6 +1607,11 @@ function KnowledgeCard({
 				{messageHitCount > 0 ? (
 					<span className="rounded bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
 						Matched in message evidence
+					</span>
+				) : null}
+				{evidenceChunkHitCount > 0 ? (
+					<span className="rounded bg-cyan-100 px-2 py-0.5 text-xs font-medium text-cyan-700">
+						Matched in evidence chunks
 					</span>
 				) : null}
 			</div>
@@ -1557,6 +1669,11 @@ function KnowledgeCard({
 						{rawEvidenceRows} total evidence row{rawEvidenceRows === 1 ? '' : 's'}
 					</span>
 				) : null}
+				{rawEvidenceChunkCount > 0 ? (
+					<span>
+						{rawEvidenceChunkCount} evidence chunk{rawEvidenceChunkCount === 1 ? '' : 's'}
+					</span>
+				) : null}
 				<span>{node.mentionCount ?? 0} extraction signals</span>
 				{latestEvidenceAt ? <span>Latest {formatRelativeDate(latestEvidenceAt)}</span> : null}
 				{messageHitCount > 0 ? (
@@ -1564,7 +1681,15 @@ function KnowledgeCard({
 						{messageHitCount} message match{messageHitCount === 1 ? '' : 'es'}
 					</span>
 				) : null}
+				{evidenceChunkHitCount > 0 ? (
+					<span>
+						{evidenceChunkHitCount} chunk match{evidenceChunkHitCount === 1 ? '' : 'es'}
+					</span>
+				) : null}
 				{messageMatchedAt ? <span>Matched {formatRelativeDate(messageMatchedAt)}</span> : null}
+				{evidenceChunkMatchedAt ? (
+					<span>Chunk matched {formatRelativeDate(evidenceChunkMatchedAt)}</span>
+				) : null}
 				{contactCount > 0 ? (
 					<span>
 						{previews.join(', ')}
@@ -1618,6 +1743,32 @@ function KnowledgeCard({
 				<p className="mt-3 rounded-md border border-dashed border-border bg-muted/40 p-3 text-sm text-muted-foreground">
 					This topic exists, but no source message evidence has been stored yet.
 				</p>
+			) : null}
+
+			{evidenceChunks.length > 0 ? (
+				<ul className="mt-3 space-y-2">
+					{evidenceChunks.slice(0, 2).map((item) => {
+						const occurredAt = coerceDate(item.occurredAt);
+						const isChunkMatch = evidenceChunkMatchedChunkIds.has(item.id);
+						return (
+							<li key={item.id} className="rounded-md border border-cyan-100 bg-cyan-50/50 p-3">
+								<div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+									{isChunkMatch ? (
+										<span className="font-medium text-cyan-700">chunk match</span>
+									) : null}
+									<span>{item.chunkKind.replace(/_/g, ' ')}</span>
+									{typeof item.similarity === 'number' ? (
+										<span>{formatPercent(item.similarity)} similarity</span>
+									) : null}
+									{occurredAt ? <span>{formatRelativeDate(occurredAt)}</span> : null}
+								</div>
+								<p className="line-clamp-2 break-words text-sm text-foreground">
+									{item.maskedText}
+								</p>
+							</li>
+						);
+					})}
+				</ul>
 			) : null}
 
 			<div className="mt-3 flex flex-wrap items-center gap-2">

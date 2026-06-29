@@ -1,20 +1,24 @@
 import {
-	createKnowledgeLink,
-	inferSimilarityLinks,
+	inferSimilarityRelationshipCandidates,
 	isFeatureEnabled,
 	listContactIdsByKnowledge,
 	listKnowledgeNodes,
+	upsertKnowledgeRelationshipCandidate,
 } from '@repo/db';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-/** Minimum shared-contact co-occurrences to create a related_to link. */
+/** Minimum shared-contact co-occurrences to create a related_to review candidate. */
 const MIN_CO_OCCURRENCE = 2;
 
 export interface KnowledgeInferenceResult {
 	workspaceId: string;
 	nodesProcessed: number;
+	candidateRelationships: number;
+	coOccurrenceCandidates: number;
 	coOccurrenceLinks: number;
+	confirmedLinks: number;
+	similarityCandidates: number;
 	similarityLinks: number;
 	totalLinks: number;
 	skippedReason?: 'feature_flag_off' | 'too_few_nodes';
@@ -25,17 +29,19 @@ export interface KnowledgeInferenceResult {
 /**
  * Run the knowledge inference pipeline for a workspace.
  *
- * Two strategies for creating knowledge_links edges:
+ * Two strategies for creating reviewable relationship candidates:
  *
  * 1. **Co-occurrence**: Two knowledge nodes that share ≥ MIN_CO_OCCURRENCE contacts
  *    are linked with Jaccard similarity weight: |A ∩ B| / |A ∪ B|.
- *    Prevents generic nodes from forming max-weight edges to everything.
+ *    Prevents generic nodes from forming max-weight candidates to everything.
  *
  * 2. **Embedding similarity (SQL-native)**: Uses pgvector <=> operator in PostgreSQL
- *    to find all node pairs with cosine distance < 0.30 (similarity ≥ 0.70).
+ *    to find all node pairs with cosine distance < 0.30 (similarity >= 0.70).
  *    Replaces the previous O(n²) in-memory loop, removing the 500-node ceiling.
  *
- * Both paths are per-error resilient — one failed link does not abort the run.
+ * Both paths are per-error resilient: one failed candidate does not abort the run.
+ * Candidates are review-only until direct quoted evidence promotes an edge into
+ * knowledge_links.
  * Feature-flag gated: `knowledge_links` must be enabled for the workspace.
  */
 export async function runKnowledgeInference(
@@ -51,7 +57,11 @@ export async function runKnowledgeInference(
 		return {
 			workspaceId,
 			nodesProcessed: 0,
+			candidateRelationships: 0,
+			coOccurrenceCandidates: 0,
 			coOccurrenceLinks: 0,
+			confirmedLinks: 0,
+			similarityCandidates: 0,
 			similarityLinks: 0,
 			totalLinks: 0,
 			skippedReason: 'feature_flag_off',
@@ -64,7 +74,11 @@ export async function runKnowledgeInference(
 		return {
 			workspaceId,
 			nodesProcessed: nodes.length,
+			candidateRelationships: 0,
+			coOccurrenceCandidates: 0,
 			coOccurrenceLinks: 0,
+			confirmedLinks: 0,
+			similarityCandidates: 0,
 			similarityLinks: 0,
 			totalLinks: 0,
 			skippedReason: 'too_few_nodes',
@@ -109,7 +123,7 @@ export async function runKnowledgeInference(
 		}
 	}
 
-	let coLinks = 0;
+	let coOccurrenceCandidates = 0;
 	for (const [pair, count] of coOccurrences) {
 		if (count >= MIN_CO_OCCURRENCE) {
 			const parts = pair.split(':');
@@ -128,9 +142,13 @@ export async function runKnowledgeInference(
 			if (weight < 0.05) continue;
 
 			try {
-				await createKnowledgeLink(workspaceId, aId, bId, 'related_to', weight, {
+				await upsertKnowledgeRelationshipCandidate(workspaceId, {
+					sourceNodeId: aId,
+					targetNodeId: bId,
+					linkType: 'related_to',
 					evidenceKind: 'contact_cooccurrence',
 					confidence: weight,
+					promotionStatus: 'review_only',
 					metadata: {
 						source: 'knowledge_inference',
 						method: 'shared_contact_jaccard',
@@ -140,32 +158,44 @@ export async function runKnowledgeInference(
 						unionSize,
 					},
 				});
-				coLinks++;
+				coOccurrenceCandidates++;
 			} catch (err) {
-				console.error('[knowledge-inference] Co-occurrence link failed:', (err as Error).message);
+				console.error(
+					'[knowledge-inference] Co-occurrence candidate failed:',
+					(err as Error).message,
+				);
 			}
 		}
 	}
 
-	console.log(`[knowledge-inference] Co-occurrence pass: ${coLinks} links created`);
+	console.log(
+		`[knowledge-inference] Co-occurrence pass: ${coOccurrenceCandidates} review candidates stored`,
+	);
 
 	// ── 2. Embedding similarity (SQL-native, uses HNSW index) ────────────────
-	let simLinks = 0;
+	let similarityCandidates = 0;
 	try {
-		simLinks = await inferSimilarityLinks(workspaceId, 0.3);
+		similarityCandidates = await inferSimilarityRelationshipCandidates(workspaceId, 0.3);
 	} catch (err) {
-		console.error('[knowledge-inference] SQL similarity pass failed:', (err as Error).message);
+		console.error(
+			'[knowledge-inference] SQL similarity candidate pass failed:',
+			(err as Error).message,
+		);
 	}
 
-	console.log(`[knowledge-inference] Similarity pass: ${simLinks} links created`);
+	console.log(`[knowledge-inference] Similarity pass: ${similarityCandidates} candidates stored`);
 	console.log(
-		`[knowledge-inference] Done for workspace=${workspaceId.slice(0, 8)}: ${coLinks + simLinks} total links`,
+		`[knowledge-inference] Done for workspace=${workspaceId.slice(0, 8)}: ${coOccurrenceCandidates + similarityCandidates} review candidates, 0 confirmed links`,
 	);
 	return {
 		workspaceId,
 		nodesProcessed: nodes.length,
-		coOccurrenceLinks: coLinks,
-		similarityLinks: simLinks,
-		totalLinks: coLinks + simLinks,
+		candidateRelationships: coOccurrenceCandidates + similarityCandidates,
+		coOccurrenceCandidates,
+		coOccurrenceLinks: 0,
+		confirmedLinks: 0,
+		similarityCandidates,
+		similarityLinks: 0,
+		totalLinks: 0,
 	};
 }

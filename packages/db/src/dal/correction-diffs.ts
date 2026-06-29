@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import { db } from '../client';
 import { correctionDiffs } from '../schema/correction-diffs';
 
@@ -97,11 +97,7 @@ export async function getAllDiffEmbeddings(limit = 5000) {
 export async function assignPatternToDiffs(diffIds: string[], patternId: string) {
 	if (diffIds.length === 0) return;
 
-	await db.execute(sql`
-		UPDATE correction_diffs
-		SET pattern_id = ${patternId}::uuid
-		WHERE id = ANY(${diffIds}::uuid[])
-	`);
+	await db.update(correctionDiffs).set({ patternId }).where(inArray(correctionDiffs.id, diffIds));
 }
 
 /**

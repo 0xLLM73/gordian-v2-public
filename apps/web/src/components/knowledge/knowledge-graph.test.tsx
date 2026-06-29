@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { KnowledgeGraph } from './knowledge-graph';
@@ -108,8 +108,43 @@ describe('KnowledgeGraph', () => {
 		render(React.createElement(KnowledgeGraph));
 
 		await waitFor(() => {
-			expect(screen.getByText(/Build relationships after analysis/i)).toBeTruthy();
+			expect(screen.getByText(/No confirmed relationships are stored yet/i)).toBeTruthy();
 		});
+		expect(screen.getByText('No confirmed relationships yet')).toBeTruthy();
+		expect(
+			screen.getByText(/embedding matches, co-mentions, and weak\/stale signals/i),
+		).toBeTruthy();
 		expect(screen.getByTestId('force-graph').textContent).toBe('1 nodes, 0 links');
+	});
+
+	it('shows a retryable error state when graph loading fails', async () => {
+		mockGetGraphDataAction
+			.mockRejectedValueOnce(new Error('network failed'))
+			.mockResolvedValueOnce({
+				data: {
+					nodes: [
+						{
+							id: 'node-1',
+							name: 'helium',
+							displayName: 'Helium',
+							type: 'project',
+							mentionCount: 4,
+						},
+					],
+					links: [],
+				},
+			});
+
+		render(React.createElement(KnowledgeGraph));
+
+		await waitFor(() => {
+			expect(screen.getByText('Unable to load knowledge graph')).toBeTruthy();
+		});
+		fireEvent.click(screen.getByRole('button', { name: 'Retry graph' }));
+
+		await waitFor(() => {
+			expect(screen.getByTestId('force-graph').textContent).toBe('1 nodes, 0 links');
+		});
+		expect(mockGetGraphDataAction).toHaveBeenCalledTimes(2);
 	});
 });

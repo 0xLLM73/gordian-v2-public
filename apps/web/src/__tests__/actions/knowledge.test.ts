@@ -276,6 +276,7 @@ describe('knowledge actions', () => {
 					expect.objectContaining({
 						limit: 20,
 						minSimilarity: 0.62,
+						evidenceChunkFingerprint: expect.any(String),
 					}),
 				);
 				expect(mockListKnowledgeNodes).not.toHaveBeenCalled();
@@ -302,6 +303,7 @@ describe('knowledge actions', () => {
 				expect.objectContaining({
 					limit: 20,
 					minSimilarity: 0.62,
+					evidenceChunkFingerprint: expect.any(String),
 				}),
 			);
 			expect(mockSearchKnowledgeNodes).not.toHaveBeenCalled();
@@ -344,7 +346,13 @@ describe('knowledge actions', () => {
 					messageMatchedEvidenceIds: ['eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'],
 					messageMatchedAt: evidenceDate,
 					messageRecallReasons: ['evidence_message_match', 'memory_semantic'],
+					evidenceChunkRecallScore: 0.88,
+					evidenceChunkHitCount: 1,
+					evidenceChunkMatchedChunkIds: ['99999999-9999-4999-8999-999999999999'],
+					evidenceChunkMatchedAt: evidenceDate,
+					evidenceChunkRecallReasons: ['evidence_chunk_semantic'],
 					evidenceCount: 2,
+					evidenceChunkCount: 1,
 					aggregateEvidenceCount: 4,
 					latestEvidenceAt: evidenceDate,
 					topConfidence: 0.93,
@@ -387,6 +395,23 @@ describe('knowledge actions', () => {
 							createdAt: evidenceDate,
 						},
 					],
+					evidenceChunks: [
+						{
+							id: '99999999-9999-4999-8999-999999999999',
+							knowledgeEvidenceId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+							contactId: CONTACT_ID_1,
+							messageId: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+							chunkKind: 'evidence_window',
+							maskedText: 'Alice talked about [TOPIC] liquidity.',
+							similarity: 0.88,
+							embeddingFingerprint:
+								'openai:cloud:custom:text-embedding-3-small:512:kg-embedding-format-v1',
+							maskingPolicyVersion: 'mask-v1',
+							chunkingPolicyVersion: 'evidence-window-v1',
+							occurredAt: evidenceDate,
+							createdAt: evidenceDate,
+						},
+					],
 				},
 			]);
 			const originalFetch = globalThis.fetch;
@@ -414,6 +439,7 @@ describe('knowledge actions', () => {
 						limit: 10,
 						minSimilarity: 0.62,
 						messageRecallQueryText: 'DeFi',
+						evidenceChunkFingerprint: expect.any(String),
 					}),
 				);
 				expect(result?.data).toEqual({
@@ -424,10 +450,11 @@ describe('knowledge actions', () => {
 					answer: {
 						title: 'DeFi is the strongest local match for "DeFi".',
 						summary:
-							'1 topic matched with 1 connected contact and 2 source evidence rows. Top match confidence is 91%.',
+							'1 topic matched with 1 connected contact, 2 source evidence rows, and 1 retrievable evidence chunk. Top match confidence is 91%.',
 						support: [
 							'1 contact connected',
 							'2 evidence rows stored',
+							'1 chunk indexed',
 							'1 explicit source in the visible preview',
 						],
 						suggestedAction:
@@ -446,7 +473,13 @@ describe('knowledge actions', () => {
 							messageMatchedEvidenceIds: ['eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'],
 							messageMatchedAt: evidenceDate,
 							messageRecallReasons: ['evidence_message_match', 'memory_semantic'],
+							evidenceChunkRecallScore: 0.88,
+							evidenceChunkHitCount: 1,
+							evidenceChunkMatchedChunkIds: ['99999999-9999-4999-8999-999999999999'],
+							evidenceChunkMatchedAt: evidenceDate,
+							evidenceChunkRecallReasons: ['evidence_chunk_semantic'],
 							evidenceCount: 2,
+							evidenceChunkCount: 1,
 							aggregateEvidenceCount: 4,
 							latestEvidenceAt: evidenceDate,
 							topConfidence: 0.93,
@@ -496,12 +529,29 @@ describe('knowledge actions', () => {
 									createdAt: evidenceDate,
 								},
 							],
+							evidenceChunks: [
+								{
+									id: '99999999-9999-4999-8999-999999999999',
+									knowledgeEvidenceId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+									contactId: CONTACT_ID_1,
+									messageId: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+									chunkKind: 'evidence_window',
+									maskedText: 'Alice talked about [TOPIC] liquidity.',
+									similarity: 0.88,
+									embeddingFingerprint:
+										'openai:cloud:custom:text-embedding-3-small:512:kg-embedding-format-v1',
+									maskingPolicyVersion: 'mask-v1',
+									chunkingPolicyVersion: 'evidence-window-v1',
+									occurredAt: evidenceDate,
+									createdAt: evidenceDate,
+								},
+							],
 						},
 					],
 				});
 				const serialized = JSON.stringify(result?.data);
 				expect(serialized).not.toContain(WORKSPACE_ID);
-				expect(serialized).not.toContain('embedding');
+				expect(serialized).not.toContain('"embedding":');
 				expect(serialized).not.toContain('secret-bidx');
 				expect(serialized).not.toContain('internal');
 			} finally {
@@ -590,7 +640,11 @@ describe('knowledge actions', () => {
 				expect(result?.data).toEqual({
 					status: 'complete',
 					nodesProcessed: 7,
+					candidateRelationships: 0,
+					coOccurrenceCandidates: 0,
 					coOccurrenceLinks: 2,
+					confirmedLinks: 5,
+					similarityCandidates: 0,
 					similarityLinks: 3,
 					totalLinks: 5,
 					skippedReason: null,
@@ -621,7 +675,11 @@ describe('knowledge actions', () => {
 				status: 'skipped',
 				error: 'AI analysis consent is not enabled',
 				nodesProcessed: 0,
+				candidateRelationships: 0,
+				coOccurrenceCandidates: 0,
 				coOccurrenceLinks: 0,
+				confirmedLinks: 0,
+				similarityCandidates: 0,
 				similarityLinks: 0,
 				totalLinks: 0,
 			});

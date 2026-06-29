@@ -49,12 +49,16 @@ Keep this mode out of shared screenshots, shell history, and committed files.
 The knowledge graph can avoid hosted embedding providers with local
 OpenAI-compatible endpoints. The recommended user-facing path is the Nomic
 preset, with Qwen available as a vector-only preset for proving the embedding
-path before larger local JSON extraction models are configured:
+path before larger local JSON extraction models are configured. Gemma is also
+available as a larger local LLM preset for comparing non-embedding AI behavior
+against Qwen while keeping Qwen embeddings unchanged:
 
 ```bash
 pnpm local-ai:setup:nomic
 # or
 pnpm local-ai:setup:qwen
+# or
+pnpm local-ai:setup:gemma
 ```
 
 Then run:
@@ -70,9 +74,9 @@ uses `/v1/chat/completions` with JSON-object responses when
 Anthropic Batch is bypassed in local mode; manual knowledge analysis runs
 synchronous local calls after the same consent and feature gates.
 
-See `docs/LOCAL_KG_MODELS.md` for the full Nomic and Qwen setup guide, UI
-behavior, hardware expectations, validation steps, model-switch fingerprints,
-re-embedding guidance, and troubleshooting.
+See `docs/LOCAL_KG_MODELS.md` for the full Nomic, Qwen, and Gemma setup guide,
+UI behavior, hardware expectations, validation steps, model-switch fingerprints,
+Qwen-vs-Gemma benchmark flow, re-embedding guidance, and troubleshooting.
 
 ## ChatGPT OAuth
 

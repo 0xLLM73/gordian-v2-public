@@ -1,14 +1,21 @@
 import type { SealedEnvelope } from '@repo/crypto';
 import { maskEntities } from '@repo/crypto';
+import type {
+	CreateKnowledgeEvidenceAttachedChunkInput,
+	KnowledgeContactEvidenceInput,
+} from '@repo/db';
 import {
+	createKnowledgeEvidence,
 	createKnowledgeNode,
 	findNodeByAlias,
 	findNodeByNameAnyType,
 	getExtractionLog,
 	incrementNodeMentionCount,
 	linkContactToKnowledge,
+	promoteKnowledgeRelationshipCandidate,
 	searchKnowledgeNodes,
 	upsertExtractionLog,
+	upsertKnowledgeRelationshipCandidate,
 } from '@repo/db';
 import {
 	getKnowledgeEmbeddingFingerprint,
@@ -16,7 +23,7 @@ import {
 	knowledgeEmbeddingFingerprintKey,
 } from '@repo/shared';
 import { generateEmbeddingCached, generateEmbeddingsCached } from './embeddings';
-import { inferKnowledgeEntitiesJson } from './knowledge-llm';
+import { type ExtractedKnowledgeRelation, inferKnowledgeEntitiesJson } from './knowledge-llm';
 import { prefilterEntities } from './prefilter';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -38,6 +45,10 @@ function currentEmbeddingMetadata(): Record<string, unknown> {
 		embeddingFingerprint,
 		embeddingFingerprintKey: knowledgeEmbeddingFingerprintKey(embeddingFingerprint),
 	};
+}
+
+function currentEmbeddingFingerprintKey(): string {
+	return knowledgeEmbeddingFingerprintKey(getKnowledgeEmbeddingFingerprint(process.env));
 }
 
 function warnIfEmbeddingFingerprintChanged(
@@ -136,7 +147,7 @@ export function buildKnowledgeEvidenceFromSelection(
 	selection: EvidenceSourceSelection,
 	source: string,
 	envelope: SealedEnvelope,
-) {
+): KnowledgeContactEvidenceInput {
 	const sourceBacked = evidenceSelectionHasDirectSource(selection);
 	const evidenceMessage = sourceBacked ? selection.message : undefined;
 	return {
@@ -152,6 +163,74 @@ export function buildKnowledgeEvidenceFromSelection(
 		},
 		envelope,
 	};
+}
+
+function buildKnowledgeEvidenceChunkFromMaskedText(params: {
+	maskedText: string;
+	embedding: number[];
+	chunkKind?: CreateKnowledgeEvidenceAttachedChunkInput['chunkKind'];
+	occurredAt?: Date | null;
+	sourceStartOffset?: number | null;
+	sourceEndOffset?: number | null;
+	metadata?: Record<string, unknown> | null;
+}): CreateKnowledgeEvidenceAttachedChunkInput | null {
+	const maskedText = params.maskedText.trim();
+	if (!maskedText || params.embedding.length === 0) return null;
+	return {
+		chunkKind: params.chunkKind ?? 'evidence_window',
+		maskedText,
+		sourceStartOffset: params.sourceStartOffset ?? null,
+		sourceEndOffset: params.sourceEndOffset ?? null,
+		embedding: params.embedding,
+		embeddingFingerprint: currentEmbeddingFingerprintKey(),
+		maskingPolicyVersion: 'mask-v1',
+		chunkingPolicyVersion: 'evidence-window-v1',
+		metadata: params.metadata ?? null,
+		occurredAt: params.occurredAt ?? null,
+	};
+}
+
+async function buildKnowledgeEvidenceChunkFromText(params: {
+	text: string | undefined;
+	workspaceSalt: Buffer;
+	chunkKind?: CreateKnowledgeEvidenceAttachedChunkInput['chunkKind'];
+	occurredAt?: Date | null;
+	sourceStartOffset?: number | null;
+	sourceEndOffset?: number | null;
+	metadata?: Record<string, unknown> | null;
+}): Promise<CreateKnowledgeEvidenceAttachedChunkInput | null> {
+	const text = params.text?.slice(0, 1000).trim();
+	if (!text) return null;
+	const detected = prefilterEntities(text);
+	const { maskedText } = maskEntities(text, params.workspaceSalt, detected);
+	const embedding = await generateEmbeddingCached(maskedText, { purpose: 'document' });
+	return buildKnowledgeEvidenceChunkFromMaskedText({
+		maskedText,
+		embedding,
+		chunkKind: params.chunkKind,
+		occurredAt: params.occurredAt,
+		sourceStartOffset: params.sourceStartOffset,
+		sourceEndOffset: params.sourceEndOffset,
+		metadata: params.metadata,
+	});
+}
+
+async function buildKnowledgeEvidenceChunkFromSelection(
+	selection: EvidenceSourceSelection,
+	workspaceSalt: Buffer,
+	metadata: Record<string, unknown>,
+): Promise<CreateKnowledgeEvidenceAttachedChunkInput | null> {
+	if (!evidenceSelectionHasDirectSource(selection)) return null;
+	const sourceText = selection.message?.text;
+	return buildKnowledgeEvidenceChunkFromText({
+		text: sourceText,
+		workspaceSalt,
+		chunkKind: 'evidence_window',
+		occurredAt: selection.message?.occurredAt,
+		sourceStartOffset: 0,
+		sourceEndOffset: sourceText ? Math.min(sourceText.length, 1000) : null,
+		metadata,
+	});
 }
 
 function selectEvidenceForExistingNode(
@@ -242,6 +321,228 @@ export function selectEvidenceMessage(
 	}
 
 	return { message: messages[messages.length - 1], method: 'fallback_latest' };
+}
+
+interface RelationSourceMessage {
+	promptId: string;
+	message: NormalizedKnowledgeMessage;
+}
+
+type RelationNodeRefMap = Map<string, string>;
+
+function normalizedRelationNodeKey(value: string | undefined): string | undefined {
+	if (!value) return undefined;
+	const normalized = normalizeForEvidenceMatch(value);
+	return normalized.length > 0 ? normalized : undefined;
+}
+
+function addRelationNodeRef(
+	nodeRefs: RelationNodeRefMap,
+	nodeId: string,
+	values: Array<string | undefined>,
+): void {
+	for (const value of values) {
+		const key = normalizedRelationNodeKey(value);
+		if (!key || nodeRefs.has(key)) continue;
+		nodeRefs.set(key, nodeId);
+	}
+}
+
+function isUuid(value: string | undefined): value is string {
+	return (
+		typeof value === 'string' &&
+		/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+	);
+}
+
+function relationQuoteVerified(
+	relation: ExtractedKnowledgeRelation,
+	source: RelationSourceMessage | undefined,
+): boolean {
+	if (!source || !relation.quote) return false;
+	const quote = relation.quote.trim();
+	if (!quote) return false;
+
+	if (
+		typeof relation.charStart === 'number' &&
+		typeof relation.charEnd === 'number' &&
+		relation.charStart >= 0 &&
+		relation.charEnd > relation.charStart
+	) {
+		if (source.message.text.slice(relation.charStart, relation.charEnd) === quote) {
+			return true;
+		}
+	}
+
+	return source.message.text.includes(quote);
+}
+
+function findRelationSourceMessage(
+	relation: ExtractedKnowledgeRelation,
+	sourceMessages: Map<string, RelationSourceMessage>,
+): RelationSourceMessage | undefined {
+	if (relation.sourceMessageId) {
+		const source = sourceMessages.get(relation.sourceMessageId);
+		if (source) return source;
+	}
+	if (!relation.quote) return undefined;
+	return Array.from(sourceMessages.values()).find((source) =>
+		source.message.text.includes(relation.quote ?? ''),
+	);
+}
+
+async function resolveRelationNodeId(params: {
+	nodeRefs: RelationNodeRefMap;
+	workspaceId: string;
+	envelope: SealedEnvelope;
+	names: Array<string | undefined>;
+}): Promise<string | undefined> {
+	for (const name of params.names) {
+		const key = normalizedRelationNodeKey(name);
+		if (!key) continue;
+		const mapped = params.nodeRefs.get(key);
+		if (mapped) return mapped;
+	}
+
+	for (const name of params.names) {
+		const trimmed = name?.trim();
+		if (!trimmed) continue;
+		const normalizedName = trimmed.toLowerCase();
+		const existing =
+			(await findNodeByNameAnyType(params.workspaceId, normalizedName, params.envelope)) ??
+			(await findNodeByAlias(params.workspaceId, normalizedName, params.envelope));
+		if (!existing) continue;
+		addRelationNodeRef(params.nodeRefs, existing.id, [
+			existing.name,
+			existing.displayName ?? undefined,
+			...(existing.aliases ?? []),
+			trimmed,
+		]);
+		return existing.id;
+	}
+
+	return undefined;
+}
+
+async function storeExtractedRelationshipCandidates(params: {
+	workspaceId: string;
+	workspaceSalt: Buffer;
+	envelope: SealedEnvelope;
+	inferenceSource: string;
+	nodeRefs: RelationNodeRefMap;
+	relations: ExtractedKnowledgeRelation[];
+	sourceMessages: Map<string, RelationSourceMessage>;
+}): Promise<{ candidatesStored: number; linksPromoted: number }> {
+	let candidatesStored = 0;
+	let linksPromoted = 0;
+
+	for (const relation of params.relations) {
+		try {
+			const headNodeId = await resolveRelationNodeId({
+				nodeRefs: params.nodeRefs,
+				workspaceId: params.workspaceId,
+				envelope: params.envelope,
+				names: [relation.headName, relation.headMention],
+			});
+			const tailNodeId = await resolveRelationNodeId({
+				nodeRefs: params.nodeRefs,
+				workspaceId: params.workspaceId,
+				envelope: params.envelope,
+				names: [relation.tailName, relation.tailMention],
+			});
+			if (!headNodeId || !tailNodeId || headNodeId === tailNodeId) continue;
+
+			const sourceNodeId = relation.direction === 'tail_to_head' ? tailNodeId : headNodeId;
+			const targetNodeId = relation.direction === 'tail_to_head' ? headNodeId : tailNodeId;
+			const sourceMessage = findRelationSourceMessage(relation, params.sourceMessages);
+			const quoteVerified = relationQuoteVerified(relation, sourceMessage);
+			const messageId = isUuid(sourceMessage?.message.id) ? sourceMessage.message.id : null;
+			let sourceEvidenceId: string | null = null;
+
+			if (quoteVerified && messageId) {
+				const relationshipMetadata = {
+					source: 'llm_relationship_extraction',
+					inferenceSource: params.inferenceSource,
+					direction: relation.direction,
+					quoteVerified,
+					isExplicit: relation.isExplicit,
+					negated: relation.negated,
+					temporalStatus: relation.temporalStatus,
+					confirmedEligible: relation.confirmedEligible,
+					charStart: relation.charStart,
+					charEnd: relation.charEnd,
+				};
+				const evidenceChunk = await buildKnowledgeEvidenceChunkFromText({
+					text: relation.quote,
+					workspaceSalt: params.workspaceSalt,
+					chunkKind: 'quote_window',
+					occurredAt: sourceMessage?.message.occurredAt,
+					sourceStartOffset: relation.charStart ?? null,
+					sourceEndOffset: relation.charEnd ?? null,
+					metadata: relationshipMetadata,
+				});
+				const evidence = await createKnowledgeEvidence(
+					params.workspaceId,
+					{
+						knowledgeNodeId: sourceNodeId,
+						relatedKnowledgeNodeId: targetNodeId,
+						messageId,
+						relationType: relation.relationType,
+						evidenceKind: 'llm_extracted',
+						confidence: relation.confidence ?? null,
+						snippet: relation.quote,
+						occurredAt: sourceMessage?.message.occurredAt,
+						metadata: relationshipMetadata,
+						evidenceChunk,
+					},
+					params.envelope,
+				);
+				sourceEvidenceId = evidence.id;
+			}
+
+			const candidate = await upsertKnowledgeRelationshipCandidate(params.workspaceId, {
+				sourceNodeId,
+				targetNodeId,
+				linkType: relation.relationType,
+				evidenceKind: 'llm_extracted',
+				confidence: relation.confidence ?? null,
+				sourceEvidenceId,
+				messageId,
+				metadata: {
+					source: 'llm_relationship_extraction',
+					inferenceSource: params.inferenceSource,
+					direction: relation.direction,
+					quoteVerified,
+					isExplicit: relation.isExplicit,
+					negated: relation.negated,
+					temporalStatus: relation.temporalStatus,
+					confirmedEligible: relation.confirmedEligible,
+					charStart: relation.charStart,
+					charEnd: relation.charEnd,
+					sourcePromptMessageId: sourceMessage?.promptId,
+					hasQuote: !!relation.quote,
+					quoteLength: relation.quote?.length ?? 0,
+					hasRationale: !!relation.rationale,
+				},
+			});
+			candidatesStored++;
+
+			if (candidate.promotionStatus === 'eligible') {
+				const promotion = await promoteKnowledgeRelationshipCandidate(
+					params.workspaceId,
+					candidate.id,
+				);
+				if (promotion.promoted) linksPromoted++;
+			}
+		} catch (err) {
+			console.error(
+				'[knowledge-extraction] Failed to process relationship candidate:',
+				(err as Error).message,
+			);
+		}
+	}
+
+	return { candidatesStored, linksPromoted };
 }
 
 // ─── Keyword pre-filter ───────────────────────────────────────────────────────
@@ -374,6 +675,20 @@ async function embeddingFirstMatch(
 						occurredAt: candidate.message.occurredAt,
 						evidenceKind: 'embedding_match',
 						confidence: sim,
+						evidenceChunk: buildKnowledgeEvidenceChunkFromMaskedText({
+							maskedText: candidate.maskedText,
+							embedding: embeddingResult.embedding,
+							chunkKind: 'message_window',
+							occurredAt: candidate.message.occurredAt,
+							sourceStartOffset: 0,
+							sourceEndOffset: candidate.chunk.length,
+							metadata: {
+								source: 'embedding_first_match',
+								sourceMessageSelection: {
+									method: 'per_message_embedding_candidate',
+								},
+							},
+						}),
 						metadata: {
 							source: 'embedding_first_match',
 							similarity: sim,
@@ -418,7 +733,11 @@ Do not include personal names, phone numbers, Telegram usernames, or any contact
 /** JSON extraction prompt — instructs the selected KG model to output structured JSON. */
 const GEMINI_EXTRACTION_PROMPT = `${KNOWLEDGE_SYSTEM_PROMPT}
 
-Respond with ONLY a JSON object containing an "entities" array. Each entity must have:
+Respond with ONLY a JSON object containing:
+- "entities": contact-to-knowledge entities
+- "relations": optional node-to-node relationships directly stated by the messages
+
+Each entity must have:
 - type: one of "topic", "project", "organization", "technology", "sector", "concept"
 - name: short canonical lowercase name for deduplication (e.g., "solana", "defi")
 - displayName: original casing for display
@@ -427,7 +746,33 @@ Respond with ONLY a JSON object containing an "entities" array. Each entity must
 - confidence: number 0.0-1.0 based on evidence strength
 - sourceMention: optional exact short phrase from the source message that supports the entity
 
-Example: {"entities": [{"type": "technology", "name": "solana", "displayName": "Solana", "description": "Layer 1 blockchain", "relationshipType": "works_on", "confidence": 0.9}]}`;
+Each relation must have:
+- head_mention and tail_mention: exact entity mentions from the same source message
+- relation_type: one of "AFFILIATED_WITH", "WORKS_ON", "OWNS_OR_RESPONSIBLE_FOR", "INTERESTED_IN", "REQUESTED", "USES", "PART_OF", "DEPENDS_ON", "ALTERNATIVE_TO", "RELATED_TO"
+- direction: "head_to_tail", "tail_to_head", or "undirected"
+- source_message_id: the exact message id shown in the input
+- quote: exact substring from that source message supporting the relation
+- char_start and char_end: offsets for quote in the source message when known
+- is_explicit, negated, confirmed_eligible: booleans
+- temporal_status: "current", "past", "future", or "unknown"
+- confidence: number 0.0-1.0
+
+Direction rules:
+- For AFFILIATED_WITH, WORKS_ON, OWNS_OR_RESPONSIBLE_FOR, INTERESTED_IN, REQUESTED, USES, PART_OF, DEPENDS_ON, and ALTERNATIVE_TO, put the actor/source/dependent/member/requester/owner as head_mention and use direction="head_to_tail".
+- Use direction="undirected" only for RELATED_TO when the source text explicitly states a symmetric relationship.
+- Never reverse a directed relation to tail_to_head unless the tail mention is grammatically the actor/source.
+- Phrases like "Alice at Acme", "Jordan with Orbit Labs", or "not working with Acme anymore" indicate AFFILIATED_WITH, not WORKS_ON, unless the text explicitly says working on a project.
+
+confirmed_eligible may be true only when is_explicit=true, negated=false, temporal_status="current", the source marker is not unattributed, and the quote exactly supports the relation.
+Set confirmed_eligible=false for negated, inferred-only, stale/past-only, future/unknown, unattributed-person, or co-mention-only relationships.
+If a transcript line starts like "[source:m1 unattributed]", use source_message_id="m1" but confirmed_eligible=false for every relation from that line.
+If the source explicitly states a negated relationship, return the relation with negated=true, temporal_status="past", and confirmed_eligible=false instead of omitting it.
+Do not create a relation from co-mentions alone. If the source does not explicitly state the relationship, omit it.
+Every relation object must include is_explicit, negated, temporal_status, confirmed_eligible, source_message_id, and quote.
+Use temporal_status="current" for live CRM facts even when the verb is past-tense reporting, such as "Cara requested the security review".
+For "We used to use HubSpot before moving to Attio", return two USES relations: past/not-confirmed for HubSpot and current/confirmed for Attio.
+
+Example: {"entities": [{"type": "technology", "name": "solana", "displayName": "Solana", "description": "Layer 1 blockchain", "relationshipType": "works_on", "confidence": 0.9}], "relations": [{"head_mention": "Solana", "relation_type": "DEPENDS_ON", "tail_mention": "Jito", "direction": "head_to_tail", "source_message_id": "message-id", "quote": "Solana depends on Jito for this rollout", "is_explicit": true, "negated": false, "temporal_status": "current", "confirmed_eligible": true, "confidence": 0.86}]}`;
 
 /**
  * LLM-based entity extraction using the configured KG provider.
@@ -440,9 +785,13 @@ async function llmExtractEntities(
 	workspaceSalt: Buffer,
 	envelope: SealedEnvelope,
 ): Promise<number> {
-	const maskedMessages = messages.slice(-50).map((m) => {
+	const sourceMessages = new Map<string, RelationSourceMessage>();
+	const maskedMessages = messages.slice(-50).map((m, index) => {
+		const sourceId = m.id ?? `input-${index + 1}`;
+		sourceMessages.set(sourceId, { promptId: sourceId, message: m });
 		const detected = prefilterEntities(m.text);
-		return maskEntities(m.text, workspaceSalt, detected).maskedText;
+		const maskedText = maskEntities(m.text, workspaceSalt, detected).maskedText;
+		return `[${sourceId}] ${maskedText}`;
 	});
 	const userPrompt = `Extract knowledge entities from these messages:\n\n${maskedMessages.join('\n')}`;
 
@@ -452,6 +801,7 @@ async function llmExtractEntities(
 	});
 
 	const entities = inference.entities;
+	const nodeRefs: RelationNodeRefMap = new Map();
 
 	let linked = 0;
 
@@ -465,6 +815,16 @@ async function llmExtractEntities(
 				inference.source,
 				envelope,
 			);
+			evidence.evidenceChunk = await buildKnowledgeEvidenceChunkFromSelection(
+				evidenceSelection,
+				workspaceSalt,
+				{
+					source: inference.source,
+					entityType: entity.type,
+					entityName: entity.name,
+					sourceMessageSelection: evidenceSourceSelectionMetadata(evidenceSelection),
+				},
+			);
 
 			// Cross-type dedup: check if this name exists under ANY type
 			const existingAnyType = await findNodeByNameAnyType(workspaceId, normalizedName, envelope);
@@ -472,6 +832,16 @@ async function llmExtractEntities(
 			if (existingAnyType) {
 				// Reuse the existing node regardless of type mismatch
 				await incrementNodeMentionCount(workspaceId, existingAnyType.id);
+				addRelationNodeRef(nodeRefs, existingAnyType.id, [
+					entity.name,
+					entity.displayName,
+					entity.sourceMention,
+					entity.mentionSpan,
+					entity.evidenceQuote,
+					existingAnyType.name,
+					existingAnyType.displayName ?? undefined,
+					...(existingAnyType.aliases ?? []),
+				]);
 				await linkContactToKnowledge(
 					workspaceId,
 					existingAnyType.id,
@@ -491,6 +861,16 @@ async function llmExtractEntities(
 			const aliasMatch = await findNodeByAlias(workspaceId, normalizedName, envelope);
 			if (aliasMatch) {
 				await incrementNodeMentionCount(workspaceId, aliasMatch.id);
+				addRelationNodeRef(nodeRefs, aliasMatch.id, [
+					entity.name,
+					entity.displayName,
+					entity.sourceMention,
+					entity.mentionSpan,
+					entity.evidenceQuote,
+					aliasMatch.name,
+					aliasMatch.displayName ?? undefined,
+					...(aliasMatch.aliases ?? []),
+				]);
 				await linkContactToKnowledge(
 					workspaceId,
 					aliasMatch.id,
@@ -548,6 +928,16 @@ async function llmExtractEntities(
 						inference.source,
 						envelope,
 					);
+					evidence.evidenceChunk = await buildKnowledgeEvidenceChunkFromSelection(
+						matchedNodeEvidenceSelection,
+						workspaceSalt,
+						{
+							source: inference.source,
+							entityType: closest.type,
+							entityName: closest.name,
+							sourceMessageSelection: evidenceSourceSelectionMetadata(matchedNodeEvidenceSelection),
+						},
+					);
 					await incrementNodeMentionCount(workspaceId, nodeId);
 					console.log(
 						`[knowledge-extraction] Reusing node "${closest.name}" (similarity=${sim.toFixed(3)})`,
@@ -583,6 +973,13 @@ async function llmExtractEntities(
 				nodeId = node.id;
 			}
 
+			addRelationNodeRef(nodeRefs, nodeId, [
+				entity.name,
+				entity.displayName,
+				entity.sourceMention,
+				entity.mentionSpan,
+				entity.evidenceQuote,
+			]);
 			await linkContactToKnowledge(
 				workspaceId,
 				nodeId,
@@ -596,6 +993,23 @@ async function llmExtractEntities(
 			console.error(
 				`[knowledge-extraction] Failed to process entity "${entity.name}":`,
 				(err as Error).message,
+			);
+		}
+	}
+
+	if (inference.relations.length > 0) {
+		const relationships = await storeExtractedRelationshipCandidates({
+			workspaceId,
+			workspaceSalt,
+			envelope,
+			inferenceSource: inference.source,
+			nodeRefs,
+			relations: inference.relations,
+			sourceMessages,
+		});
+		if (relationships.candidatesStored > 0 || relationships.linksPromoted > 0) {
+			console.log(
+				`[knowledge-extraction] LLM relationships: ${relationships.candidatesStored} candidates, ${relationships.linksPromoted} promoted`,
 			);
 		}
 	}

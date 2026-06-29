@@ -7,9 +7,9 @@ loadRootEnv();
 const EXPECTED_DIMENSIONS = 512;
 const DEFAULT_LOCAL_BASE_URL = 'http://localhost:11434/v1';
 const DEFAULT_NOMIC_EMBEDDING_MODEL = 'nomic-embed-text';
-const DEFAULT_LOCAL_CHAT_MODEL = 'llama3.1:8b';
+const DEFAULT_LOCAL_CHAT_MODEL = 'gemma4:12b-it-q4_K_M';
 const DEFAULT_NATIVE_CHAT_BASE_URL = 'http://localhost:11434';
-const DEFAULT_QWEN_CHAT_MODEL = 'qwen3.5:4b';
+const DEFAULT_LOCAL_ROLE_CHAT_MODEL = 'gemma4:12b-it-q4_K_M';
 
 function envValue(key) {
 	const value = process.env[key]?.trim();
@@ -146,7 +146,7 @@ function collectLocalChatRoles() {
 	const commitmentProvider = envValue('COMMITMENT_LLM_PROVIDER') || 'cloud';
 	const commitmentApi = envValue('COMMITMENT_LLM_API') || 'ollama';
 	const commitmentBaseUrl = envValue('COMMITMENT_LLM_BASE_URL') || DEFAULT_NATIVE_CHAT_BASE_URL;
-	const commitmentModel = envValue('COMMITMENT_LLM_MODEL') || DEFAULT_QWEN_CHAT_MODEL;
+	const commitmentModel = envValue('COMMITMENT_LLM_MODEL') || DEFAULT_LOCAL_ROLE_CHAT_MODEL;
 	const commitmentApiKey = envValue('COMMITMENT_LLM_API_KEY');
 
 	const chatProvider = envValue('CHAT_LLM_PROVIDER') || commitmentProvider;
