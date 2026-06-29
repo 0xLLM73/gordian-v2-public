@@ -11,6 +11,66 @@ import { isTelegramRelinkAllowed } from './telegram-relink';
 import { track } from './track';
 import { getUserWorkspaceId } from './workspace';
 
+export type TelegramCodeDeliveryMethod =
+	| 'app'
+	| 'sms'
+	| 'call'
+	| 'flash_call'
+	| 'missed_call'
+	| 'email'
+	| 'fragment_sms'
+	| 'firebase_sms'
+	| 'email_setup'
+	| 'unknown';
+
+export interface TelegramCodeDelivery {
+	method: TelegramCodeDeliveryMethod;
+	codeLength: number;
+	expiresInSeconds: number;
+	nextMethod?: TelegramCodeDeliveryMethod;
+}
+
+const TELEGRAM_CODE_DELIVERY_METHODS = new Set<TelegramCodeDeliveryMethod>([
+	'app',
+	'sms',
+	'call',
+	'flash_call',
+	'missed_call',
+	'email',
+	'fragment_sms',
+	'firebase_sms',
+	'email_setup',
+	'unknown',
+]);
+
+function normalizeCodeLength(value: unknown): number {
+	const numeric = Number(value);
+	return Number.isInteger(numeric) && numeric >= 1 && numeric <= 8 ? numeric : 5;
+}
+
+function normalizeDeliveryMethod(value: unknown): TelegramCodeDeliveryMethod {
+	return typeof value === 'string' &&
+		TELEGRAM_CODE_DELIVERY_METHODS.has(value as TelegramCodeDeliveryMethod)
+		? (value as TelegramCodeDeliveryMethod)
+		: 'unknown';
+}
+
+function normalizeCodeDelivery(raw: unknown): TelegramCodeDelivery {
+	const delivery = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+	const expiresInSeconds = Number(delivery.expiresInSeconds);
+	const nextMethod = normalizeDeliveryMethod(delivery.nextMethod);
+
+	return {
+		method: normalizeDeliveryMethod(delivery.method),
+		codeLength: normalizeCodeLength(delivery.codeLength),
+		expiresInSeconds:
+			Number.isFinite(expiresInSeconds) && expiresInSeconds > 0
+				? Math.min(Math.trunc(expiresInSeconds), 300)
+				: 300,
+		...(nextMethod !== 'unknown' ? { nextMethod } : {}),
+	};
+}
+
 /**
  * Auto-create a workspace for users who don't have one yet.
  * Fires on any Telegram connect — invite or otherwise.
@@ -240,8 +300,10 @@ export const telegramAuthPlugin = {
 					});
 				}
 
+				const body = (await response.json().catch(() => ({}))) as { delivery?: unknown };
+
 				// ASA-003: phoneCodeHash is stored server-side in Redis — not returned to client
-				return ctx.json({ success: true });
+				return ctx.json({ success: true, delivery: normalizeCodeDelivery(body.delivery) });
 			},
 		),
 
@@ -329,6 +391,24 @@ export const telegramAuthPlugin = {
 						);
 						if (workerErr.code === 'SESSION_PASSWORD_NEEDED') {
 							return ctx.json({ requires2FA: true }, { status: 202 });
+						}
+						if (workerErr.code === 'AUTH_SESSION_EXPIRED') {
+							return ctx.json(
+								{ error: 'Verification code expired. Send a new code.', authExpired: true },
+								{ status: 400 },
+							);
+						}
+						if (workerErr.code === 'PHONE_CODE_INVALID') {
+							return ctx.json(
+								{
+									error: 'Invalid verification code. Check the code and try again.',
+									codeInvalid: true,
+								},
+								{ status: 400 },
+							);
+						}
+						if (workerErr.error === 'Invalid 2FA password') {
+							return ctx.json({ error: 'Invalid 2FA password' }, { status: 400 });
 						}
 					} catch {
 						console.error(

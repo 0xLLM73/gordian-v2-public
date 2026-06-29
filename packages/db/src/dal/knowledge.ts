@@ -1,16 +1,30 @@
 import type { SealedEnvelope } from '@repo/crypto';
 import { withKeys } from '@repo/crypto';
-import { and, eq, sql } from '@repo/db';
+import { and, eq, or, sql } from '@repo/db';
 import { desc, inArray, isNotNull, isNull } from 'drizzle-orm';
 import { db } from '../client';
 import { contacts } from '../schema/contacts';
 import {
 	knowledgeContacts,
 	knowledgeEvidence,
+	knowledgeEvidenceChunks,
 	type knowledgeExtractionLog,
 	knowledgeLinks,
 	knowledgeNodes,
+	knowledgeRelationshipCandidates,
 } from '../schema/knowledge';
+import {
+	assessKnowledgeRelationshipCandidateForPromotion,
+	type KnowledgeLinkType,
+	type KnowledgeRelationshipPromotionStatus,
+} from './knowledge-relationship-promotion';
+
+export {
+	assessKnowledgeRelationshipCandidateForPromotion,
+	type KnowledgeLinkType,
+	type KnowledgeRelationshipPromotionAssessment,
+	type KnowledgeRelationshipPromotionStatus,
+} from './knowledge-relationship-promotion';
 
 export type KnowledgeNode = typeof knowledgeNodes.$inferSelect;
 export type KnowledgeReviewStatus = 'unreviewed' | 'reviewed' | 'needs_review';
@@ -26,13 +40,18 @@ export type KnowledgeSearchResult = KnowledgeNodePublic & {
 };
 export type KnowledgeContact = typeof knowledgeContacts.$inferSelect;
 export type KnowledgeEvidence = typeof knowledgeEvidence.$inferSelect;
+export type KnowledgeEvidenceChunk = typeof knowledgeEvidenceChunks.$inferSelect;
 export type KnowledgeExtractionLogEntry = typeof knowledgeExtractionLog.$inferSelect;
+export type KnowledgeRelationshipCandidate = typeof knowledgeRelationshipCandidates.$inferSelect;
 
 const evidenceRecencyOrder = sql`coalesce(${knowledgeEvidence.occurredAt}, ${knowledgeEvidence.createdAt}) desc`;
+const evidenceChunkRecencyOrder = sql`coalesce(${knowledgeEvidenceChunks.occurredAt}, ${knowledgeEvidenceChunks.createdAt}) desc`;
 export const DEFAULT_KNOWLEDGE_SEARCH_MIN_SIMILARITY = 0.62;
 export const DEFAULT_KNOWLEDGE_MESSAGE_RECALL_LIMIT = 30;
 export const DEFAULT_KNOWLEDGE_MESSAGE_RECALL_NODE_LIMIT = 20;
 export const DEFAULT_KNOWLEDGE_MESSAGE_RECALL_MIN_SCORE = 0.62;
+export const DEFAULT_KNOWLEDGE_EVIDENCE_CHUNK_LIMIT = 30;
+export const DEFAULT_KNOWLEDGE_EVIDENCE_CHUNK_MIN_SIMILARITY = 0.62;
 
 export interface CreateKnowledgeNodeInput {
 	type:
@@ -81,7 +100,38 @@ export interface CreateKnowledgeEvidenceInput {
 	snippet?: string | null;
 	occurredAt?: Date | null;
 	metadata?: Record<string, unknown> | null;
+	evidenceChunk?: CreateKnowledgeEvidenceAttachedChunkInput | null;
 }
+
+export type KnowledgeEvidenceChunkKind =
+	| 'evidence_window'
+	| 'quote_window'
+	| 'message_window'
+	| 'manual';
+
+export interface CreateKnowledgeEvidenceChunkInput {
+	knowledgeEvidenceId: string;
+	knowledgeNodeId: string;
+	relatedKnowledgeNodeId?: string | null;
+	contactId?: string | null;
+	messageId?: string | null;
+	chunkKind?: KnowledgeEvidenceChunkKind;
+	maskedText: string;
+	sourceStartOffset?: number | null;
+	sourceEndOffset?: number | null;
+	participants?: string[] | null;
+	embedding?: number[] | null;
+	embeddingFingerprint: string;
+	maskingPolicyVersion?: string;
+	chunkingPolicyVersion?: string;
+	metadata?: Record<string, unknown> | null;
+	occurredAt?: Date | null;
+}
+
+export type CreateKnowledgeEvidenceAttachedChunkInput = Omit<
+	CreateKnowledgeEvidenceChunkInput,
+	'knowledgeEvidenceId' | 'knowledgeNodeId' | 'relatedKnowledgeNodeId' | 'contactId' | 'messageId'
+>;
 
 export interface KnowledgeContactEvidenceInput {
 	messageId?: string | null;
@@ -90,6 +140,7 @@ export interface KnowledgeContactEvidenceInput {
 	evidenceKind?: KnowledgeEvidenceKind;
 	confidence?: number | null;
 	metadata?: Record<string, unknown> | null;
+	evidenceChunk?: CreateKnowledgeEvidenceAttachedChunkInput | null;
 	envelope?: SealedEnvelope;
 }
 
@@ -100,7 +151,38 @@ export interface KnowledgeLinkEvidenceInput {
 	evidenceKind?: KnowledgeEvidenceKind;
 	confidence?: number | null;
 	metadata?: Record<string, unknown> | null;
+	evidenceChunk?: CreateKnowledgeEvidenceAttachedChunkInput | null;
 	envelope?: SealedEnvelope;
+}
+
+export interface CreateKnowledgeRelationshipCandidateInput {
+	sourceNodeId: string;
+	targetNodeId: string;
+	linkType: KnowledgeLinkType;
+	evidenceKind: KnowledgeEvidenceKind;
+	confidence?: number | null;
+	sourceEvidenceId?: string | null;
+	messageId?: string | null;
+	metadata?: Record<string, unknown> | null;
+	promotionStatus?: KnowledgeRelationshipPromotionStatus;
+	promotionReason?: string | null;
+}
+
+export interface KnowledgeRelationshipCandidateStats {
+	total: number;
+	reviewOnly: number;
+	eligible: number;
+	promoted: number;
+	rejected: number;
+	heuristic: number;
+	direct: number;
+	latestSeenAt: Date | null;
+}
+
+export interface KnowledgeRelationshipCandidateWithNode {
+	candidate: KnowledgeRelationshipCandidate;
+	direction: 'outbound' | 'inbound';
+	node: KnowledgeNodePublic;
 }
 
 export interface KnowledgeSearchEvidenceItem {
@@ -111,6 +193,21 @@ export interface KnowledgeSearchEvidenceItem {
 	evidenceKind: KnowledgeEvidenceKind;
 	confidence: number | null;
 	snippet: string | null;
+	occurredAt: Date | null;
+	createdAt: Date;
+}
+
+export interface KnowledgeSearchEvidenceChunkItem {
+	id: string;
+	knowledgeEvidenceId: string;
+	contactId: string | null;
+	messageId: string | null;
+	chunkKind: string;
+	maskedText: string;
+	similarity: number | null;
+	embeddingFingerprint: string;
+	maskingPolicyVersion: string;
+	chunkingPolicyVersion: string;
 	occurredAt: Date | null;
 	createdAt: Date;
 }
@@ -138,7 +235,13 @@ export interface KnowledgeSearchResultWithEvidence {
 	messageMatchedEvidenceIds: string[];
 	messageMatchedAt: Date | null;
 	messageRecallReasons: string[];
+	evidenceChunkRecallScore: number | null;
+	evidenceChunkHitCount: number;
+	evidenceChunkMatchedChunkIds: string[];
+	evidenceChunkMatchedAt: Date | null;
+	evidenceChunkRecallReasons: string[];
 	evidenceCount: number;
+	evidenceChunkCount: number;
 	aggregateEvidenceCount: number;
 	latestEvidenceAt: Date | null;
 	topConfidence: number | null;
@@ -146,6 +249,7 @@ export interface KnowledgeSearchResultWithEvidence {
 	connectedContactsWithEvidence: number;
 	contacts: KnowledgeSearchContactItem[];
 	evidence: KnowledgeSearchEvidenceItem[];
+	evidenceChunks: KnowledgeSearchEvidenceChunkItem[];
 }
 
 export interface SearchKnowledgeNodesWithEvidenceOptions {
@@ -156,6 +260,9 @@ export interface SearchKnowledgeNodesWithEvidenceOptions {
 	messageRecallLimit?: number;
 	messageRecallNodeLimit?: number;
 	minMessageRecallScore?: number;
+	evidenceChunkLimit?: number;
+	minEvidenceChunkSimilarity?: number;
+	evidenceChunkFingerprint?: string;
 	evidenceLimitPerNode?: number;
 	contactLimitPerNode?: number;
 }
@@ -576,6 +683,11 @@ interface KnowledgeSearchCandidate {
 	messageMatchedEvidenceIds: Set<string>;
 	messageMatchedAt: Date | null;
 	messageRecallReasons: Set<string>;
+	evidenceChunkRecallScore: number | null;
+	evidenceChunkHitCount: number;
+	evidenceChunkMatchedChunkIds: Set<string>;
+	evidenceChunkMatchedAt: Date | null;
+	evidenceChunkRecallReasons: Set<string>;
 }
 
 interface KnowledgeMessageRecallHit {
@@ -597,6 +709,12 @@ interface KnowledgeMessageRecallEvidenceRow {
 	occurredAt: Date | null;
 	createdAt: Date;
 	memoryHit: KnowledgeMessageRecallHit;
+}
+
+interface KnowledgeEvidenceChunkRecallRow {
+	node: KnowledgeNodePublic;
+	chunk: KnowledgeSearchEvidenceChunkItem;
+	similarity: number;
 }
 
 async function findExactKnowledgeNodes(
@@ -686,6 +804,11 @@ function addKnowledgeSearchCandidate(
 		messageMatchedEvidenceIds: new Set(),
 		messageMatchedAt: null,
 		messageRecallReasons: new Set(),
+		evidenceChunkRecallScore: null,
+		evidenceChunkHitCount: 0,
+		evidenceChunkMatchedChunkIds: new Set(),
+		evidenceChunkMatchedAt: null,
+		evidenceChunkRecallReasons: new Set(),
 	});
 }
 
@@ -879,9 +1002,136 @@ function addMessageRecallToCandidate(
 	if (row.memoryHit.semanticScore > 0) candidate.messageRecallReasons.add('memory_semantic');
 }
 
+function addEvidenceChunkRecallToCandidate(
+	candidate: KnowledgeSearchCandidate,
+	row: KnowledgeEvidenceChunkRecallRow,
+) {
+	candidate.evidenceChunkRecallScore =
+		typeof candidate.evidenceChunkRecallScore === 'number'
+			? Math.max(candidate.evidenceChunkRecallScore, row.similarity)
+			: row.similarity;
+	candidate.evidenceChunkMatchedChunkIds.add(row.chunk.id);
+	candidate.evidenceChunkHitCount = candidate.evidenceChunkMatchedChunkIds.size;
+	candidate.evidenceChunkMatchedAt = bestOptionalDate(
+		candidate.evidenceChunkMatchedAt,
+		row.chunk.occurredAt ?? row.chunk.createdAt,
+	);
+	candidate.matchReasons.add('evidence_chunk_match');
+	candidate.evidenceChunkRecallReasons.add('evidence_chunk_semantic');
+}
+
+async function searchKnowledgeEvidenceChunks(
+	workspaceId: string,
+	embedding: number[],
+	envelope: SealedEnvelope,
+	opts: Pick<
+		SearchKnowledgeNodesWithEvidenceOptions,
+		'type' | 'evidenceChunkFingerprint' | 'evidenceChunkLimit' | 'minEvidenceChunkSimilarity'
+	>,
+): Promise<KnowledgeEvidenceChunkRecallRow[]> {
+	if (embedding.length === 0) return [];
+
+	const embeddingStr = `[${embedding.join(',')}]`;
+	const limit = opts.evidenceChunkLimit ?? DEFAULT_KNOWLEDGE_EVIDENCE_CHUNK_LIMIT;
+	const minSimilarity =
+		opts.minEvidenceChunkSimilarity ?? DEFAULT_KNOWLEDGE_EVIDENCE_CHUNK_MIN_SIMILARITY;
+	const conditions = [
+		eq(knowledgeEvidenceChunks.workspaceId, workspaceId),
+		isNotNull(knowledgeEvidenceChunks.embedding),
+	];
+	if (opts.evidenceChunkFingerprint) {
+		conditions.push(
+			eq(knowledgeEvidenceChunks.embeddingFingerprint, opts.evidenceChunkFingerprint),
+		);
+	}
+	if (opts.type) {
+		conditions.push(
+			eq(knowledgeNodes.type, opts.type as (typeof knowledgeNodes.type.enumValues)[number]),
+		);
+	}
+
+	return withIterativeScan(async (tx) =>
+		withKeys(envelope, async () => {
+			const rows = await tx
+				.select({
+					nodeId: knowledgeNodes.id,
+					workspaceId: knowledgeNodes.workspaceId,
+					type: knowledgeNodes.type,
+					name: knowledgeNodes.name,
+					displayName: knowledgeNodes.displayName,
+					description: knowledgeNodes.description,
+					nameBlindIndex: knowledgeNodes.nameBlindIndex,
+					aliases: knowledgeNodes.aliases,
+					mentionCount: knowledgeNodes.mentionCount,
+					firstSeenAt: knowledgeNodes.firstSeenAt,
+					lastSeenAt: knowledgeNodes.lastSeenAt,
+					createdAt: knowledgeNodes.createdAt,
+					chunkId: knowledgeEvidenceChunks.id,
+					knowledgeEvidenceId: knowledgeEvidenceChunks.knowledgeEvidenceId,
+					contactId: knowledgeEvidenceChunks.contactId,
+					messageId: knowledgeEvidenceChunks.messageId,
+					chunkKind: knowledgeEvidenceChunks.chunkKind,
+					maskedText: knowledgeEvidenceChunks.maskedText,
+					embeddingFingerprint: knowledgeEvidenceChunks.embeddingFingerprint,
+					maskingPolicyVersion: knowledgeEvidenceChunks.maskingPolicyVersion,
+					chunkingPolicyVersion: knowledgeEvidenceChunks.chunkingPolicyVersion,
+					chunkOccurredAt: knowledgeEvidenceChunks.occurredAt,
+					chunkCreatedAt: knowledgeEvidenceChunks.createdAt,
+					similarity: sql<number>`1 - (${knowledgeEvidenceChunks.embedding} <=> ${embeddingStr}::halfvec(512))`,
+				})
+				.from(knowledgeEvidenceChunks)
+				.innerJoin(
+					knowledgeNodes,
+					and(
+						eq(knowledgeEvidenceChunks.knowledgeNodeId, knowledgeNodes.id),
+						eq(knowledgeNodes.workspaceId, workspaceId),
+					),
+				)
+				.where(and(...conditions))
+				.orderBy(sql`${knowledgeEvidenceChunks.embedding} <=> ${embeddingStr}::halfvec(512)`)
+				.limit(limit);
+
+			return rows
+				.filter((row) => Number(row.similarity ?? 0) >= minSimilarity)
+				.map((row) => ({
+					node: {
+						id: row.nodeId,
+						workspaceId: row.workspaceId,
+						type: row.type,
+						name: row.name,
+						displayName: row.displayName,
+						description: row.description,
+						nameBlindIndex: row.nameBlindIndex,
+						aliases: row.aliases,
+						mentionCount: row.mentionCount,
+						firstSeenAt: row.firstSeenAt,
+						lastSeenAt: row.lastSeenAt,
+						createdAt: row.createdAt,
+					},
+					chunk: {
+						id: row.chunkId,
+						knowledgeEvidenceId: row.knowledgeEvidenceId,
+						contactId: row.contactId,
+						messageId: row.messageId,
+						chunkKind: row.chunkKind,
+						maskedText: row.maskedText,
+						similarity: Number(row.similarity ?? 0),
+						embeddingFingerprint: row.embeddingFingerprint,
+						maskingPolicyVersion: row.maskingPolicyVersion,
+						chunkingPolicyVersion: row.chunkingPolicyVersion,
+						occurredAt: row.chunkOccurredAt,
+						createdAt: row.chunkCreatedAt,
+					},
+					similarity: Number(row.similarity ?? 0),
+				}));
+		}),
+	);
+}
+
 function computeKnowledgeSearchScore(input: {
 	candidate: KnowledgeSearchCandidate;
 	evidenceCount: number;
+	evidenceChunkCount: number;
 	topConfidence: number | null;
 	connectedContactsWithEvidence: number;
 	latestEvidenceAt: Date | null;
@@ -889,6 +1139,7 @@ function computeKnowledgeSearchScore(input: {
 	const {
 		candidate,
 		evidenceCount,
+		evidenceChunkCount,
 		topConfidence,
 		connectedContactsWithEvidence,
 		latestEvidenceAt,
@@ -914,6 +1165,11 @@ function computeKnowledgeSearchScore(input: {
 		score += Math.min(candidate.messageRecallScore, 1) * 0.16;
 		score += Math.min(candidate.messageHitCount, 5) * 0.025;
 	}
+	if (typeof candidate.evidenceChunkRecallScore === 'number') {
+		score += Math.min(candidate.evidenceChunkRecallScore, 1) * 0.2;
+		score += Math.min(candidate.evidenceChunkHitCount, 5) * 0.025;
+		score += Math.min(evidenceChunkCount, 10) * 0.004;
+	}
 
 	return Math.min(1, Number(score.toFixed(4)));
 }
@@ -935,9 +1191,11 @@ export async function searchKnowledgeNodesWithEvidence(
 		opts?.messageRecallNodeLimit ?? DEFAULT_KNOWLEDGE_MESSAGE_RECALL_NODE_LIMIT;
 	const minMessageRecallScore =
 		opts?.minMessageRecallScore ?? DEFAULT_KNOWLEDGE_MESSAGE_RECALL_MIN_SCORE;
+	const evidenceChunkLimit = opts?.evidenceChunkLimit ?? DEFAULT_KNOWLEDGE_EVIDENCE_CHUNK_LIMIT;
 	const evidenceLimitPerNode = opts?.evidenceLimitPerNode ?? 3;
 	const contactLimitPerNode = opts?.contactLimitPerNode ?? 3;
 	const candidates = new Map<string, KnowledgeSearchCandidate>();
+	const evidenceChunkMatchesById = new Map<string, KnowledgeSearchEvidenceChunkItem>();
 
 	const [exactNodes, aliasNodes] = await Promise.all([
 		findExactKnowledgeNodes(workspaceId, normalizedQuery, envelope, { type: opts?.type, limit }),
@@ -1064,13 +1322,43 @@ export async function searchKnowledgeNodesWithEvidence(
 		}
 	}
 
-	const candidateList = [...candidates.values()].slice(0, Math.max(limit, messageRecallNodeLimit));
+	if (embedding && embedding.length > 0) {
+		const chunkRecallRows = await searchKnowledgeEvidenceChunks(workspaceId, embedding, envelope, {
+			type: opts?.type,
+			evidenceChunkFingerprint: opts?.evidenceChunkFingerprint,
+			evidenceChunkLimit,
+			minEvidenceChunkSimilarity: opts?.minEvidenceChunkSimilarity,
+		});
+
+		for (const row of chunkRecallRows) {
+			evidenceChunkMatchesById.set(row.chunk.id, row.chunk);
+			addKnowledgeSearchCandidate(candidates, row.node, 'evidence_chunk_match');
+			const candidate = candidates.get(row.node.id);
+			if (!candidate) continue;
+			addEvidenceChunkRecallToCandidate(candidate, row);
+		}
+	}
+
+	const candidateList = [...candidates.values()].slice(
+		0,
+		Math.max(limit, messageRecallNodeLimit, evidenceChunkLimit),
+	);
 	if (candidateList.length === 0) return [];
 
 	const nodeIds = candidateList.map((candidate) => candidate.node.id);
 
-	const { contactRows, evidenceRows } = await withKeys(envelope, async () => {
-		const [contactsForNodes, evidenceForNodes] = await Promise.all([
+	const { contactRows, evidenceRows, chunkRows } = await withKeys(envelope, async () => {
+		const chunkConditions = [
+			eq(knowledgeEvidenceChunks.workspaceId, workspaceId),
+			inArray(knowledgeEvidenceChunks.knowledgeNodeId, nodeIds),
+		];
+		if (opts?.evidenceChunkFingerprint) {
+			chunkConditions.push(
+				eq(knowledgeEvidenceChunks.embeddingFingerprint, opts.evidenceChunkFingerprint),
+			);
+		}
+
+		const [contactsForNodes, evidenceForNodes, chunksForNodes] = await Promise.all([
 			db
 				.select({
 					nodeId: knowledgeContacts.knowledgeNodeId,
@@ -1115,9 +1403,31 @@ export async function searchKnowledgeNodesWithEvidence(
 					),
 				)
 				.orderBy(evidenceRecencyOrder, desc(knowledgeEvidence.createdAt)),
+			db
+				.select({
+					id: knowledgeEvidenceChunks.id,
+					knowledgeNodeId: knowledgeEvidenceChunks.knowledgeNodeId,
+					knowledgeEvidenceId: knowledgeEvidenceChunks.knowledgeEvidenceId,
+					contactId: knowledgeEvidenceChunks.contactId,
+					messageId: knowledgeEvidenceChunks.messageId,
+					chunkKind: knowledgeEvidenceChunks.chunkKind,
+					maskedText: knowledgeEvidenceChunks.maskedText,
+					embeddingFingerprint: knowledgeEvidenceChunks.embeddingFingerprint,
+					maskingPolicyVersion: knowledgeEvidenceChunks.maskingPolicyVersion,
+					chunkingPolicyVersion: knowledgeEvidenceChunks.chunkingPolicyVersion,
+					occurredAt: knowledgeEvidenceChunks.occurredAt,
+					createdAt: knowledgeEvidenceChunks.createdAt,
+				})
+				.from(knowledgeEvidenceChunks)
+				.where(and(...chunkConditions))
+				.orderBy(evidenceChunkRecencyOrder, desc(knowledgeEvidenceChunks.createdAt)),
 		]);
 
-		return { contactRows: contactsForNodes, evidenceRows: evidenceForNodes };
+		return {
+			contactRows: contactsForNodes,
+			evidenceRows: evidenceForNodes,
+			chunkRows: chunksForNodes,
+		};
 	});
 
 	const contactsByNode = new Map<string, typeof contactRows>();
@@ -1142,6 +1452,13 @@ export async function searchKnowledgeNodesWithEvidence(
 		}
 	}
 
+	const chunksByNode = new Map<string, typeof chunkRows>();
+	for (const row of chunkRows) {
+		const rows = chunksByNode.get(row.knowledgeNodeId) ?? [];
+		rows.push(row);
+		chunksByNode.set(row.knowledgeNodeId, rows);
+	}
+
 	const results = candidateList.map((candidate): KnowledgeSearchResultWithEvidence => {
 		const nodeEvidence = evidenceByNode.get(candidate.node.id) ?? [];
 		const matchedEvidenceIds = candidate.messageMatchedEvidenceIds;
@@ -1154,6 +1471,17 @@ export async function searchKnowledgeNodesWithEvidence(
 						return compareOptionalDates(a.occurredAt ?? a.createdAt, b.occurredAt ?? b.createdAt);
 					})
 				: nodeEvidence;
+		const nodeChunks = chunksByNode.get(candidate.node.id) ?? [];
+		const matchedChunkIds = candidate.evidenceChunkMatchedChunkIds;
+		const rankedNodeChunks =
+			matchedChunkIds.size > 0
+				? nodeChunks.slice().sort((a, b) => {
+						const aMatched = matchedChunkIds.has(a.id);
+						const bMatched = matchedChunkIds.has(b.id);
+						if (aMatched !== bMatched) return aMatched ? -1 : 1;
+						return compareOptionalDates(a.occurredAt ?? a.createdAt, b.occurredAt ?? b.createdAt);
+					})
+				: nodeChunks;
 		const nodeContacts = contactsByNode.get(candidate.node.id) ?? [];
 		const aggregateEvidenceCount = nodeContacts.reduce((sum, row) => sum + row.evidenceCount, 0);
 		const latestEvidenceAt =
@@ -1188,6 +1516,25 @@ export async function searchKnowledgeNodesWithEvidence(
 			occurredAt: row.occurredAt,
 			createdAt: row.createdAt,
 		}));
+		const evidenceChunks = rankedNodeChunks
+			.slice(0, evidenceLimitPerNode)
+			.map((row): KnowledgeSearchEvidenceChunkItem => {
+				const matchedChunk = evidenceChunkMatchesById.get(row.id);
+				return {
+					id: row.id,
+					knowledgeEvidenceId: row.knowledgeEvidenceId,
+					contactId: row.contactId,
+					messageId: row.messageId,
+					chunkKind: row.chunkKind,
+					maskedText: row.maskedText,
+					similarity: matchedChunk?.similarity ?? null,
+					embeddingFingerprint: row.embeddingFingerprint,
+					maskingPolicyVersion: row.maskingPolicyVersion,
+					chunkingPolicyVersion: row.chunkingPolicyVersion,
+					occurredAt: row.occurredAt,
+					createdAt: row.createdAt,
+				};
+			});
 
 		const contactsForResult = nodeContacts
 			.slice()
@@ -1232,6 +1579,7 @@ export async function searchKnowledgeNodesWithEvidence(
 		if (connectedContactsWithEvidence > 0) matchReasons.push('contact evidence');
 		if (latestEvidenceAt) matchReasons.push('recent activity');
 		if (candidate.messageHitCount > 0) matchReasons.push('matched in message evidence');
+		if (candidate.evidenceChunkHitCount > 0) matchReasons.push('matched in evidence chunk');
 
 		return {
 			node: candidate.node,
@@ -1239,6 +1587,7 @@ export async function searchKnowledgeNodesWithEvidence(
 			matchScore: computeKnowledgeSearchScore({
 				candidate,
 				evidenceCount: nodeEvidence.length,
+				evidenceChunkCount: nodeChunks.length,
 				topConfidence,
 				connectedContactsWithEvidence,
 				latestEvidenceAt,
@@ -1251,7 +1600,13 @@ export async function searchKnowledgeNodesWithEvidence(
 			messageMatchedEvidenceIds: [...candidate.messageMatchedEvidenceIds],
 			messageMatchedAt: candidate.messageMatchedAt,
 			messageRecallReasons: [...candidate.messageRecallReasons],
+			evidenceChunkRecallScore: candidate.evidenceChunkRecallScore,
+			evidenceChunkHitCount: candidate.evidenceChunkHitCount,
+			evidenceChunkMatchedChunkIds: [...candidate.evidenceChunkMatchedChunkIds],
+			evidenceChunkMatchedAt: candidate.evidenceChunkMatchedAt,
+			evidenceChunkRecallReasons: [...candidate.evidenceChunkRecallReasons],
 			evidenceCount: nodeEvidence.length,
+			evidenceChunkCount: nodeChunks.length,
 			aggregateEvidenceCount,
 			latestEvidenceAt,
 			topConfidence,
@@ -1259,6 +1614,7 @@ export async function searchKnowledgeNodesWithEvidence(
 			connectedContactsWithEvidence,
 			contacts: contactsForResult,
 			evidence,
+			evidenceChunks,
 		};
 	});
 
@@ -1632,6 +1988,76 @@ async function findExistingMessageBackedKnowledgeEvidence(
 	return envelope ? withKeys(envelope, doQuery) : doQuery();
 }
 
+export async function createKnowledgeEvidenceChunk(
+	workspaceId: string,
+	data: CreateKnowledgeEvidenceChunkInput,
+): Promise<KnowledgeEvidenceChunk> {
+	const chunkKind = data.chunkKind ?? 'evidence_window';
+	const maskedText = data.maskedText.trim();
+	const embeddingFingerprint = data.embeddingFingerprint.trim();
+	if (!maskedText) {
+		throw new Error('createKnowledgeEvidenceChunk: maskedText must not be empty');
+	}
+	if (!embeddingFingerprint) {
+		throw new Error('createKnowledgeEvidenceChunk: embeddingFingerprint must not be empty');
+	}
+	if (
+		data.sourceStartOffset != null &&
+		data.sourceEndOffset != null &&
+		data.sourceEndOffset < data.sourceStartOffset
+	) {
+		throw new Error('createKnowledgeEvidenceChunk: sourceEndOffset must be >= sourceStartOffset');
+	}
+
+	const result = await db
+		.insert(knowledgeEvidenceChunks)
+		.values({
+			workspaceId,
+			knowledgeEvidenceId: data.knowledgeEvidenceId,
+			knowledgeNodeId: data.knowledgeNodeId,
+			relatedKnowledgeNodeId: data.relatedKnowledgeNodeId ?? null,
+			contactId: data.contactId ?? null,
+			messageId: data.messageId ?? null,
+			chunkKind,
+			maskedText,
+			sourceStartOffset: data.sourceStartOffset ?? null,
+			sourceEndOffset: data.sourceEndOffset ?? null,
+			participants: data.participants ?? null,
+			embedding: data.embedding ?? null,
+			embeddingFingerprint,
+			maskingPolicyVersion: data.maskingPolicyVersion ?? 'mask-v1',
+			chunkingPolicyVersion: data.chunkingPolicyVersion ?? 'evidence-window-v1',
+			metadata: data.metadata ?? null,
+			occurredAt: data.occurredAt ?? null,
+		})
+		.onConflictDoNothing()
+		.returning();
+	const row = result[0];
+	if (row) return row;
+
+	const existing = await db
+		.select()
+		.from(knowledgeEvidenceChunks)
+		.where(
+			and(
+				eq(knowledgeEvidenceChunks.workspaceId, workspaceId),
+				eq(knowledgeEvidenceChunks.knowledgeEvidenceId, data.knowledgeEvidenceId),
+				eq(knowledgeEvidenceChunks.chunkKind, chunkKind),
+				eq(knowledgeEvidenceChunks.embeddingFingerprint, embeddingFingerprint),
+				data.sourceStartOffset == null
+					? isNull(knowledgeEvidenceChunks.sourceStartOffset)
+					: eq(knowledgeEvidenceChunks.sourceStartOffset, data.sourceStartOffset),
+				data.sourceEndOffset == null
+					? isNull(knowledgeEvidenceChunks.sourceEndOffset)
+					: eq(knowledgeEvidenceChunks.sourceEndOffset, data.sourceEndOffset),
+			),
+		)
+		.limit(1);
+	const existingRow = existing[0];
+	if (!existingRow) throw new Error('createKnowledgeEvidenceChunk: insert returned no rows');
+	return existingRow;
+}
+
 export async function createKnowledgeEvidence(
 	workspaceId: string,
 	data: CreateKnowledgeEvidenceInput,
@@ -1643,26 +2069,38 @@ export async function createKnowledgeEvidence(
 
 	const doInsert = async () => {
 		const existing = await findExistingMessageBackedKnowledgeEvidence(workspaceId, data);
-		if (existing) return existing;
-
-		const result = await db
-			.insert(knowledgeEvidence)
-			.values({
-				workspaceId,
+		const row =
+			existing ??
+			(
+				await db
+					.insert(knowledgeEvidence)
+					.values({
+						workspaceId,
+						knowledgeNodeId: data.knowledgeNodeId,
+						relatedKnowledgeNodeId: data.relatedKnowledgeNodeId ?? null,
+						contactId: data.contactId ?? null,
+						messageId: data.messageId ?? null,
+						relationType: data.relationType,
+						evidenceKind: data.evidenceKind,
+						confidence: data.confidence ?? null,
+						snippet: data.snippet ?? null,
+						occurredAt: data.occurredAt ?? null,
+						metadata: data.metadata ?? null,
+					})
+					.returning()
+			)[0];
+		if (!row) throw new Error('createKnowledgeEvidence: insert returned no rows');
+		if (data.evidenceChunk) {
+			await createKnowledgeEvidenceChunk(workspaceId, {
+				...data.evidenceChunk,
+				knowledgeEvidenceId: row.id,
 				knowledgeNodeId: data.knowledgeNodeId,
 				relatedKnowledgeNodeId: data.relatedKnowledgeNodeId ?? null,
 				contactId: data.contactId ?? null,
 				messageId: data.messageId ?? null,
-				relationType: data.relationType,
-				evidenceKind: data.evidenceKind,
-				confidence: data.confidence ?? null,
-				snippet: data.snippet ?? null,
-				occurredAt: data.occurredAt ?? null,
-				metadata: data.metadata ?? null,
-			})
-			.returning();
-		const row = result[0];
-		if (!row) throw new Error('createKnowledgeEvidence: insert returned no rows');
+				occurredAt: data.evidenceChunk.occurredAt ?? data.occurredAt ?? null,
+			});
+		}
 		return row;
 	};
 
@@ -1812,6 +2250,7 @@ export async function linkContactToKnowledge(
 				snippet: evidence.snippet ?? null,
 				occurredAt: evidence.occurredAt ?? null,
 				metadata: evidence.metadata ?? null,
+				evidenceChunk: evidence.evidenceChunk ?? null,
 			}
 		: null;
 	const existingEvidence = evidenceInput
@@ -1845,8 +2284,20 @@ export async function linkContactToKnowledge(
 		.returning();
 	const row = result[0];
 	if (!row) throw new Error('linkContactToKnowledge: insert returned no rows');
-	if (evidenceInput && !existingEvidence) {
-		await createKnowledgeEvidence(workspaceId, evidenceInput, evidence?.envelope);
+	if (evidenceInput) {
+		const storedEvidence =
+			existingEvidence ??
+			(await createKnowledgeEvidence(workspaceId, evidenceInput, evidence?.envelope));
+		if (existingEvidence && evidenceInput.evidenceChunk) {
+			await createKnowledgeEvidenceChunk(workspaceId, {
+				...evidenceInput.evidenceChunk,
+				knowledgeEvidenceId: storedEvidence.id,
+				knowledgeNodeId: nodeId,
+				contactId,
+				messageId: evidenceInput.messageId ?? null,
+				occurredAt: evidenceInput.evidenceChunk.occurredAt ?? evidenceInput.occurredAt ?? null,
+			});
+		}
 	}
 	return row;
 }
@@ -2212,17 +2663,284 @@ export async function inferSimilarityLinks(
 // ─── Knowledge Links (Phase 32) ────────────────────────────────────────────
 
 export type KnowledgeLink = typeof knowledgeLinks.$inferSelect;
-export type KnowledgeLinkType =
-	| 'part_of'
-	| 'related_to'
-	| 'competes_with'
-	| 'builds_on'
-	| 'funds'
-	| 'uses'
-	| 'cites'
-	| 'led_to'
-	| 'preceded_by'
-	| 'contradicts';
+
+export async function upsertKnowledgeRelationshipCandidate(
+	workspaceId: string,
+	data: CreateKnowledgeRelationshipCandidateInput,
+): Promise<KnowledgeRelationshipCandidate> {
+	const assessment = assessKnowledgeRelationshipCandidateForPromotion(data);
+	const promotionStatus = data.promotionStatus ?? assessment.status;
+	const promotionReason = data.promotionReason ?? assessment.reason;
+
+	const result = await db
+		.insert(knowledgeRelationshipCandidates)
+		.values({
+			workspaceId,
+			sourceNodeId: data.sourceNodeId,
+			targetNodeId: data.targetNodeId,
+			linkType: data.linkType,
+			evidenceKind: data.evidenceKind,
+			confidence: data.confidence ?? null,
+			promotionStatus,
+			promotionReason,
+			sourceEvidenceId: data.sourceEvidenceId ?? null,
+			messageId: data.messageId ?? null,
+			metadata: data.metadata ?? null,
+		})
+		.onConflictDoUpdate({
+			target: [
+				knowledgeRelationshipCandidates.workspaceId,
+				knowledgeRelationshipCandidates.sourceNodeId,
+				knowledgeRelationshipCandidates.targetNodeId,
+				knowledgeRelationshipCandidates.linkType,
+				knowledgeRelationshipCandidates.evidenceKind,
+			],
+			set: {
+				confidence: sql`GREATEST(COALESCE(${knowledgeRelationshipCandidates.confidence}, 0), ${data.confidence ?? 0})`,
+				promotionStatus,
+				promotionReason,
+				sourceEvidenceId: data.sourceEvidenceId ?? null,
+				messageId: data.messageId ?? null,
+				metadata: data.metadata ?? null,
+				lastSeenAt: sql`now()`,
+			},
+		})
+		.returning();
+	const row = result[0];
+	if (!row) throw new Error('upsertKnowledgeRelationshipCandidate: insert returned no rows');
+	return row;
+}
+
+export async function getKnowledgeRelationshipCandidateStats(
+	workspaceId: string,
+): Promise<KnowledgeRelationshipCandidateStats> {
+	const result = await db
+		.select({
+			total: sql<number>`count(*)::int`,
+			reviewOnly: sql<number>`count(*) FILTER (WHERE ${knowledgeRelationshipCandidates.promotionStatus} = 'review_only')::int`,
+			eligible: sql<number>`count(*) FILTER (WHERE ${knowledgeRelationshipCandidates.promotionStatus} = 'eligible')::int`,
+			promoted: sql<number>`count(*) FILTER (WHERE ${knowledgeRelationshipCandidates.promotionStatus} = 'promoted')::int`,
+			rejected: sql<number>`count(*) FILTER (WHERE ${knowledgeRelationshipCandidates.promotionStatus} = 'rejected')::int`,
+			heuristic: sql<number>`count(*) FILTER (WHERE ${knowledgeRelationshipCandidates.evidenceKind} IN ('embedding_match', 'contact_cooccurrence', 'inferred_weak'))::int`,
+			direct: sql<number>`count(*) FILTER (WHERE ${knowledgeRelationshipCandidates.evidenceKind} IN ('llm_extracted', 'manual'))::int`,
+			latestSeenAt: sql<Date | null>`max(${knowledgeRelationshipCandidates.lastSeenAt})`,
+		})
+		.from(knowledgeRelationshipCandidates)
+		.where(eq(knowledgeRelationshipCandidates.workspaceId, workspaceId))
+		.limit(1);
+	const row = result[0];
+	return {
+		total: toReportNumber(row?.total),
+		reviewOnly: toReportNumber(row?.reviewOnly),
+		eligible: toReportNumber(row?.eligible),
+		promoted: toReportNumber(row?.promoted),
+		rejected: toReportNumber(row?.rejected),
+		heuristic: toReportNumber(row?.heuristic),
+		direct: toReportNumber(row?.direct),
+		latestSeenAt: toReportDate(row?.latestSeenAt),
+	};
+}
+
+export async function listKnowledgeRelationshipCandidatesForNode(
+	workspaceId: string,
+	nodeId: string,
+	envelope: SealedEnvelope,
+	opts?: { limit?: number; status?: KnowledgeRelationshipPromotionStatus },
+): Promise<KnowledgeRelationshipCandidateWithNode[]> {
+	const limit = opts?.limit ?? 10;
+	const conditions = [
+		eq(knowledgeRelationshipCandidates.workspaceId, workspaceId),
+		or(
+			eq(knowledgeRelationshipCandidates.sourceNodeId, nodeId),
+			eq(knowledgeRelationshipCandidates.targetNodeId, nodeId),
+		),
+	];
+	if (opts?.status) {
+		conditions.push(eq(knowledgeRelationshipCandidates.promotionStatus, opts.status));
+	}
+
+	const candidates = await db
+		.select()
+		.from(knowledgeRelationshipCandidates)
+		.where(and(...conditions))
+		.orderBy(desc(knowledgeRelationshipCandidates.lastSeenAt))
+		.limit(limit);
+	if (candidates.length === 0) return [];
+
+	const relatedNodeIds = [
+		...new Set(
+			candidates.map((candidate) =>
+				candidate.sourceNodeId === nodeId ? candidate.targetNodeId : candidate.sourceNodeId,
+			),
+		),
+	];
+
+	const nodes = await withKeys(envelope, async () =>
+		db
+			.select(knowledgeNodeColumns)
+			.from(knowledgeNodes)
+			.where(
+				and(
+					eq(knowledgeNodes.workspaceId, workspaceId),
+					inArray(knowledgeNodes.id, relatedNodeIds),
+				),
+			),
+	);
+	const nodesById = new Map(nodes.map((node) => [node.id, node]));
+
+	return candidates.flatMap((candidate) => {
+		const direction = candidate.sourceNodeId === nodeId ? 'outbound' : 'inbound';
+		const relatedNodeId =
+			direction === 'outbound' ? candidate.targetNodeId : candidate.sourceNodeId;
+		const node = nodesById.get(relatedNodeId);
+		if (!node) return [];
+		return [{ candidate, direction, node }];
+	});
+}
+
+export async function promoteKnowledgeRelationshipCandidate(
+	workspaceId: string,
+	candidateId: string,
+): Promise<{
+	candidate: KnowledgeRelationshipCandidate;
+	link: KnowledgeLink | null;
+	promoted: boolean;
+	reason: string;
+}> {
+	const candidates = await db
+		.select()
+		.from(knowledgeRelationshipCandidates)
+		.where(
+			and(
+				eq(knowledgeRelationshipCandidates.id, candidateId),
+				eq(knowledgeRelationshipCandidates.workspaceId, workspaceId),
+			),
+		)
+		.limit(1);
+	const candidate = candidates[0];
+	if (!candidate) throw new Error('promoteKnowledgeRelationshipCandidate: candidate not found');
+
+	const assessment = assessKnowledgeRelationshipCandidateForPromotion({
+		sourceNodeId: candidate.sourceNodeId,
+		targetNodeId: candidate.targetNodeId,
+		linkType: candidate.linkType as KnowledgeLinkType,
+		evidenceKind: candidate.evidenceKind,
+		confidence: candidate.confidence,
+		sourceEvidenceId: candidate.sourceEvidenceId,
+		messageId: candidate.messageId,
+		metadata: candidate.metadata,
+	});
+
+	if (!assessment.canPromote) {
+		const result = await db
+			.update(knowledgeRelationshipCandidates)
+			.set({
+				promotionStatus: assessment.status,
+				promotionReason: assessment.reason,
+				lastSeenAt: sql`now()`,
+			})
+			.where(eq(knowledgeRelationshipCandidates.id, candidate.id))
+			.returning();
+		return {
+			candidate: result[0] ?? candidate,
+			link: null,
+			promoted: false,
+			reason: assessment.reason,
+		};
+	}
+
+	const link = await createKnowledgeLink(
+		workspaceId,
+		candidate.sourceNodeId,
+		candidate.targetNodeId,
+		candidate.linkType as KnowledgeLinkType,
+		candidate.confidence ?? undefined,
+	);
+	const result = await db
+		.update(knowledgeRelationshipCandidates)
+		.set({
+			promotionStatus: 'promoted',
+			promotionReason: assessment.reason,
+			promotedLinkId: link.id,
+			promotedAt: sql`now()`,
+			lastSeenAt: sql`now()`,
+		})
+		.where(eq(knowledgeRelationshipCandidates.id, candidate.id))
+		.returning();
+
+	return {
+		candidate: result[0] ?? candidate,
+		link,
+		promoted: true,
+		reason: assessment.reason,
+	};
+}
+
+export async function inferSimilarityRelationshipCandidates(
+	workspaceId: string,
+	distanceThreshold = 0.3,
+): Promise<number> {
+	return withIterativeScan(async (tx) => {
+		const result = await tx.execute(sql`
+			WITH pairs AS (
+				SELECT
+					a.id AS source_id,
+					b.id AS target_id,
+					1 - (a.embedding <=> b.embedding) AS similarity
+				FROM knowledge_nodes a
+				JOIN knowledge_nodes b
+					ON a.workspace_id = b.workspace_id
+					AND a.id < b.id
+				WHERE a.workspace_id = ${workspaceId}::uuid
+					AND a.embedding IS NOT NULL
+					AND b.embedding IS NOT NULL
+					AND (a.embedding <=> b.embedding) < ${distanceThreshold}
+			)
+			INSERT INTO knowledge_relationship_candidates (
+				id,
+				workspace_id,
+				source_node_id,
+				target_node_id,
+				link_type,
+				evidence_kind,
+				confidence,
+				promotion_status,
+				promotion_reason,
+				metadata
+			)
+			SELECT
+				gen_random_uuid(),
+				${workspaceId}::uuid,
+				source_id,
+				target_id,
+				'related_to',
+				'embedding_match',
+				similarity,
+				'review_only',
+				'embedding similarity needs direct quoted evidence before graph promotion',
+				jsonb_build_object(
+					'source', 'knowledge_inference',
+					'method', 'embedding_similarity',
+					'distanceThreshold', ${distanceThreshold}::real
+				)
+			FROM pairs
+			ON CONFLICT (workspace_id, source_node_id, target_node_id, link_type, evidence_kind)
+			DO UPDATE SET
+				confidence = GREATEST(
+					COALESCE(knowledge_relationship_candidates.confidence, 0),
+					EXCLUDED.confidence
+				),
+				promotion_status = 'review_only',
+				promotion_reason = EXCLUDED.promotion_reason,
+				metadata = COALESCE(knowledge_relationship_candidates.metadata, '{}'::jsonb)
+					|| EXCLUDED.metadata,
+				last_seen_at = now()
+			RETURNING id
+		`);
+
+		return rowsFromExecute<{ id: string }>(result).length;
+	});
+}
 
 /**
  * Create a directed edge between two knowledge nodes.

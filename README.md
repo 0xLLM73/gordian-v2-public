@@ -57,13 +57,17 @@ graph to use local OpenAI-compatible endpoints. Set `AI_PROCESSING_ENABLED=true`
 only when external AI vendor egress is intended. General CRM search embeddings
 also require `AI_SEARCH_EMBEDDINGS_ENABLED=true`.
 
-The easiest fully local knowledge-graph path is the Nomic preset, with Qwen
-available as a heavier advanced option:
+The easiest fully local knowledge-graph path is the Nomic preset, which now uses
+Nomic 512-dimensional embeddings plus Gemma 4 12B for non-embedding local LLM
+roles. Qwen remains available as a vector-focused path, and Gemma has an
+explicit preset as well:
 
 ```bash
 pnpm local-ai:setup:nomic
 # or
 pnpm local-ai:setup:qwen
+# or
+pnpm local-ai:setup:gemma
 ```
 
 Then run `pnpm kg:local:smoke` after Ollama is running. The knowledge graph

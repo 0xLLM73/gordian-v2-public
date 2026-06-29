@@ -23,19 +23,38 @@ describe('local KG model presets', () => {
 		expect(values.DIGEST_LLM_MODEL).toBe('qwen3.5:4b');
 	});
 
-	it('keeps Nomic embeddings while routing chat and digest roles to local Qwen', () => {
+	it('routes every non-embedding local LLM role to Gemma 4 12B while preserving Qwen embeddings', () => {
+		const values = localKgEnvValues(LOCAL_KG_MODEL_PRESETS.gemma);
+
+		expect(values.KNOWLEDGE_EMBEDDING_PRESET).toBe('qwen');
+		expect(values.KNOWLEDGE_EMBEDDING_MODEL).toBe('qwen3-embedding:0.6b');
+		expect(values.KNOWLEDGE_EMBEDDING_DIMENSIONS).toBe('512');
+		expect(values.KNOWLEDGE_LLM_PROVIDER).toBe('local');
+		expect(values.KNOWLEDGE_LLM_MODEL).toBe('gemma4:12b-it-q4_K_M');
+		expect(values.COMMITMENT_LLM_PROVIDER).toBe('local');
+		expect(values.COMMITMENT_LLM_MODEL).toBe('gemma4:12b-it-q4_K_M');
+		expect(values.CHAT_LLM_PROVIDER).toBe('local');
+		expect(values.CHAT_LLM_MODEL).toBe('gemma4:12b-it-q4_K_M');
+		expect(values.DIGEST_LLM_PROVIDER).toBe('local');
+		expect(values.DIGEST_LLM_MODEL).toBe('gemma4:12b-it-q4_K_M');
+		expect(values.KNOWLEDGE_EMBEDDING_FINGERPRINT).toBe(
+			'local:local:qwen:qwen3-embedding:0.6b:512:kg-embedding-format-v1',
+		);
+	});
+
+	it('keeps Nomic embeddings while routing non-embedding local LLM roles to Gemma', () => {
 		const values = localKgEnvValues(LOCAL_KG_MODEL_PRESETS.nomic);
 
 		expect(values.KNOWLEDGE_EMBEDDING_MODEL).toBe('nomic-embed-text');
 		expect(values.KNOWLEDGE_EMBEDDING_DIMENSIONS).toBe('512');
 		expect(values.KNOWLEDGE_LLM_PROVIDER).toBe('local');
-		expect(values.KNOWLEDGE_LLM_MODEL).toBe('llama3.1:8b');
+		expect(values.KNOWLEDGE_LLM_MODEL).toBe('gemma4:12b-it-q4_K_M');
 		expect(values.COMMITMENT_LLM_PROVIDER).toBe('local');
-		expect(values.COMMITMENT_LLM_MODEL).toBe('qwen3.5:4b');
+		expect(values.COMMITMENT_LLM_MODEL).toBe('gemma4:12b-it-q4_K_M');
 		expect(values.CHAT_LLM_PROVIDER).toBe('local');
-		expect(values.CHAT_LLM_MODEL).toBe('qwen3.5:4b');
+		expect(values.CHAT_LLM_MODEL).toBe('gemma4:12b-it-q4_K_M');
 		expect(values.DIGEST_LLM_PROVIDER).toBe('local');
-		expect(values.DIGEST_LLM_MODEL).toBe('qwen3.5:4b');
+		expect(values.DIGEST_LLM_MODEL).toBe('gemma4:12b-it-q4_K_M');
 	});
 
 	it('prefers an installed Qwen commitment model before asking setup to pull the preset', () => {

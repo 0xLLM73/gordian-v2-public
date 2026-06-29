@@ -33,7 +33,11 @@ vi.mock('@repo/crypto', () => ({
 	keyStore: mockKeyStore,
 }));
 
-import { inferSimilarityLinks, searchKnowledgeNodes } from '../knowledge';
+import {
+	inferSimilarityLinks,
+	inferSimilarityRelationshipCandidates,
+	searchKnowledgeNodes,
+} from '../knowledge';
 
 /** Extract SQL text from a Drizzle sql`` tagged template object. */
 function sqlToString(sqlObj: unknown): string {
@@ -220,5 +224,17 @@ describe('inferSimilarityLinks — KG-1 iterative scan', () => {
 
 		const { db } = await import('../../client');
 		expect(db.transaction).toHaveBeenCalledTimes(1);
+	});
+
+	it('casts relationship candidate distance threshold in metadata JSON', async () => {
+		mockExecute
+			.mockResolvedValueOnce(undefined) // SET LOCAL
+			.mockResolvedValueOnce([]);
+
+		await inferSimilarityRelationshipCandidates(WS, 0.42);
+
+		const cteStr = sqlToString(mockExecute.mock.calls[1][0]);
+		expect(cteStr).toContain("'distanceThreshold'");
+		expect(cteStr).toContain('::real');
 	});
 });

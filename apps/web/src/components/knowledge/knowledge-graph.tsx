@@ -73,25 +73,30 @@ export function KnowledgeGraph() {
 
 	const loadGraph = useCallback(() => {
 		startTransition(async () => {
-			const result = await getGraphDataAction({ maxNodes: 200 });
-			if (result?.data) {
-				const nodes = result.data.nodes.map((n) => ({
-					id: n.id,
-					name: n.name,
-					displayName: n.displayName,
-					type: n.type,
-					mentionCount: n.mentionCount ?? 0,
-					color: TYPE_HEX_COLORS[n.type] ?? TYPE_HEX_COLORS.concept,
-					val: Math.max(1, n.mentionCount ?? 1),
-				}));
-				const links = result.data.links.map((l) => ({
-					source: l.sourceNodeId,
-					target: l.targetNodeId,
-					linkType: l.linkType,
-					weight: l.weight,
-				}));
-				setGraphData({ nodes, links });
-			} else {
+			try {
+				setError(null);
+				const result = await getGraphDataAction({ maxNodes: 200 });
+				if (result?.data) {
+					const nodes = result.data.nodes.map((n) => ({
+						id: n.id,
+						name: n.name,
+						displayName: n.displayName,
+						type: n.type,
+						mentionCount: n.mentionCount ?? 0,
+						color: TYPE_HEX_COLORS[n.type] ?? TYPE_HEX_COLORS.concept,
+						val: Math.max(1, n.mentionCount ?? 1),
+					}));
+					const links = result.data.links.map((l) => ({
+						source: l.sourceNodeId,
+						target: l.targetNodeId,
+						linkType: l.linkType,
+						weight: l.weight,
+					}));
+					setGraphData({ nodes, links });
+				} else {
+					setError('Failed to load knowledge graph');
+				}
+			} catch {
 				setError('Failed to load knowledge graph');
 			}
 		});
@@ -129,7 +134,22 @@ export function KnowledgeGraph() {
 	}
 
 	if (error) {
-		return <p className="text-sm text-red-600">{error}</p>;
+		return (
+			<div className="rounded-lg border border-red-200 bg-red-50 p-4">
+				<h3 className="text-sm font-medium text-red-900">Unable to load knowledge graph</h3>
+				<p className="mt-1 text-sm text-red-700">
+					{error}. This can happen if the graph request failed while local analysis state was
+					refreshing.
+				</p>
+				<button
+					type="button"
+					onClick={loadGraph}
+					className="mt-3 rounded-md border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-800 hover:bg-red-100"
+				>
+					Retry graph
+				</button>
+			</div>
+		);
 	}
 
 	if (graphData && graphData.nodes.length === 0) {
@@ -172,7 +192,19 @@ export function KnowledgeGraph() {
 					<p className="mt-2 text-xs text-muted-foreground">
 						{summary.linkCount > 0
 							? 'Click a node to open its topic. Relationship thickness reflects link strength.'
-							: 'Build relationships after analysis to connect isolated topics in the graph.'}
+							: 'No confirmed relationships are stored yet. The graph is showing isolated extracted entities until relationship analysis creates evidence-backed links.'}
+					</p>
+				</div>
+			) : null}
+
+			{summary && summary.nodeCount > 0 && summary.linkCount === 0 ? (
+				<div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+					<h3 className="font-medium">No confirmed relationships yet</h3>
+					<p className="mt-1 text-amber-900">
+						{summary.nodeCount} entities are available, but none have promoted node-to-node
+						relationships. Run relationship analysis after local AI is ready; embedding matches,
+						co-mentions, and weak/stale signals should remain review-only until direct evidence
+						confirms the edge.
 					</p>
 				</div>
 			) : null}

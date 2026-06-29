@@ -22,14 +22,17 @@ import {
 function printHelp() {
 	console.log(`Usage: pnpm local-ai:setup:nomic
        pnpm local-ai:setup:qwen
+       pnpm local-ai:setup:gemma
        pnpm local-ai:setup -- --preset nomic [options]
        pnpm local-ai:setup -- --preset qwen [options]
+       pnpm local-ai:setup -- --preset gemma [options]
 
 Configures local knowledge-graph AI against an OpenAI-compatible Ollama embedding endpoint.
 The Qwen preset keeps KG chat extraction disabled by default, while configuring
 Qwen local commitment extraction through native Ollama chat separately.
 Chat uses CHAT_LLM_* and digest generation uses DIGEST_LLM_*; both default to
-the same local Qwen model.
+the same local model. The Gemma preset keeps Qwen embeddings for the 512-dim
+database schema and routes non-embedding LLM roles to Gemma 4 12B.
 
 Options:
   --preset <name>       Local KG preset. Supported: ${knownLocalKgPresetNames().join(', ')}.

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	assertTrustedLocalAiBaseUrl,
+	DEFAULT_LOCAL_LLM_MODEL,
 	formatKnowledgeEmbeddingInput,
 	getKnowledgeEmbeddingFingerprint,
 	getKnowledgeEmbeddingFingerprintWarning,
@@ -50,6 +51,15 @@ describe('knowledge AI runtime config', () => {
 			model: 'local-chat',
 			label: 'local LLM',
 		});
+	});
+
+	it('uses Gemma as the default local KG extraction model', () => {
+		expect(DEFAULT_LOCAL_LLM_MODEL).toBe('gemma4:12b-it-q4_K_M');
+		expect(
+			getKnowledgeLlmRuntime({
+				KNOWLEDGE_LLM_PROVIDER: 'local',
+			}).model,
+		).toBe(DEFAULT_LOCAL_LLM_MODEL);
 	});
 
 	it('rejects remote URLs configured as local AI endpoints unless explicitly allowed', () => {
@@ -121,6 +131,17 @@ describe('knowledge AI runtime config', () => {
 		expect(fromModel.label).toBe('Qwen local embeddings');
 	});
 
+	it('labels Gemma local embedding presets as Qwen-backed embeddings', () => {
+		const runtime = getKnowledgeEmbeddingRuntime({
+			KNOWLEDGE_EMBEDDING_MODEL: 'qwen3-embedding:0.6b',
+			KNOWLEDGE_EMBEDDING_PRESET: 'gemma',
+			KNOWLEDGE_EMBEDDING_PROVIDER: 'local',
+		});
+
+		expect(runtime.preset).toBe('gemma');
+		expect(runtime.label).toBe('Qwen local embeddings for Gemma LLMs');
+	});
+
 	it('formats Nomic embedding inputs by retrieval side', () => {
 		const runtime = getKnowledgeEmbeddingRuntime({
 			KNOWLEDGE_EMBEDDING_PROVIDER: 'local',
@@ -153,6 +174,19 @@ describe('knowledge AI runtime config', () => {
 				purpose: 'document',
 			}),
 		).toBe('Solana DePIN infrastructure');
+		expect(
+			formatKnowledgeEmbeddingInput('who knows about DePIN?', { runtime, purpose: 'query' }),
+		).toBe(
+			'Instruct: Retrieve relevant knowledge graph entities and contacts.\nQuery: who knows about DePIN?',
+		);
+	});
+
+	it('formats Gemma preset embedding inputs with the Qwen retrieval instruction', () => {
+		const runtime = getKnowledgeEmbeddingRuntime({
+			KNOWLEDGE_EMBEDDING_PROVIDER: 'local',
+			KNOWLEDGE_EMBEDDING_PRESET: 'gemma',
+		});
+
 		expect(
 			formatKnowledgeEmbeddingInput('who knows about DePIN?', { runtime, purpose: 'query' }),
 		).toBe(

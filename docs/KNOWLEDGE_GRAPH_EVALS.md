@@ -7,6 +7,7 @@ message-backed `/knowledge` recall:
 pnpm kg:recall:eval
 pnpm kg:recall:quality
 pnpm kg:recall:pg:smoke
+pnpm kg:model:eval
 ```
 
 `pnpm kg:recall:eval` is the backwards-compatible entrypoint and delegates to
@@ -17,6 +18,13 @@ human summary, and emits one machine-readable line prefixed with
 
 The original behavior-level assertions still live in
 `packages/db/src/__tests__/knowledge-recall-eval.test.ts`.
+
+`pnpm kg:model:eval` is the first Phase 2 model-evaluation harness. It is
+offline and deterministic: it scores canned Gemma/Qwen-style KG extraction
+outputs through the real KG parser and relationship-promotion gate, then scores
+a small evidence-chunk retrieval result for recall, forbidden decoys, and unsafe
+field leaks. It prints a human summary and emits one machine-readable line
+prefixed with `KNOWLEDGE_MODEL_EVAL_JSON=`.
 
 `pnpm kg:recall:pg:smoke` is the opt-in live Postgres smoke. It reuses the same
 fixture shape, seeds a migrated throwaway database, and calls the real DAL and
@@ -190,6 +198,10 @@ or semantics match, and message evidence independently supports it.
 Use `pnpm kg:recall:eval` as the CI-facing command for this quality gate. It is
 fast, deterministic, and does not require providers, Telegram credentials, or a
 live database.
+
+Use `pnpm kg:model:eval` for the Phase 2 extraction/retrieval quality gate. It
+does not call Ollama yet, but it defines the scoring contract that live
+Gemma/Qwen runs should feed into.
 
 For broad CI, keep `pnpm test` as the full-suite check; it includes both the
 quality gate and the lower-level recall eval tests.

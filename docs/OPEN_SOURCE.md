@@ -104,7 +104,7 @@ The public repository must therefore assume:
 For public demos, prefer one of these:
 
 - synthetic Telegram-like fixtures loaded into a local database;
-- local Nomic KG AI or Qwen vector-only KG embeddings configured with `pnpm local-ai:setup:nomic` or `pnpm local-ai:setup:qwen` and verified with `pnpm kg:local:smoke`;
+- local Nomic KG AI, Qwen vector-only KG embeddings, or Gemma non-embedding LLM comparison configured with `pnpm local-ai:setup:nomic`, `pnpm local-ai:setup:qwen`, or `pnpm local-ai:setup:gemma` and verified with `pnpm kg:local:smoke` plus `pnpm local-ai:benchmark` when comparing Qwen and Gemma;
 - a throwaway Telegram account with no real contacts;
 - a dedicated test bot and test Telegram API app;
 - outbound sending disabled permanently.

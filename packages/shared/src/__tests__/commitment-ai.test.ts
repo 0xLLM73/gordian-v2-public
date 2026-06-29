@@ -46,7 +46,8 @@ describe('commitment AI runtime config', () => {
 		});
 	});
 
-	it('uses Qwen as the default local commitment model', () => {
+	it('uses Gemma as the default local commitment model', () => {
+		expect(DEFAULT_LOCAL_COMMITMENT_LLM_MODEL).toBe('gemma4:12b-it-q4_K_M');
 		expect(
 			getCommitmentLlmRuntime({
 				COMMITMENT_LLM_PROVIDER: 'local',

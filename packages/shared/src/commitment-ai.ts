@@ -4,7 +4,7 @@ export type CommitmentLlmProvider = 'cloud' | 'local' | 'disabled';
 export type CommitmentLlmMode = 'cloud' | 'local' | 'disabled';
 export type CommitmentLlmApi = 'ollama' | 'openai-compatible';
 
-export const DEFAULT_LOCAL_COMMITMENT_LLM_MODEL = 'qwen3.5:4b';
+export const DEFAULT_LOCAL_COMMITMENT_LLM_MODEL = 'gemma4:12b-it-q4_K_M';
 export const DEFAULT_LOCAL_COMMITMENT_LLM_BASE_URL = 'http://localhost:11434';
 
 export interface CommitmentLlmRuntime {

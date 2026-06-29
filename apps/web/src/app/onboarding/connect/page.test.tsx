@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { OnboardingProvider } from '@/components/onboarding/onboarding-provider';
@@ -12,8 +12,10 @@ const navigationMocks = vi.hoisted(() => ({
 	push: vi.fn(),
 	replace: vi.fn(),
 }));
+const mockFetch = vi.hoisted(() => vi.fn());
 
 vi.stubGlobal('React', React);
+vi.stubGlobal('fetch', mockFetch);
 
 vi.mock('next/navigation', () => ({
 	useRouter: () => navigationMocks,
@@ -25,6 +27,7 @@ function renderConnectPage() {
 
 describe('ConnectPage', () => {
 	beforeEach(() => {
+		mockFetch.mockReset();
 		navigationMocks.push.mockReset();
 		navigationMocks.replace.mockReset();
 		sessionStorage.clear();
@@ -59,5 +62,44 @@ describe('ConnectPage', () => {
 			),
 		);
 		expect(sendButton.disabled).toBe(false);
+	});
+
+	it('persists Telegram code delivery metadata before moving to verification', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			json: () =>
+				Promise.resolve({
+					success: true,
+					delivery: { method: 'sms', codeLength: 6, expiresInSeconds: 90 },
+				}),
+		});
+		renderConnectPage();
+
+		fireEvent.change(screen.getByLabelText('Phone Number'), {
+			target: { value: '+1 555 555 0123' },
+		});
+		fireEvent.click(
+			screen.getByLabelText(
+				/I understand Gordian will create a local Telegram session, and I know I must revoke it/i,
+			),
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Send Verification Code' }));
+
+		await waitFor(() => {
+			expect(navigationMocks.push).toHaveBeenCalledWith('/onboarding/verify');
+		});
+		await waitFor(() => {
+			const saved = JSON.parse(String(sessionStorage.getItem('gordian-onboarding'))) as {
+				normalizedPhone: string;
+				telegramCodeDelivery: { method: string; codeLength: number; expiresInSeconds: number };
+			};
+			expect(saved.normalizedPhone).toBe('+15555550123');
+			expect(saved.telegramCodeDelivery).toMatchObject({
+				method: 'sms',
+				codeLength: 6,
+				expiresInSeconds: 90,
+			});
+		});
+		expect(sessionStorage.getItem('gordian-onboarding')).not.toContain('phoneCodeHash');
 	});
 });

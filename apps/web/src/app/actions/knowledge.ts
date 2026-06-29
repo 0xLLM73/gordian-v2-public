@@ -35,10 +35,13 @@ import {
 } from '@repo/db';
 import {
 	formatKnowledgeEmbeddingInput,
+	getKnowledgeEmbeddingConfiguredFingerprint,
+	getKnowledgeEmbeddingFingerprint,
 	getKnowledgeEmbeddingRuntime,
 	getKnowledgeLlmRuntime,
 	isAiProcessingEnabled,
 	type KnowledgeEmbeddingPurpose,
+	knowledgeEmbeddingFingerprintKey,
 } from '@repo/shared';
 import { z } from 'zod';
 import { getKnowledgeEvidenceQualityStatsForNodes } from '@/lib/knowledge-evidence-quality';
@@ -79,7 +82,11 @@ interface KnowledgeInferenceRunData {
 	status?: string;
 	workspaceId?: string;
 	nodesProcessed?: number;
+	candidateRelationships?: number;
+	coOccurrenceCandidates?: number;
 	coOccurrenceLinks?: number;
+	confirmedLinks?: number;
+	similarityCandidates?: number;
 	similarityLinks?: number;
 	totalLinks?: number;
 	skippedReason?: string | null;
@@ -238,6 +245,43 @@ function projectEvidenceForClient(e: {
 	};
 }
 
+function projectEvidenceChunkForClient(e: {
+	id: string;
+	knowledgeEvidenceId: string;
+	contactId: string | null;
+	messageId: string | null;
+	chunkKind: string;
+	maskedText: string;
+	similarity: number | null;
+	embeddingFingerprint: string;
+	maskingPolicyVersion: string;
+	chunkingPolicyVersion: string;
+	occurredAt: Date | null;
+	createdAt: Date;
+}) {
+	return {
+		id: e.id,
+		knowledgeEvidenceId: e.knowledgeEvidenceId,
+		contactId: e.contactId ?? null,
+		messageId: e.messageId ?? null,
+		chunkKind: e.chunkKind,
+		maskedText: e.maskedText,
+		similarity: e.similarity,
+		embeddingFingerprint: e.embeddingFingerprint,
+		maskingPolicyVersion: e.maskingPolicyVersion,
+		chunkingPolicyVersion: e.chunkingPolicyVersion,
+		occurredAt: e.occurredAt ?? null,
+		createdAt: e.createdAt ?? null,
+	};
+}
+
+function knowledgeEvidenceChunkFingerprint(): string {
+	return (
+		getKnowledgeEmbeddingConfiguredFingerprint(process.env) ??
+		knowledgeEmbeddingFingerprintKey(getKnowledgeEmbeddingFingerprint(process.env))
+	);
+}
+
 function pluralize(value: number, singular: string, plural = `${singular}s`): string {
 	return `${value} ${value === 1 ? singular : plural}`;
 }
@@ -259,9 +303,11 @@ function buildKnowledgeAnswerSummary(
 	const top = results[0];
 	const contactIds = new Set<string>();
 	let evidenceRows = 0;
+	let evidenceChunks = 0;
 	let explicitRows = 0;
 	for (const result of results) {
 		evidenceRows += result.evidenceCount;
+		evidenceChunks += result.evidenceChunkCount;
 		for (const contact of result.contacts) contactIds.add(contact.id);
 		for (const evidence of result.evidence) {
 			if (evidence.evidenceKind === 'llm_extracted' || evidence.evidenceKind === 'manual') {
@@ -275,10 +321,11 @@ function buildKnowledgeAnswerSummary(
 		typeof top?.matchScore === 'number' ? `${Math.round(top.matchScore * 100)}%` : 'unknown';
 	return {
 		title: `${topName} is the strongest local match for "${normalizedQuery}".`,
-		summary: `${pluralize(results.length, 'topic')} matched with ${pluralize(contactIds.size, 'connected contact')} and ${pluralize(evidenceRows, 'source evidence row')}. Top match confidence is ${confidence}.`,
+		summary: `${pluralize(results.length, 'topic')} matched with ${pluralize(contactIds.size, 'connected contact')}, ${pluralize(evidenceRows, 'source evidence row')}, and ${pluralize(evidenceChunks, 'retrievable evidence chunk')}. Top match confidence is ${confidence}.`,
 		support: [
 			`${pluralize(contactIds.size, 'contact')} connected`,
 			`${pluralize(evidenceRows, 'evidence row')} stored`,
+			`${pluralize(evidenceChunks, 'chunk')} indexed`,
 			`${pluralize(explicitRows, 'explicit source')} in the visible preview`,
 		],
 		suggestedAction:
@@ -322,6 +369,7 @@ export const listKnowledgeNodesAction = workspaceAction
 					type: parsedInput.type,
 					limit: parsedInput.limit,
 					minSimilarity: knowledgeSearchMinSimilarity(),
+					evidenceChunkFingerprint: knowledgeEvidenceChunkFingerprint(),
 				},
 			);
 			nodes = searchResults.map((result) => result.node);
@@ -459,6 +507,7 @@ export const searchKnowledgeNodesWithEvidenceAction = workspaceAction
 				limit: parsedInput.limit,
 				minSimilarity,
 				messageRecallQueryText: maskedQuery,
+				evidenceChunkFingerprint: knowledgeEvidenceChunkFingerprint(),
 				evidenceLimitPerNode: 3,
 				contactLimitPerNode: 3,
 			},
@@ -497,7 +546,13 @@ export const searchKnowledgeNodesWithEvidenceAction = workspaceAction
 					messageMatchedEvidenceIds: result.messageMatchedEvidenceIds,
 					messageMatchedAt: result.messageMatchedAt,
 					messageRecallReasons: result.messageRecallReasons,
+					evidenceChunkRecallScore: result.evidenceChunkRecallScore,
+					evidenceChunkHitCount: result.evidenceChunkHitCount,
+					evidenceChunkMatchedChunkIds: result.evidenceChunkMatchedChunkIds,
+					evidenceChunkMatchedAt: result.evidenceChunkMatchedAt,
+					evidenceChunkRecallReasons: result.evidenceChunkRecallReasons,
 					evidenceCount: result.evidenceCount,
+					evidenceChunkCount: result.evidenceChunkCount,
 					aggregateEvidenceCount: result.aggregateEvidenceCount,
 					latestEvidenceAt: result.latestEvidenceAt,
 					topConfidence: result.topConfidence,
@@ -519,6 +574,7 @@ export const searchKnowledgeNodesWithEvidenceAction = workspaceAction
 						evidence: contact.evidence.map(projectEvidenceForClient),
 					})),
 					evidence: result.evidence.map(projectEvidenceForClient),
+					evidenceChunks: result.evidenceChunks.map(projectEvidenceChunkForClient),
 				};
 			}),
 		};
@@ -836,7 +892,11 @@ export const runLocalKnowledgeInferenceAction = workspaceAction
 					status: 'skipped',
 					error: 'AI analysis consent is not enabled',
 					nodesProcessed: 0,
+					candidateRelationships: 0,
+					coOccurrenceCandidates: 0,
 					coOccurrenceLinks: 0,
+					confirmedLinks: 0,
+					similarityCandidates: 0,
 					similarityLinks: 0,
 					totalLinks: 0,
 				};
@@ -859,7 +919,11 @@ export const runLocalKnowledgeInferenceAction = workspaceAction
 					status: 'error',
 					error: workerHttpError(response.status),
 					nodesProcessed: 0,
+					candidateRelationships: 0,
+					coOccurrenceCandidates: 0,
 					coOccurrenceLinks: 0,
+					confirmedLinks: 0,
+					similarityCandidates: 0,
 					similarityLinks: 0,
 					totalLinks: 0,
 				};
@@ -868,7 +932,11 @@ export const runLocalKnowledgeInferenceAction = workspaceAction
 			const data = (await response.json()) as {
 				status?: string;
 				nodesProcessed?: number;
+				candidateRelationships?: number;
+				coOccurrenceCandidates?: number;
 				coOccurrenceLinks?: number;
+				confirmedLinks?: number;
+				similarityCandidates?: number;
 				similarityLinks?: number;
 				totalLinks?: number;
 				skippedReason?: string;
@@ -876,6 +944,8 @@ export const runLocalKnowledgeInferenceAction = workspaceAction
 			track(ctx.workspaceId, ctx.session.user.id, 'knowledge.local_inference_ran', {
 				status: data.status,
 				nodes_processed: data.nodesProcessed ?? 0,
+				candidate_relationships: data.candidateRelationships ?? 0,
+				confirmed_links: data.confirmedLinks ?? data.totalLinks ?? 0,
 				total_links: data.totalLinks ?? 0,
 				skipped_reason: data.skippedReason ?? null,
 			});
@@ -883,7 +953,11 @@ export const runLocalKnowledgeInferenceAction = workspaceAction
 			return {
 				status: data.status ?? 'complete',
 				nodesProcessed: data.nodesProcessed ?? 0,
+				candidateRelationships: data.candidateRelationships ?? 0,
+				coOccurrenceCandidates: data.coOccurrenceCandidates ?? 0,
 				coOccurrenceLinks: data.coOccurrenceLinks ?? 0,
+				confirmedLinks: data.confirmedLinks ?? data.totalLinks ?? 0,
+				similarityCandidates: data.similarityCandidates ?? 0,
 				similarityLinks: data.similarityLinks ?? 0,
 				totalLinks: data.totalLinks ?? 0,
 				skippedReason: data.skippedReason ?? null,
@@ -893,7 +967,11 @@ export const runLocalKnowledgeInferenceAction = workspaceAction
 				status: 'error',
 				error: publicWorkerActionError(err),
 				nodesProcessed: 0,
+				candidateRelationships: 0,
+				coOccurrenceCandidates: 0,
 				coOccurrenceLinks: 0,
+				confirmedLinks: 0,
+				similarityCandidates: 0,
 				similarityLinks: 0,
 				totalLinks: 0,
 			};
@@ -1036,6 +1114,8 @@ export const createManualKnowledgeNodeAction = workspaceAction
 			backfill_contacts_completed: analysis?.backfillContactsCompleted ?? 0,
 			backfill_remaining_contacts: analysis?.backfillRemainingContacts ?? 0,
 			embedding_matches: analysis?.embeddingMatches ?? 0,
+			candidate_relationships: inference?.candidateRelationships ?? 0,
+			confirmed_links: inference?.confirmedLinks ?? inference?.totalLinks ?? 0,
 			total_links: inference?.totalLinks ?? 0,
 		});
 

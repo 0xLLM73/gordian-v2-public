@@ -136,15 +136,19 @@
 | `KNOWLEDGE_ANALYSIS_WORKER_LOCK_DURATION_MS` | CONFIG | No | `1800000` | BullMQ lock duration for long-running local KG analysis jobs. Increase if local Qwen/Nomic jobs renew too slowly under load. | local-ai |
 | `KNOWLEDGE_ANALYSIS_WORKER_STALLED_INTERVAL_MS` | CONFIG | No | `60000` | BullMQ stalled-job scan interval for the KG analysis worker. | local-ai |
 | `KNOWLEDGE_ANALYSIS_WORKER_MAX_STALLED_COUNT` | CONFIG | No | `2` | Number of stalled recoveries allowed before BullMQ fails a KG analysis job. | local-ai |
-| `AI_EXTRACTION_WORKER_CONCURRENCY` | CONFIG | No | `1` for local commitment LLMs, `3` otherwise | Caps concurrent commitment extraction jobs. Keep `1` for laptop-friendly local Ollama runs so multiple Qwen calls do not saturate GPU/RAM. | local-ai |
+| `AI_EXTRACTION_WORKER_CONCURRENCY` | CONFIG | No | `1` for local commitment LLMs, `3` otherwise | Caps concurrent commitment extraction jobs. Keep `1` for laptop-friendly local Ollama runs so multiple Gemma or Qwen calls do not saturate GPU/RAM. | local-ai |
 | `LOCAL_AI_REQUEST_TIMEOUT_MS` | CONFIG | No | `120000` | Timeout for local model HTTP requests before the worker fails/retries the job instead of leaving a model request active indefinitely. | local-ai |
 | `LOCAL_AI_OLLAMA_KEEP_ALIVE` | CONFIG | No | `1m` | Native Ollama chat request `keep_alive` value for local chat/commitment/digest-style calls. Use `default` to omit the field and let Ollama use its own default. | local-ai |
+| `LOCAL_AI_BENCHMARK_MODELS` | CONFIG | No | `qwen3.5:9b,gemma4:12b-it-q4_K_M` | Comma-separated non-embedding local LLM models compared by `pnpm local-ai:benchmark`. Embeddings are intentionally excluded from this benchmark. | local-ai |
+| `LOCAL_AI_BENCHMARK_BASE_URL` | CONFIG | No | `http://localhost:11434` | Native Ollama base URL used by `pnpm local-ai:benchmark`. Must be loopback/private for local-only validation. | local-ai |
+| `LOCAL_AI_BENCHMARK_KEEP_ALIVE` | CONFIG | No | `0` | Ollama `keep_alive` value used by the benchmark. The default unloads each model after calls so comparisons do not leave models resident. | local-ai |
+| `LOCAL_AI_BENCHMARK_TIMEOUT_MS` | CONFIG | No | `180000` | Per-call timeout for each benchmark case. Increase only when testing larger local models on slower hardware. | local-ai |
 | `RELATIONSHIP_EXTRACTION_CONCURRENCY` | CONFIG | No | `1` | Local introduction/new-connection scan worker concurrency. Values are capped from 1 to 4; keep `1` for personal-account testing unless local model latency requires more throughput. | local-ai |
 | `RELATIONSHIP_EXTRACTION_WORKER_LOCK_DURATION_MS` | CONFIG | No | `600000` | BullMQ lock duration for local introduction/new-connection relationship extraction jobs. | local-ai |
 | `RELATIONSHIP_EXTRACTION_WORKER_STALLED_INTERVAL_MS` | CONFIG | No | `60000` | BullMQ stalled-job scan interval for relationship extraction jobs. | local-ai |
 | `RELATIONSHIP_EXTRACTION_WORKER_MAX_STALLED_COUNT` | CONFIG | No | `2` | Number of stalled recoveries allowed before BullMQ fails a relationship extraction job. | local-ai |
 | `KNOWLEDGE_EMBEDDING_PROVIDER` | CONFIG | No | `openai` | KG embedding provider: `openai` or `local`. Local mode uses an OpenAI-compatible `/v1/embeddings` endpoint. | local-ai |
-| `KNOWLEDGE_EMBEDDING_PRESET` | CONFIG | No | `custom` | Optional local KG embedding preset label. Use `nomic` for the recommended local setup, `qwen` for the vector-only Qwen setup, or `custom` for explicit model settings. | local-ai |
+| `KNOWLEDGE_EMBEDDING_PRESET` | CONFIG | No | `custom` | Optional local KG embedding preset label. Use `nomic` for the recommended local setup, `qwen` for Qwen embeddings, or `custom` for explicit model settings. The Gemma setup intentionally writes `qwen` here because embeddings remain Qwen-backed. | local-ai |
 | `KNOWLEDGE_EMBEDDING_BASE_URL` | CONFIG | No | `https://api.openai.com/v1` | KG embedding base URL. Use `http://localhost:11434/v1` for local OpenAI-compatible servers. | local-ai |
 | `KNOWLEDGE_EMBEDDING_MODEL` | CONFIG | No | `text-embedding-3-small` | KG embedding model. Must return 512 dimensions because KG storage is `halfvec(512)`. | local-ai |
 | `KNOWLEDGE_EMBEDDING_DIMENSIONS` | CONFIG | No | `512` | Requested KG embedding dimensions. Values other than 512 are rejected. | local-ai |
@@ -152,20 +156,25 @@
 | `KNOWLEDGE_EMBEDDING_FINGERPRINT` | CONFIG | No | — | Setup-managed compatibility marker containing provider, preset, model, dimensions, and formatting version. `local-ai:doctor` warns if it no longer matches the active embedding runtime. | local-ai |
 | `KNOWLEDGE_LLM_PROVIDER` | CONFIG | No | `auto` | KG extraction provider: `auto`, `gemini`, `local`, or `disabled`. Local mode bypasses Anthropic Batch. | local-ai |
 | `KNOWLEDGE_LLM_BASE_URL` | CONFIG | No | `http://localhost:11434/v1` | OpenAI-compatible local `/v1/chat/completions` base URL for KG extraction. | local-ai |
-| `KNOWLEDGE_LLM_MODEL` | CONFIG | No | `llama3.1:8b` | JSON-capable local chat model for KG extraction. | local-ai |
+| `KNOWLEDGE_LLM_MODEL` | CONFIG | No | `gemma4:12b-it-q4_K_M` | JSON-capable local chat model for KG extraction, such as Gemma or Qwen. | local-ai |
 | `KNOWLEDGE_LLM_API_KEY` | SECRET | No | — | Optional bearer token for local/proxy KG LLM endpoints. Omit for local servers that do not require auth. | local-ai |
-| `COMMITMENT_LLM_PROVIDER` | CONFIG | No | `cloud` | Commitment extraction provider: `cloud`, `local`, or `disabled`. Use `local` with Qwen to avoid vendor egress. | local-ai |
+| `COMMITMENT_LLM_PROVIDER` | CONFIG | No | `cloud` | Commitment extraction provider: `cloud`, `local`, or `disabled`. Use `local` with Qwen or Gemma to avoid vendor egress. | local-ai |
 | `COMMITMENT_LLM_API` | CONFIG | No | `ollama` | Local commitment chat API: `ollama` uses native `/api/chat` with `think=false` and JSON Schema format; `openai-compatible` uses `/v1/chat/completions`. | local-ai |
 | `COMMITMENT_LLM_BASE_URL` | CONFIG | No | `http://localhost:11434` | Local commitment chat base URL. Must be loopback/private unless `ALLOW_NONLOCAL_AI_ENDPOINTS=true`. | local-ai |
-| `COMMITMENT_LLM_MODEL` | CONFIG | No | `qwen3.5:4b` | JSON-capable local chat model for commitment extraction. This is independent from the 512-dimensional KG embedding model. | local-ai |
+| `COMMITMENT_LLM_MODEL` | CONFIG | No | `gemma4:12b-it-q4_K_M` | JSON-capable local chat model for commitment extraction, relationship health, introduction detection, and new-connection detection. This is independent from the 512-dimensional KG embedding model. | local-ai |
 | `COMMITMENT_LLM_API_KEY` | SECRET | No | — | Optional bearer token for local/proxy commitment extraction endpoints. Omit for local servers that do not require auth. | local-ai |
 | `COMMITMENT_V2_SHADOW_ENABLED` | CONFIG | No | `true` | Runs the v2 commitment candidate/validator path in shadow mode and emits privacy-safe aggregate route/failure counts without changing stored commitments. Set `false` to disable. | local-ai |
 | `COMMITMENT_V2_ACTIVE_AUTOCREATE` | CONFIG | No | `false` | Allows the v2 router to classify exact, high-confidence explicit evidence as active during shadow analysis. Stored local commitments remain draft until the product path is explicitly migrated. | local-ai |
 | `CHAT_LLM_PROVIDER` | CONFIG | No | `cloud` | Chat assistant provider: `cloud` or `local`. If unset, chat preserves older behavior by falling back to local `COMMITMENT_LLM_*` when that provider is local. | local-ai |
 | `CHAT_LLM_API` | CONFIG | No | `ollama` | Local chat API: `ollama` uses native `/api/chat` with `think=false`; `openai-compatible` uses `/v1/chat/completions`. | local-ai |
 | `CHAT_LLM_BASE_URL` | CONFIG | No | `http://localhost:11434` | Local chat base URL. Must be loopback/private unless `ALLOW_NONLOCAL_AI_ENDPOINTS=true`. | local-ai |
-| `CHAT_LLM_MODEL` | CONFIG | No | `qwen3.5:4b` | JSON-capable local chat model for the assistant panel. | local-ai |
+| `CHAT_LLM_MODEL` | CONFIG | No | `gemma4:12b-it-q4_K_M` | JSON-capable local chat model for the assistant panel, follow-up drafts, and local deal AI. | local-ai |
 | `CHAT_LLM_API_KEY` | SECRET | No | — | Optional bearer token for local/proxy chat endpoints. Omit for local servers that do not require auth. | local-ai |
+| `DIGEST_LLM_PROVIDER` | CONFIG | No | `cloud` | Digest provider: `cloud` or `local`. If unset, digest falls back to the chat runtime when local chat is configured. | local-ai |
+| `DIGEST_LLM_API` | CONFIG | No | `ollama` | Local digest chat API: `ollama` uses native `/api/chat` with `think=false`; `openai-compatible` uses `/v1/chat/completions`. | local-ai |
+| `DIGEST_LLM_BASE_URL` | CONFIG | No | `http://localhost:11434` | Local digest base URL. Must be loopback/private unless `ALLOW_NONLOCAL_AI_ENDPOINTS=true`. | local-ai |
+| `DIGEST_LLM_MODEL` | CONFIG | No | `gemma4:12b-it-q4_K_M` | JSON-capable local chat model for digest generation. | local-ai |
+| `DIGEST_LLM_API_KEY` | SECRET | No | — | Optional bearer token for local/proxy digest endpoints. Omit for local servers that do not require auth. | local-ai |
 | `HELICONE_ENABLED` | CONFIG | No | `false` | Explicit opt-in for Helicone prompt observability. Requires `AI_PROCESSING_ENABLED=true` and `HELICONE_API_KEY`. | open-source |
 | `HELICONE_API_KEY` | SECRET | No | — | Helicone observability key. Ignored unless `HELICONE_ENABLED=true`. | followup9 |
 | `POSTHOG_API_KEY` | SECRET | No | — | Optional server-side PostHog project key for worker analytics. | open-source |

@@ -63,6 +63,66 @@ const TELEGRAM_ACCOUNT_ID_RE = /^\d{1,20}$/;
 const AUTH_PHONE_CODE_TTL_SECONDS = 5 * 60;
 type TelegramImportLocalAnalysisMode = 'deferred' | 'inline';
 type TelegramHistoryImportMode = 'recent' | 'backfill';
+type TelegramCodeDeliveryMethod =
+	| 'app'
+	| 'sms'
+	| 'call'
+	| 'flash_call'
+	| 'missed_call'
+	| 'email'
+	| 'fragment_sms'
+	| 'firebase_sms'
+	| 'email_setup'
+	| 'unknown';
+
+interface TelegramCodeDelivery {
+	method: TelegramCodeDeliveryMethod;
+	codeLength: number;
+	expiresInSeconds: number;
+	nextMethod?: TelegramCodeDeliveryMethod;
+}
+
+const TELEGRAM_CODE_DELIVERY_METHODS = new Set<TelegramCodeDeliveryMethod>([
+	'app',
+	'sms',
+	'call',
+	'flash_call',
+	'missed_call',
+	'email',
+	'fragment_sms',
+	'firebase_sms',
+	'email_setup',
+	'unknown',
+]);
+
+function normalizeCodeLength(value: unknown): number {
+	const numeric = Number(value);
+	return Number.isInteger(numeric) && numeric >= 1 && numeric <= 8 ? numeric : 5;
+}
+
+function normalizeDeliveryMethod(value: unknown): TelegramCodeDeliveryMethod {
+	return typeof value === 'string' &&
+		TELEGRAM_CODE_DELIVERY_METHODS.has(value as TelegramCodeDeliveryMethod)
+		? (value as TelegramCodeDeliveryMethod)
+		: 'unknown';
+}
+
+function normalizeSendCodeDelivery(raw: unknown): TelegramCodeDelivery {
+	const delivery = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+	const timeoutSeconds = Number(delivery.timeoutSeconds);
+	const expiresInSeconds =
+		Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
+			? Math.min(Math.trunc(timeoutSeconds), AUTH_PHONE_CODE_TTL_SECONDS)
+			: AUTH_PHONE_CODE_TTL_SECONDS;
+	const nextMethod = normalizeDeliveryMethod(delivery.nextMethod);
+
+	return {
+		method: normalizeDeliveryMethod(delivery.method),
+		codeLength: normalizeCodeLength(delivery.codeLength),
+		expiresInSeconds,
+		...(nextMethod !== 'unknown' ? { nextMethod } : {}),
+	};
+}
 
 function normalizeHistoryWindowDays(value: unknown): number | undefined {
 	if (value === undefined || value === null || value === '') return undefined;
@@ -162,6 +222,7 @@ telegram.post('/send-code', async (c) => {
 		const result = await sendToUser<{
 			type: string;
 			phoneCodeHash: string;
+			delivery?: unknown;
 		}>(poolKey, {
 			type: 'send-code',
 			phone,
@@ -173,7 +234,7 @@ telegram.post('/send-code', async (c) => {
 		// ASA-006: mark thread as auth-pending — prevents eviction until verify-code
 		setAuthPending(poolKey, true);
 
-		return c.json({ success: true });
+		return c.json({ success: true, delivery: normalizeSendCodeDelivery(result.delivery) });
 	} catch (err) {
 		console.error('[send-code] Error:', redactSensitive(err));
 		return c.json({ error: 'Failed to send code' }, 500);
@@ -220,7 +281,10 @@ telegram.post('/verify-code', async (c) => {
 	// ASA-003: retrieve phoneCodeHash from Redis (stored by send-code, never from client)
 	const phoneCodeHash = await connection.get(authKey);
 	if (!phoneCodeHash) {
-		return c.json({ error: 'Auth session expired. Please restart sign-in.' }, 400);
+		return c.json(
+			{ code: 'AUTH_SESSION_EXPIRED', error: 'Auth session expired. Please restart sign-in.' },
+			400,
+		);
 	}
 
 	try {
@@ -267,6 +331,19 @@ telegram.post('/verify-code', async (c) => {
 			await connection.expire(authKey, AUTH_PHONE_CODE_TTL_SECONDS);
 			setAuthPending(poolKey, true);
 			return c.json({ code: 'SESSION_PASSWORD_NEEDED' }, 400);
+		}
+		if (message.includes('PHONE_CODE_INVALID')) {
+			await connection.expire(authKey, AUTH_PHONE_CODE_TTL_SECONDS);
+			setAuthPending(poolKey, true);
+			return c.json({ code: 'PHONE_CODE_INVALID', error: 'Invalid verification code' }, 400);
+		}
+		if (message.includes('PHONE_CODE_EXPIRED')) {
+			await connection.del(authKey);
+			setAuthPending(poolKey, false);
+			return c.json(
+				{ code: 'AUTH_SESSION_EXPIRED', error: 'Auth session expired. Please restart sign-in.' },
+				400,
+			);
 		}
 		if (password !== undefined) {
 			await connection.expire(authKey, AUTH_PHONE_CODE_TTL_SECONDS);

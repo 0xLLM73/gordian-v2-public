@@ -7,12 +7,15 @@ const mockGenerateEmbedding = vi.hoisted(() => vi.fn());
 const mockGenerateEmbeddingsCached = vi.hoisted(() => vi.fn());
 const mockSearchKnowledgeNodes = vi.hoisted(() => vi.fn());
 const mockCreateKnowledgeNode = vi.hoisted(() => vi.fn());
+const mockCreateKnowledgeEvidence = vi.hoisted(() => vi.fn());
 const mockLinkContactToKnowledge = vi.hoisted(() => vi.fn());
 const mockIncrementNodeMentionCount = vi.hoisted(() => vi.fn());
 const mockGetExtractionLog = vi.hoisted(() => vi.fn());
 const mockUpsertExtractionLog = vi.hoisted(() => vi.fn());
 const mockFindNodeByNameAnyType = vi.hoisted(() => vi.fn());
 const mockFindNodeByAlias = vi.hoisted(() => vi.fn());
+const mockUpsertKnowledgeRelationshipCandidate = vi.hoisted(() => vi.fn());
+const mockPromoteKnowledgeRelationshipCandidate = vi.hoisted(() => vi.fn());
 const mockMaskEntities = vi.hoisted(() => vi.fn());
 const mockPrefilterEntities = vi.hoisted(() => vi.fn());
 
@@ -36,12 +39,15 @@ vi.mock('../prefilter', () => ({
 vi.mock('@repo/db', () => ({
 	searchKnowledgeNodes: mockSearchKnowledgeNodes,
 	createKnowledgeNode: mockCreateKnowledgeNode,
+	createKnowledgeEvidence: mockCreateKnowledgeEvidence,
 	linkContactToKnowledge: mockLinkContactToKnowledge,
 	incrementNodeMentionCount: mockIncrementNodeMentionCount,
 	getExtractionLog: mockGetExtractionLog,
 	upsertExtractionLog: mockUpsertExtractionLog,
 	findNodeByNameAnyType: mockFindNodeByNameAnyType,
 	findNodeByAlias: mockFindNodeByAlias,
+	upsertKnowledgeRelationshipCandidate: mockUpsertKnowledgeRelationshipCandidate,
+	promoteKnowledgeRelationshipCandidate: mockPromoteKnowledgeRelationshipCandidate,
 }));
 
 import {
@@ -71,7 +77,8 @@ const genericMessages = ['Hey, how are you?', 'Lets catch up soon'];
 const fakeEmbedding = Array(512).fill(0.1);
 
 /** Gemini returns JSON text, not tool_use blocks */
-const geminiJsonResponse = (entities: unknown[]) => JSON.stringify({ entities });
+const geminiJsonResponse = (entities: unknown[], relations: unknown[] = []) =>
+	JSON.stringify({ entities, relations });
 
 // ─── keywordPreFilter ─────────────────────────────────────────────────────────
 
@@ -107,6 +114,12 @@ describe('extractKnowledgeEntities', () => {
 		mockUpsertExtractionLog.mockResolvedValue({});
 		mockFindNodeByNameAnyType.mockResolvedValue(null);
 		mockFindNodeByAlias.mockResolvedValue(null);
+		mockCreateKnowledgeEvidence.mockResolvedValue({ id: 'evidence-rel-1' });
+		mockUpsertKnowledgeRelationshipCandidate.mockResolvedValue({
+			id: 'candidate-1',
+			promotionStatus: 'review_only',
+		});
+		mockPromoteKnowledgeRelationshipCandidate.mockResolvedValue({ promoted: false });
 		mockPrefilterEntities.mockReturnValue([]);
 		mockMaskEntities.mockImplementation((text: string) => ({
 			maskedText: text,
@@ -549,6 +562,193 @@ describe('extractKnowledgeEntities', () => {
 			mockLinkContactToKnowledge.mock.calls.some((call) => (call as unknown[])[1] === 'node-dspy'),
 		).toBe(false);
 	});
+
+	it('stores and promotes quote-backed LLM relationship candidates', async () => {
+		const messageId = '00000000-0000-4000-8000-000000000101';
+		const quote = 'Solana depends on Jito for this rollout';
+		mockInferWithGemini.mockResolvedValue(
+			geminiJsonResponse(
+				[
+					{
+						type: 'technology',
+						name: 'solana',
+						displayName: 'Solana',
+						description: 'Layer 1 blockchain',
+						relationshipType: 'works_on',
+						confidence: 0.91,
+					},
+					{
+						type: 'technology',
+						name: 'jito',
+						displayName: 'Jito',
+						description: 'Validator infrastructure',
+						relationshipType: 'uses',
+						confidence: 0.9,
+					},
+				],
+				[
+					{
+						head_mention: 'Solana',
+						tail_mention: 'Jito',
+						relation_type: 'DEPENDS_ON',
+						direction: 'head_to_tail',
+						source_message_id: messageId,
+						quote,
+						is_explicit: true,
+						negated: false,
+						confirmed_eligible: true,
+						temporal_status: 'current',
+						confidence: 0.86,
+					},
+				],
+			),
+		);
+		mockCreateKnowledgeNode
+			.mockResolvedValueOnce({ id: 'node-solana', name: 'solana', displayName: 'Solana' })
+			.mockResolvedValueOnce({ id: 'node-jito', name: 'jito', displayName: 'Jito' });
+		mockUpsertKnowledgeRelationshipCandidate.mockResolvedValue({
+			id: 'candidate-1',
+			promotionStatus: 'eligible',
+		});
+		mockPromoteKnowledgeRelationshipCandidate.mockResolvedValue({ promoted: true });
+
+		await extractKnowledgeEntities(
+			[
+				{
+					id: messageId,
+					text: `${quote}. We will invest in protocol infrastructure around it.`,
+					timestamp: '2026-05-07T00:00:00Z',
+				},
+			],
+			CONTACT,
+			WS,
+			testSalt,
+			testEnvelope,
+		);
+
+		expect(mockCreateKnowledgeEvidence).toHaveBeenCalledWith(
+			WS,
+			expect.objectContaining({
+				knowledgeNodeId: 'node-solana',
+				relatedKnowledgeNodeId: 'node-jito',
+				messageId,
+				relationType: 'depends_on',
+				evidenceKind: 'llm_extracted',
+				confidence: 0.86,
+				snippet: quote,
+				evidenceChunk: expect.objectContaining({
+					chunkKind: 'quote_window',
+					maskedText: quote,
+					embedding: fakeEmbedding,
+					embeddingFingerprint:
+						'openai:cloud:custom:text-embedding-3-small:512:kg-embedding-format-v1',
+				}),
+				metadata: expect.objectContaining({
+					confirmedEligible: true,
+					inferenceSource: 'gemini_flash',
+					isExplicit: true,
+					negated: false,
+					quoteVerified: true,
+					temporalStatus: 'current',
+				}),
+			}),
+			testEnvelope,
+		);
+		expect(mockUpsertKnowledgeRelationshipCandidate).toHaveBeenCalledWith(
+			WS,
+			expect.objectContaining({
+				sourceNodeId: 'node-solana',
+				targetNodeId: 'node-jito',
+				linkType: 'depends_on',
+				evidenceKind: 'llm_extracted',
+				confidence: 0.86,
+				sourceEvidenceId: 'evidence-rel-1',
+				messageId,
+				metadata: expect.objectContaining({
+					confirmedEligible: true,
+					isExplicit: true,
+					quoteVerified: true,
+					sourcePromptMessageId: messageId,
+				}),
+			}),
+		);
+		expect(mockPromoteKnowledgeRelationshipCandidate).toHaveBeenCalledWith(WS, 'candidate-1');
+	});
+
+	it('keeps weak or unverified LLM relationships in the review queue', async () => {
+		const messageId = '00000000-0000-4000-8000-000000000102';
+		mockInferWithGemini.mockResolvedValue(
+			geminiJsonResponse(
+				[
+					{
+						type: 'technology',
+						name: 'solana',
+						displayName: 'Solana',
+						description: 'Layer 1 blockchain',
+						relationshipType: 'works_on',
+						confidence: 0.91,
+					},
+					{
+						type: 'technology',
+						name: 'jito',
+						displayName: 'Jito',
+						description: 'Validator infrastructure',
+						relationshipType: 'uses',
+						confidence: 0.9,
+					},
+				],
+				[
+					{
+						head_mention: 'Solana',
+						tail_mention: 'Jito',
+						relation_type: 'DEPENDS_ON',
+						source_message_id: messageId,
+						quote: 'Solana depends on Jito',
+						is_explicit: false,
+						negated: false,
+						confirmed_eligible: false,
+						temporal_status: 'unknown',
+						confidence: 0.7,
+					},
+				],
+			),
+		);
+		mockCreateKnowledgeNode
+			.mockResolvedValueOnce({ id: 'node-solana', name: 'solana', displayName: 'Solana' })
+			.mockResolvedValueOnce({ id: 'node-jito', name: 'jito', displayName: 'Jito' });
+
+		await extractKnowledgeEntities(
+			[
+				{
+					id: messageId,
+					text: 'Solana and Jito were both mentioned as protocol infrastructure topics.',
+					timestamp: '2026-05-08T00:00:00Z',
+				},
+			],
+			CONTACT,
+			WS,
+			testSalt,
+			testEnvelope,
+		);
+
+		expect(mockCreateKnowledgeEvidence).not.toHaveBeenCalled();
+		expect(mockUpsertKnowledgeRelationshipCandidate).toHaveBeenCalledWith(
+			WS,
+			expect.objectContaining({
+				sourceNodeId: 'node-solana',
+				targetNodeId: 'node-jito',
+				linkType: 'depends_on',
+				sourceEvidenceId: null,
+				messageId,
+				metadata: expect.objectContaining({
+					confirmedEligible: false,
+					isExplicit: false,
+					quoteVerified: false,
+				}),
+			}),
+		);
+		expect(mockPromoteKnowledgeRelationshipCandidate).not.toHaveBeenCalled();
+	});
 });
 
 // ─── embeddingFirstMatch (per-message) ───────────────────────────────────────
@@ -557,6 +757,9 @@ describe('embeddingFirstMatch (per-message)', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockGenerateEmbedding.mockResolvedValue(fakeEmbedding);
+		mockGenerateEmbeddingsCached.mockImplementation((texts: string[]) =>
+			Promise.resolve(texts.map((_text, index) => ({ embedding: fakeEmbedding, index }))),
+		);
 		mockSearchKnowledgeNodes.mockResolvedValue([]);
 		mockCreateKnowledgeNode.mockResolvedValue({ id: 'node-1', name: 'ethereum' });
 		mockLinkContactToKnowledge.mockResolvedValue({});
@@ -611,6 +814,20 @@ describe('embeddingFirstMatch (per-message)', () => {
 			(call) => call[1] === 'node-solana',
 		);
 		expect(linkCalls.length).toBeLessThanOrEqual(1);
+		expect(linkCalls[0]?.[5]).toEqual(
+			expect.objectContaining({
+				evidenceKind: 'embedding_match',
+				evidenceChunk: expect.objectContaining({
+					chunkKind: 'message_window',
+					maskedText: expect.stringContaining('Solana'),
+					embedding: fakeEmbedding,
+					embeddingFingerprint:
+						'openai:cloud:custom:text-embedding-3-small:512:kg-embedding-format-v1',
+					maskingPolicyVersion: 'mask-v1',
+					chunkingPolicyVersion: 'evidence-window-v1',
+				}),
+			}),
+		);
 	});
 });
 

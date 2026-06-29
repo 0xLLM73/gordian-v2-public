@@ -18,8 +18,13 @@ const mockUpdate = vi.hoisted(() => vi.fn(() => ({ set: mockUpdateSet })));
 
 const mockInsertReturning = vi.hoisted(() => vi.fn());
 const mockOnConflict = vi.hoisted(() => vi.fn(() => ({ returning: mockInsertReturning })));
+const mockOnConflictDoNothing = vi.hoisted(() => vi.fn(() => ({ returning: mockInsertReturning })));
 const mockInsertValues = vi.hoisted(() =>
-	vi.fn(() => ({ onConflictDoUpdate: mockOnConflict, returning: mockInsertReturning })),
+	vi.fn(() => ({
+		onConflictDoNothing: mockOnConflictDoNothing,
+		onConflictDoUpdate: mockOnConflict,
+		returning: mockInsertReturning,
+	})),
 );
 const mockInsert = vi.hoisted(() => vi.fn(() => ({ values: mockInsertValues })));
 
@@ -55,6 +60,7 @@ const mockEnvelope = {
 
 import {
 	createKnowledgeEvidence,
+	createKnowledgeEvidenceChunk,
 	createKnowledgeLink,
 	createKnowledgeNode,
 	deleteKnowledgeNode,
@@ -109,9 +115,11 @@ describe('createKnowledgeNode', () => {
 		mockSelectLimit.mockResolvedValue(undefined);
 		mockInsert.mockReturnValue({ values: mockInsertValues });
 		mockInsertValues.mockReturnValue({
+			onConflictDoNothing: mockOnConflictDoNothing,
 			onConflictDoUpdate: mockOnConflict,
 			returning: mockInsertReturning,
 		});
+		mockOnConflictDoNothing.mockReturnValue({ returning: mockInsertReturning });
 		mockOnConflict.mockReturnValue({ returning: mockInsertReturning });
 	});
 
@@ -192,9 +200,11 @@ describe('createKnowledgeNode', () => {
 			vi.clearAllMocks();
 			mockInsert.mockReturnValue({ values: mockInsertValues });
 			mockInsertValues.mockReturnValue({
+				onConflictDoNothing: mockOnConflictDoNothing,
 				onConflictDoUpdate: mockOnConflict,
 				returning: mockInsertReturning,
 			});
+			mockOnConflictDoNothing.mockReturnValue({ returning: mockInsertReturning });
 			mockInsertReturning.mockResolvedValueOnce([{ ...baseNode, type }]);
 
 			const result = await createKnowledgeNode(
@@ -438,6 +448,20 @@ describe('evidence-aware knowledge search', () => {
 			occurredAt: evidenceDate,
 			createdAt: evidenceDate,
 		};
+		const chunkRow = {
+			id: 'chunk-1',
+			knowledgeNodeId: 'node-1',
+			knowledgeEvidenceId: 'evidence-1',
+			contactId: 'contact-1',
+			messageId: 'message-1',
+			chunkKind: 'evidence_window',
+			maskedText: 'Ada talked about [TOPIC] staking.',
+			embeddingFingerprint: 'local:local:qwen:qwen3-embedding:512:kg-embedding-format-v1',
+			maskingPolicyVersion: 'mask-v1',
+			chunkingPolicyVersion: 'evidence-window-v1',
+			occurredAt: evidenceDate,
+			createdAt: evidenceDate,
+		};
 
 		const exactLimit = vi.fn().mockResolvedValueOnce([baseNode]);
 		const exactOrderBy = vi.fn().mockReturnValue({ limit: exactLimit });
@@ -450,13 +474,16 @@ describe('evidence-aware knowledge search', () => {
 		const contactsInnerJoin = vi.fn().mockReturnValue({ where: contactsWhere });
 		const evidenceOrderBy = vi.fn().mockResolvedValueOnce([evidenceRow]);
 		const evidenceWhere = vi.fn().mockReturnValue({ orderBy: evidenceOrderBy });
+		const chunkOrderBy = vi.fn().mockResolvedValueOnce([chunkRow]);
+		const chunkWhere = vi.fn().mockReturnValue({ orderBy: chunkOrderBy });
 
 		mockSelect.mockReturnValue({ from: mockSelectFrom });
 		mockSelectFrom
 			.mockReturnValueOnce({ where: exactWhere })
 			.mockReturnValueOnce({ where: aliasWhere })
 			.mockReturnValueOnce({ innerJoin: contactsInnerJoin })
-			.mockReturnValueOnce({ where: evidenceWhere });
+			.mockReturnValueOnce({ where: evidenceWhere })
+			.mockReturnValueOnce({ where: chunkWhere });
 
 		const result = await searchKnowledgeNodesWithEvidence(
 			WS,
@@ -483,6 +510,13 @@ describe('evidence-aware knowledge search', () => {
 			id: 'evidence-1',
 			snippet: 'Ada talked about Ethereum staking.',
 			confidence: 0.93,
+		});
+		expect(result[0]?.evidenceChunkCount).toBe(1);
+		expect(result[0]?.evidenceChunks[0]).toMatchObject({
+			id: 'chunk-1',
+			knowledgeEvidenceId: 'evidence-1',
+			maskedText: 'Ada talked about [TOPIC] staking.',
+			similarity: null,
 		});
 		expect(result[0]?.matchReasons).toEqual(
 			expect.arrayContaining(['exact name', 'message evidence', 'contact evidence']),
@@ -567,6 +601,8 @@ describe('evidence-aware knowledge search', () => {
 			},
 		]);
 		const evidenceWhere = vi.fn().mockReturnValue({ orderBy: evidenceOrderBy });
+		const chunkOrderBy = vi.fn().mockResolvedValueOnce([]);
+		const chunkWhere = vi.fn().mockReturnValue({ orderBy: chunkOrderBy });
 
 		mockExecute.mockResolvedValueOnce([
 			{
@@ -587,7 +623,8 @@ describe('evidence-aware knowledge search', () => {
 			.mockReturnValueOnce({ where: aliasWhere })
 			.mockReturnValueOnce({ innerJoin: recallInnerJoin })
 			.mockReturnValueOnce({ innerJoin: contactsInnerJoin })
-			.mockReturnValueOnce({ where: evidenceWhere });
+			.mockReturnValueOnce({ where: evidenceWhere })
+			.mockReturnValueOnce({ where: chunkWhere });
 
 		const result = await searchKnowledgeNodesWithEvidence(WS, 'DePIN', undefined, mockEnvelope, {
 			limit: 5,
@@ -654,9 +691,11 @@ describe('linkContactToKnowledge', () => {
 		mockSelectLimit.mockResolvedValue(undefined);
 		mockInsert.mockReturnValue({ values: mockInsertValues });
 		mockInsertValues.mockReturnValue({
+			onConflictDoNothing: mockOnConflictDoNothing,
 			onConflictDoUpdate: mockOnConflict,
 			returning: mockInsertReturning,
 		});
+		mockOnConflictDoNothing.mockReturnValue({ returning: mockInsertReturning });
 		mockOnConflict.mockReturnValue({ returning: mockInsertReturning });
 	});
 
@@ -722,9 +761,11 @@ describe('linkContactToKnowledge', () => {
 			vi.clearAllMocks();
 			mockInsert.mockReturnValue({ values: mockInsertValues });
 			mockInsertValues.mockReturnValue({
+				onConflictDoNothing: mockOnConflictDoNothing,
 				onConflictDoUpdate: mockOnConflict,
 				returning: mockInsertReturning,
 			});
+			mockOnConflictDoNothing.mockReturnValue({ returning: mockInsertReturning });
 			mockOnConflict.mockReturnValue({ returning: mockInsertReturning });
 			mockInsertReturning.mockResolvedValueOnce([{ id: 'link-1', relationType: relType }]);
 
@@ -865,11 +906,17 @@ describe('linkContactToKnowledge', () => {
 describe('knowledge evidence DAL', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockSelect.mockReturnValue({ from: mockSelectFrom });
+		mockSelectFrom.mockReturnValue({ where: mockSelectWhere });
+		mockSelectWhere.mockReturnValue({ limit: mockSelectLimit });
+		mockSelectLimit.mockResolvedValue(undefined);
 		mockInsert.mockReturnValue({ values: mockInsertValues });
 		mockInsertValues.mockReturnValue({
+			onConflictDoNothing: mockOnConflictDoNothing,
 			onConflictDoUpdate: mockOnConflict,
 			returning: mockInsertReturning,
 		});
+		mockOnConflictDoNothing.mockReturnValue({ returning: mockInsertReturning });
 		mockOnConflict.mockReturnValue({ returning: mockInsertReturning });
 	});
 
@@ -963,6 +1010,89 @@ describe('knowledge evidence DAL', () => {
 				snippet: 'sensitive message text',
 			}),
 		).rejects.toThrow('createKnowledgeEvidence: envelope required when snippet is provided');
+		expect(mockInsert).not.toHaveBeenCalled();
+	});
+
+	it('inserts a fingerprinted masked evidence chunk', async () => {
+		const evidenceChunk = {
+			id: 'chunk-1',
+			workspaceId: WS,
+			knowledgeEvidenceId: 'evidence-1',
+			knowledgeNodeId: 'node-1',
+			contactId: 'contact-1',
+			messageId: 'message-1',
+			chunkKind: 'evidence_window',
+			maskedText: 'Ada mentioned [TOPIC].',
+			embeddingFingerprint: 'local:local:qwen:qwen3-embedding:512:kg-embedding-format-v1',
+			maskingPolicyVersion: 'mask-v1',
+			chunkingPolicyVersion: 'evidence-window-v1',
+			createdAt: new Date(),
+		};
+		mockInsertReturning.mockResolvedValueOnce([evidenceChunk]);
+
+		const result = await createKnowledgeEvidenceChunk(WS, {
+			knowledgeEvidenceId: 'evidence-1',
+			knowledgeNodeId: 'node-1',
+			contactId: 'contact-1',
+			messageId: 'message-1',
+			maskedText: '  Ada mentioned [TOPIC].  ',
+			embedding: Array(512).fill(0.1),
+			embeddingFingerprint: 'local:local:qwen:qwen3-embedding:512:kg-embedding-format-v1',
+			occurredAt: new Date('2026-05-01T00:00:00Z'),
+		});
+
+		expect(mockInsertValues).toHaveBeenCalledWith(
+			expect.objectContaining({
+				workspaceId: WS,
+				knowledgeEvidenceId: 'evidence-1',
+				knowledgeNodeId: 'node-1',
+				contactId: 'contact-1',
+				messageId: 'message-1',
+				chunkKind: 'evidence_window',
+				maskedText: 'Ada mentioned [TOPIC].',
+				embeddingFingerprint: 'local:local:qwen:qwen3-embedding:512:kg-embedding-format-v1',
+				maskingPolicyVersion: 'mask-v1',
+				chunkingPolicyVersion: 'evidence-window-v1',
+			}),
+		);
+		expect(mockOnConflictDoNothing).toHaveBeenCalled();
+		expect(result).toEqual(evidenceChunk);
+	});
+
+	it('returns an existing chunk when the idempotent insert conflicts', async () => {
+		const existingChunk = {
+			id: 'chunk-existing',
+			workspaceId: WS,
+			knowledgeEvidenceId: 'evidence-1',
+			knowledgeNodeId: 'node-1',
+			chunkKind: 'evidence_window',
+			maskedText: 'Ada mentioned [TOPIC].',
+			embeddingFingerprint: 'fingerprint-1',
+		};
+		mockInsertReturning.mockResolvedValueOnce([]);
+		mockSelectLimit.mockResolvedValueOnce([existingChunk]);
+
+		const result = await createKnowledgeEvidenceChunk(WS, {
+			knowledgeEvidenceId: 'evidence-1',
+			knowledgeNodeId: 'node-1',
+			maskedText: 'Ada mentioned [TOPIC].',
+			embedding: Array(512).fill(0.1),
+			embeddingFingerprint: 'fingerprint-1',
+		});
+
+		expect(result).toEqual(existingChunk);
+		expect(mockSelectLimit).toHaveBeenCalledWith(1);
+	});
+
+	it('rejects empty masked evidence chunk text', async () => {
+		await expect(
+			createKnowledgeEvidenceChunk(WS, {
+				knowledgeEvidenceId: 'evidence-1',
+				knowledgeNodeId: 'node-1',
+				maskedText: '   ',
+				embeddingFingerprint: 'fingerprint-1',
+			}),
+		).rejects.toThrow('createKnowledgeEvidenceChunk: maskedText must not be empty');
 		expect(mockInsert).not.toHaveBeenCalled();
 	});
 
@@ -1172,9 +1302,11 @@ describe('knowledge extraction log lifecycle', () => {
 		vi.clearAllMocks();
 		mockInsert.mockReturnValue({ values: mockInsertValues });
 		mockInsertValues.mockReturnValue({
+			onConflictDoNothing: mockOnConflictDoNothing,
 			onConflictDoUpdate: mockOnConflict,
 			returning: mockInsertReturning,
 		});
+		mockOnConflictDoNothing.mockReturnValue({ returning: mockInsertReturning });
 		mockOnConflict.mockReturnValue({ returning: mockInsertReturning });
 	});
 
@@ -1381,9 +1513,11 @@ describe('createKnowledgeLink', () => {
 		vi.clearAllMocks();
 		mockInsert.mockReturnValue({ values: mockInsertValues });
 		mockInsertValues.mockReturnValue({
+			onConflictDoNothing: mockOnConflictDoNothing,
 			onConflictDoUpdate: mockOnConflict,
 			returning: mockInsertReturning,
 		});
+		mockOnConflictDoNothing.mockReturnValue({ returning: mockInsertReturning });
 		mockOnConflict.mockReturnValue({ returning: mockInsertReturning });
 	});
 
@@ -1458,9 +1592,11 @@ describe('createKnowledgeLink', () => {
 			vi.clearAllMocks();
 			mockInsert.mockReturnValue({ values: mockInsertValues });
 			mockInsertValues.mockReturnValue({
+				onConflictDoNothing: mockOnConflictDoNothing,
 				onConflictDoUpdate: mockOnConflict,
 				returning: mockInsertReturning,
 			});
+			mockOnConflictDoNothing.mockReturnValue({ returning: mockInsertReturning });
 			mockOnConflict.mockReturnValue({ returning: mockInsertReturning });
 			mockInsertReturning.mockResolvedValueOnce([{ id: 'link-1', linkType }]);
 

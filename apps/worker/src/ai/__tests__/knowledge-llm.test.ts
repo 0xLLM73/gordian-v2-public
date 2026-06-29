@@ -6,7 +6,11 @@ vi.mock('../gemini-inference', () => ({
 	inferWithGemini: mockInferWithGemini,
 }));
 
-import { inferKnowledgeEntitiesJson, parseKnowledgeEntityJson } from '../knowledge-llm';
+import {
+	inferKnowledgeEntitiesJson,
+	parseKnowledgeEntityJson,
+	parseKnowledgeInferenceJson,
+} from '../knowledge-llm';
 
 describe('knowledge LLM provider', () => {
 	const fetchMock = vi.fn();
@@ -124,6 +128,120 @@ describe('knowledge LLM provider', () => {
 		expect(entities[0].name).toBe('crm');
 	});
 
+	it('parses relationship edges with local-model key variants and aliases', () => {
+		const parsed = parseKnowledgeInferenceJson(
+			JSON.stringify({
+				entities: [
+					{
+						confidence: 0.91,
+						description: 'Layer 1 blockchain',
+						displayName: 'Solana',
+						name: 'solana',
+						relationshipType: 'works_on',
+						type: 'technology',
+					},
+				],
+				relationships: [
+					{
+						confidence: '0.86',
+						confirmed_eligible: 'yes',
+						head_mention: 'Solana',
+						is_explicit: true,
+						negated: 'false',
+						quote: 'Solana depends on Jito for this rollout',
+						relation_type: 'DEPENDS',
+						source_message_id: 'msg-1',
+						tail_mention: 'Jito',
+						temporal_status: 'current',
+					},
+				],
+			}),
+		);
+
+		expect(parsed.entities).toHaveLength(1);
+		expect(parsed.relations).toEqual([
+			expect.objectContaining({
+				confidence: 0.86,
+				confirmedEligible: true,
+				headMention: 'Solana',
+				isExplicit: true,
+				negated: false,
+				quote: 'Solana depends on Jito for this rollout',
+				relationType: 'depends_on',
+				sourceMessageId: 'msg-1',
+				tailMention: 'Jito',
+				temporalStatus: 'current',
+			}),
+		]);
+	});
+
+	it('parses Qwen-style subject predicate object relationship fields', () => {
+		const parsed = parseKnowledgeInferenceJson(
+			JSON.stringify({
+				relations: [
+					{
+						confidence: 0.8,
+						object_node: 'Solana payment rails rollout',
+						predicate: 'working_on',
+						quote: 'Ben is working on the Solana payment rails rollout',
+						source_message_id: '[source:m1]',
+						subject_node: 'Ben',
+					},
+				],
+			}),
+		);
+
+		expect(parsed.relations).toEqual([
+			expect.objectContaining({
+				headMention: 'Ben',
+				relationType: 'works_on',
+				tailMention: 'Solana payment rails rollout',
+			}),
+		]);
+	});
+
+	it('normalizes local-model relation and temporal variants conservatively', () => {
+		const parsed = parseKnowledgeInferenceJson(
+			JSON.stringify({
+				relations: [
+					{
+						confirmed_eligible: false,
+						head_mention: 'Jordan',
+						is_explicit: true,
+						negated: false,
+						quote: 'Jordan works with Orbit Labs',
+						relation_type: 'WORKS_WITH',
+						source_message_id: 'm1',
+						tail_mention: 'Orbit Labs',
+						temporal_status: 'current_state_negation_of_past_affiliation',
+					},
+					{
+						confirmed_eligible: false,
+						head_mention: 'we',
+						is_explicit: true,
+						negated: false,
+						quote: 'We used to use HubSpot',
+						relation_type: 'USED_TO_USE',
+						source_message_id: 'm2',
+						tail_mention: 'HubSpot',
+						temporal_status: 'historical',
+					},
+				],
+			}),
+		);
+
+		expect(parsed.relations).toEqual([
+			expect.objectContaining({
+				relationType: 'affiliated_with',
+				temporalStatus: 'past',
+			}),
+			expect.objectContaining({
+				relationType: 'uses',
+				temporalStatus: 'past',
+			}),
+		]);
+	});
+
 	it('routes local KG extraction to an OpenAI-compatible chat endpoint', async () => {
 		vi.stubEnv('KNOWLEDGE_LLM_PROVIDER', 'local');
 		vi.stubEnv('KNOWLEDGE_LLM_BASE_URL', 'http://localhost:11434/v1');
@@ -199,6 +317,6 @@ describe('knowledge LLM provider', () => {
 
 		expect(fetchMock).not.toHaveBeenCalled();
 		expect(mockInferWithGemini).not.toHaveBeenCalled();
-		expect(result).toEqual({ entities: [], source: 'disabled' });
+		expect(result).toEqual({ entities: [], relations: [], source: 'disabled' });
 	});
 });

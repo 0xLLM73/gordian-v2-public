@@ -23,6 +23,65 @@ const { apiId, apiHash } = workerData as {
 // GramJS client — initialized without session, session set per-user on demand
 let client: TelegramClient | null = null;
 
+type SendCodeDeliveryMethod =
+	| 'app'
+	| 'sms'
+	| 'call'
+	| 'flash_call'
+	| 'missed_call'
+	| 'email'
+	| 'fragment_sms'
+	| 'firebase_sms'
+	| 'email_setup'
+	| 'unknown';
+
+function sentCodeMethod(className: string | undefined): SendCodeDeliveryMethod {
+	switch (className) {
+		case 'auth.SentCodeTypeApp':
+			return 'app';
+		case 'auth.SentCodeTypeSms':
+		case 'auth.SentCodeTypeSmsWord':
+		case 'auth.SentCodeTypeSmsPhrase':
+		case 'auth.CodeTypeSms':
+			return 'sms';
+		case 'auth.SentCodeTypeCall':
+		case 'auth.CodeTypeCall':
+			return 'call';
+		case 'auth.SentCodeTypeFlashCall':
+		case 'auth.CodeTypeFlashCall':
+			return 'flash_call';
+		case 'auth.SentCodeTypeMissedCall':
+		case 'auth.CodeTypeMissedCall':
+			return 'missed_call';
+		case 'auth.SentCodeTypeEmailCode':
+			return 'email';
+		case 'auth.SentCodeTypeFragmentSms':
+		case 'auth.CodeTypeFragmentSms':
+			return 'fragment_sms';
+		case 'auth.SentCodeTypeFirebaseSms':
+			return 'firebase_sms';
+		case 'auth.SentCodeTypeSetUpEmailRequired':
+			return 'email_setup';
+		default:
+			return 'unknown';
+	}
+}
+
+function sentCodeLength(type: Api.auth.TypeSentCodeType): number {
+	const candidate = 'length' in type ? Number(type.length) : 5;
+	return Number.isInteger(candidate) && candidate >= 1 && candidate <= 8 ? candidate : 5;
+}
+
+function describeSentCode(result: Api.auth.SentCode) {
+	return {
+		method: sentCodeMethod(result.type.className),
+		codeLength: sentCodeLength(result.type),
+		nextMethod: sentCodeMethod(result.nextType?.className),
+		timeoutSeconds:
+			typeof result.timeout === 'number' && result.timeout > 0 ? result.timeout : undefined,
+	};
+}
+
 function toTelegramBigInt(value: { toString(): string } | string) {
 	return bigInt(value.toString());
 }
@@ -122,11 +181,22 @@ async function handleMessage(msg: {
 					await initClient('');
 				}
 				// biome-ignore lint/style/noNonNullAssertion: client is guaranteed non-null after initClient above
-				const result = await client!.sendCode({ apiId, apiHash }, msg.phone as string);
+				const result = await client!.invoke(
+					new Api.auth.SendCode({
+						phoneNumber: msg.phone as string,
+						apiId,
+						apiHash,
+						settings: new Api.CodeSettings({}),
+					}),
+				);
+				if (result instanceof Api.auth.SentCodeSuccess) {
+					throw new Error('Telegram returned authorization during send-code');
+				}
 				parentPort?.postMessage({
 					type: 'send-code-result',
 					id: msg.id,
 					phoneCodeHash: result.phoneCodeHash,
+					delivery: describeSentCode(result),
 				});
 				break;
 			}

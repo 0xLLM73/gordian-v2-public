@@ -148,12 +148,16 @@ describe('/send-code rate limiting (SEC-021)', () => {
 		(connection.eval as ReturnType<typeof vi.fn>).mockResolvedValue(3); // at limit, not over
 		(sendToUser as ReturnType<typeof vi.fn>).mockResolvedValue({
 			phoneCodeHash: 'hash123',
+			delivery: { method: 'app', codeLength: 6, timeoutSeconds: 120, nextMethod: 'sms' },
 		});
 
 		const res = await post('/send-code', { phone: PHONE_A });
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body).toEqual({ success: true }); // ASA-003: hash never returned to client
+		expect(body).toEqual({
+			success: true,
+			delivery: { method: 'app', codeLength: 6, expiresInSeconds: 120, nextMethod: 'sms' },
+		});
 	});
 
 	it('rate-limit-send-code: 4th call returns 429', async () => {
@@ -245,7 +249,33 @@ describe('ASA-003 — send-code stores hash server-side, never returns it', () =
 		const res = await post('/send-code', { phone: PHONE_A });
 		const body = await res.json();
 		expect(body).not.toHaveProperty('phoneCodeHash');
-		expect(body).toEqual({ success: true });
+		expect(body).toEqual({
+			success: true,
+			delivery: { method: 'unknown', codeLength: 5, expiresInSeconds: 300 },
+		});
+	});
+
+	it('returns only non-secret Telegram delivery metadata', async () => {
+		(sendToUser as ReturnType<typeof vi.fn>).mockResolvedValue({
+			phoneCodeHash: 'secret-hash-abc',
+			delivery: {
+				method: 'sms',
+				codeLength: 8,
+				timeoutSeconds: 900,
+				nextMethod: 'call',
+				phoneCodeHash: 'should-not-leak',
+			},
+		});
+
+		const res = await post('/send-code', { phone: PHONE_A });
+		const body = await res.json();
+
+		expect(body).toEqual({
+			success: true,
+			delivery: { method: 'sms', codeLength: 8, expiresInSeconds: 300, nextMethod: 'call' },
+		});
+		expect(JSON.stringify(body)).not.toContain('secret-hash-abc');
+		expect(JSON.stringify(body)).not.toContain('should-not-leak');
 	});
 
 	it('sets isAuthPending=true after send-code (ASA-006)', async () => {
@@ -356,6 +386,34 @@ describe('ASA-003 — verify-code retrieves hash from Redis, one-time use', () =
 		expect(connection.del).not.toHaveBeenCalled();
 		expect(connection.expire).toHaveBeenCalledWith(expectedAuthKey(PHONE_A), 300);
 		expect(setAuthPending).toHaveBeenCalledWith(expectedPoolKey(PHONE_A), true);
+	});
+
+	it('keeps auth state alive after an invalid login code so the user can retry', async () => {
+		(sendToUser as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('PHONE_CODE_INVALID'));
+
+		const res = await post('/verify-code', { phone: PHONE_A, code: '12345', userId: USER_ID });
+		const body = await res.json();
+
+		expect(res.status).toBe(400);
+		expect(body).toEqual({ code: 'PHONE_CODE_INVALID', error: 'Invalid verification code' });
+		expect(connection.del).not.toHaveBeenCalled();
+		expect(connection.expire).toHaveBeenCalledWith(expectedAuthKey(PHONE_A), 300);
+		expect(setAuthPending).toHaveBeenCalledWith(expectedPoolKey(PHONE_A), true);
+	});
+
+	it('clears auth state after Telegram reports an expired login code', async () => {
+		(sendToUser as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('PHONE_CODE_EXPIRED'));
+
+		const res = await post('/verify-code', { phone: PHONE_A, code: '12345', userId: USER_ID });
+		const body = await res.json();
+
+		expect(res.status).toBe(400);
+		expect(body).toEqual({
+			code: 'AUTH_SESSION_EXPIRED',
+			error: 'Auth session expired. Please restart sign-in.',
+		});
+		expect(connection.del).toHaveBeenCalledWith(expectedAuthKey(PHONE_A));
+		expect(setAuthPending).toHaveBeenCalledWith(expectedPoolKey(PHONE_A), false);
 	});
 
 	it('keeps auth state alive after a wrong 2FA password attempt', async () => {

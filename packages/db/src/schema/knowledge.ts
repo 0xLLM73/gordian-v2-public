@@ -40,7 +40,14 @@ export const knowledgeContactRelTypeEnum = pgEnum('knowledge_contact_rel_type', 
 ]);
 
 export const knowledgeLinkTypeEnum = pgEnum('knowledge_link_type', [
+	'affiliated_with',
+	'alternative_to',
+	'works_on',
+	'owns_or_responsible_for',
+	'interested_in',
+	'requested',
 	'part_of',
+	'depends_on',
 	'related_to',
 	'competes_with',
 	'builds_on',
@@ -259,5 +266,117 @@ export const knowledgeEvidence = pgTable(
 			table.workspaceId,
 			table.relatedKnowledgeNodeId,
 		),
+	],
+);
+
+/**
+ * ANN-retrievable evidence windows for knowledge graph search.
+ *
+ * These rows are retrieval indexes, not confirmed graph facts. They point back
+ * to encrypted `knowledge_evidence` provenance and store only masked text plus a
+ * fingerprinted 512-dimensional embedding lane.
+ */
+export const knowledgeEvidenceChunks = pgTable(
+	'knowledge_evidence_chunks',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		knowledgeEvidenceId: uuid('knowledge_evidence_id')
+			.notNull()
+			.references(() => knowledgeEvidence.id, { onDelete: 'cascade' }),
+		knowledgeNodeId: uuid('knowledge_node_id')
+			.notNull()
+			.references(() => knowledgeNodes.id, { onDelete: 'cascade' }),
+		relatedKnowledgeNodeId: uuid('related_knowledge_node_id').references(() => knowledgeNodes.id, {
+			onDelete: 'set null',
+		}),
+		contactId: uuid('contact_id').references(() => contacts.id, { onDelete: 'set null' }),
+		messageId: uuid('message_id').references(() => messages.id, { onDelete: 'set null' }),
+		chunkKind: text('chunk_kind').notNull().default('evidence_window'),
+		maskedText: text('masked_text').notNull(),
+		sourceStartOffset: integer('source_start_offset'),
+		sourceEndOffset: integer('source_end_offset'),
+		participants: jsonb('participants').$type<string[]>(),
+		embedding: halfvec('embedding'),
+		embeddingFingerprint: text('embedding_fingerprint').notNull(),
+		maskingPolicyVersion: text('masking_policy_version').notNull().default('mask-v1'),
+		chunkingPolicyVersion: text('chunking_policy_version').notNull().default('evidence-window-v1'),
+		metadata: jsonb('metadata').$type<Record<string, unknown>>(),
+		occurredAt: timestamp('occurred_at', { withTimezone: true }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(table) => [
+		index('knowledge_evidence_chunks_workspace_idx').on(table.workspaceId),
+		index('knowledge_evidence_chunks_node_idx').on(table.workspaceId, table.knowledgeNodeId),
+		index('knowledge_evidence_chunks_evidence_idx').on(
+			table.workspaceId,
+			table.knowledgeEvidenceId,
+		),
+		index('knowledge_evidence_chunks_message_idx').on(table.workspaceId, table.messageId),
+		index('knowledge_evidence_chunks_fingerprint_idx').on(
+			table.workspaceId,
+			table.embeddingFingerprint,
+		),
+		index('knowledge_evidence_chunks_occurred_at_idx').on(table.workspaceId, table.occurredAt),
+	],
+);
+
+/**
+ * Reviewable node-to-node relationship candidates.
+ *
+ * Heuristic signals such as embedding similarity and contact co-occurrence are
+ * stored here instead of being promoted directly into knowledge_links. Only
+ * direct, quote-backed evidence should promote into confirmed graph edges.
+ */
+export const knowledgeRelationshipCandidates = pgTable(
+	'knowledge_relationship_candidates',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		sourceNodeId: uuid('source_node_id')
+			.notNull()
+			.references(() => knowledgeNodes.id, { onDelete: 'cascade' }),
+		targetNodeId: uuid('target_node_id')
+			.notNull()
+			.references(() => knowledgeNodes.id, { onDelete: 'cascade' }),
+		linkType: knowledgeLinkTypeEnum('link_type').notNull(),
+		evidenceKind: knowledgeEvidenceKindEnum('evidence_kind').notNull(),
+		confidence: real('confidence'),
+		/** review_only, eligible, promoted, or rejected. Kept as text for additive migration safety. */
+		promotionStatus: text('promotion_status').notNull().default('review_only'),
+		promotionReason: text('promotion_reason'),
+		sourceEvidenceId: uuid('source_evidence_id').references(() => knowledgeEvidence.id, {
+			onDelete: 'set null',
+		}),
+		messageId: uuid('message_id').references(() => messages.id, { onDelete: 'set null' }),
+		promotedLinkId: uuid('promoted_link_id').references(() => knowledgeLinks.id, {
+			onDelete: 'set null',
+		}),
+		promotedAt: timestamp('promoted_at', { withTimezone: true }),
+		metadata: jsonb('metadata').$type<Record<string, unknown>>(),
+		firstSeenAt: timestamp('first_seen_at', { withTimezone: true }).notNull().defaultNow(),
+		lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(table) => [
+		uniqueIndex('knowledge_rel_candidates_edge_kind_uniq').on(
+			table.workspaceId,
+			table.sourceNodeId,
+			table.targetNodeId,
+			table.linkType,
+			table.evidenceKind,
+		),
+		index('knowledge_rel_candidates_workspace_status_idx').on(
+			table.workspaceId,
+			table.promotionStatus,
+		),
+		index('knowledge_rel_candidates_source_idx').on(table.workspaceId, table.sourceNodeId),
+		index('knowledge_rel_candidates_target_idx').on(table.workspaceId, table.targetNodeId),
+		index('knowledge_rel_candidates_message_idx').on(table.workspaceId, table.messageId),
+		index('knowledge_rel_candidates_evidence_idx').on(table.workspaceId, table.sourceEvidenceId),
 	],
 );

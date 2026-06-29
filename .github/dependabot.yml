@@ -4,28 +4,53 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
+    groups:
+      npm-patch-minor:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "@biomejs/biome"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
+    groups:
+      github-actions:
+        patterns:
+          - "*"
 
   - package-ecosystem: docker
     directory: /apps/web
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
+    groups:
+      web-docker-images:
+        patterns:
+          - "*"
 
   - package-ecosystem: docker
     directory: /apps/worker
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
+    groups:
+      worker-docker-images:
+        patterns:
+          - "*"
 
   - package-ecosystem: docker-compose
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
+    groups:
+      compose-images:
+        patterns:
+          - "*"
