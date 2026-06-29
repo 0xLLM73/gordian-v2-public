@@ -4,7 +4,7 @@ import { NextResponse } from 'next/server';
 export async function GET(_req: Request, { params }: { params: Promise<{ token: string }> }) {
 	const { token } = await params;
 
-	if (!token || token.length !== 36) {
+	if (token?.length !== 36) {
 		return NextResponse.json({ error: 'Invalid token' }, { status: 400 });
 	}
 

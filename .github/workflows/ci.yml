@@ -93,4 +93,4 @@ jobs:
       - run: pnpm db:migrate
       - run: pnpm seed:demo
       - run: pnpm --filter web exec playwright install --with-deps chromium
-      - run: pnpm --filter web test:e2e -- demo-smoke.spec.ts
+      - run: pnpm --filter web exec playwright test demo-smoke.spec.ts
