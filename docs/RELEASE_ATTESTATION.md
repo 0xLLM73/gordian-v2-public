@@ -16,7 +16,7 @@ data into this file. Record only status, date, owner, and short evidence notes.
 | Validated source baseline | Production app-code baseline remains `c110d801ad769040f788820c4c6bfd5dbf56bae0`; the public-flip source baseline included release evidence, docs, tests, guardrails, onboarding, local runtime hardening, and key-custody PRs #117 through #131 at `102646b4` |
 | Source repository | `0xLLM73/gordian-v2` |
 | Release-control accounts | `@0xLLM73` and `@thegrovest` |
-| Attestation owner | Zachary Grove using the `@0xLLM73` and `@thegrovest` release-control accounts, assisted by Codex |
+| Attestation owner | Release owner using the `@0xLLM73` and `@thegrovest` release-control accounts, assisted by Codex |
 | Attestation date | 2026-06-11 PT |
 | Publication target | `0xLLM73/gordian-v2-public`; private mirror PR #38 synced source commit `c110d801ad769040f788820c4c6bfd5dbf56bae0`, mirror PRs #39 through #50 synced later release evidence, docs, test-only changes, and artifact guardrails, and mirror PR #51 synced source PRs #130 and #131 through mirror `main` `0d217f4` after green CI and required `@thegrovest` review |
 
@@ -116,6 +116,6 @@ sign-off.
 
 | Role | Decision | Date | Notes |
 | --- | --- | --- | --- |
-| Release owner | APPROVED | 2026-06-11 PT | Zachary Grove approved making the selected mirror public once the sanitized mirror matched source, sensitive-data scans passed, runtime cleanup was complete, and publication settings could be verified. |
+| Release owner | APPROVED | 2026-06-11 PT | The release owner approved making the selected mirror public once the sanitized mirror matched source, sensitive-data scans passed, runtime cleanup was complete, and publication settings could be verified. |
 | Security reviewer | APPROVED | 2026-06-11 PT | Secret scanning and push protection are enabled, open secret-scanning alerts are empty, open Dependabot alerts are empty, gitleaks/open-source audit passed, AI egress audit passed, Telegram defaults are disabled, and private vulnerability reporting is enabled. |
 | Runtime reviewer | APPROVED | 2026-06-11 PT | Active local DB/cache residue was purged/reset, purged-runtime smoke passed, no production deployment is included, GitHub Actions secrets are empty, and external provider credentials/snapshots are accepted as out of scope for this unhosted code release unless a future hosted deployment is created. |
