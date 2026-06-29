@@ -15,7 +15,7 @@
 		"@repo/crypto": "workspace:*",
 		"@repo/db": "workspace:*",
 		"@repo/shared": "workspace:*",
-		"@supabase/supabase-js": "^2.108.1",
+		"@supabase/supabase-js": "^2.108.2",
 		"@tailwindcss/typography": "^0.5.20",
 		"better-auth": "^1.6.16",
 		"class-variance-authority": "^0.7.1",
