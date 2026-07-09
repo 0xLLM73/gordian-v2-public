@@ -1,4 +1,4 @@
-FROM node:26.4.0-slim AS base
+FROM node:26.5.0-slim AS base
 RUN corepack enable
 RUN npm install -g turbo@2.9.18
 
