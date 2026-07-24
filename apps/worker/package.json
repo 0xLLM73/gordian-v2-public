@@ -17,7 +17,7 @@
 		"@google/generative-ai": "^0.24.1",
 		"@grammyjs/runner": "^2.0.3",
 		"@grammyjs/storage-redis": "^2.5.1",
-		"@hono/node-server": "2.0.6",
+		"@hono/node-server": "2.0.10",
 		"@repo/crypto": "workspace:*",
 		"@repo/db": "workspace:*",
 		"@repo/shared": "workspace:*",
