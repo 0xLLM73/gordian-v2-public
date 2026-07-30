@@ -13,11 +13,11 @@
 		"test": "vitest run"
 	},
 	"devDependencies": {
-		"@types/node": "^26.0.1",
+		"@types/node": "^26.1.2",
 		"typescript": "^6.0.3"
 	},
 	"dependencies": {
-		"jose": "^6.2.3",
+		"jose": "^6.2.5",
 		"zod": "^4.4.3"
 	}
 }
