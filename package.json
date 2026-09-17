@@ -59,19 +59,19 @@
 		"typecheck": "turbo typecheck"
 	},
 	"devDependencies": {
-		"@aws-sdk/client-kms": "^3.1075.0",
+		"@aws-sdk/client-kms": "^3.1131.0",
 		"@biomejs/biome": "^2.5.1",
-		"tsx": "^4.22.4",
-		"turbo": "2.10.0",
+		"tsx": "^4.23.13",
+		"turbo": "2.10.12",
 		"typescript": "^6.0.3",
-		"vite": "8.1.0",
+		"vite": "8.3.0",
 		"vitest": "^4.1.9"
 	},
 	"dependencies": {
 		"@repo/crypto": "workspace:^",
 		"@repo/db": "workspace:^",
 		"@repo/shared": "workspace:^",
-		"zod": "^4.4.3"
+		"zod": "^4.6.5"
 	},
 	"pnpm": {
 		"overrides": {
